@@ -2,9 +2,10 @@
   "name": "ollama-bot",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node server.js",
+    "test": "node --check server.js && node --check config/env.js && node --check routes/api.js && node --check services/calendar.js && node --check services/ollama.js && node --check services/ozon.js && node --check services/sheets.js && node --check services/telegram.js"
   },
   "keywords": [],
   "author": "",
