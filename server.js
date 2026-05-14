@@ -19,6 +19,8 @@ const state = createFileState(env.paths);
 const ollamaService = createOllamaService({
   chatUrl: env.ollamaChatUrl,
   models: env.ollamaModels,
+  maxPromptChars: env.ollamaMaxPromptChars,
+  decisionTimeoutMs: env.ollamaDecisionTimeoutMs,
   state,
   timeoutMs: env.ollamaTimeoutMs
 });
@@ -38,6 +40,7 @@ const performanceService = createPerformanceService({
   baseUrl: env.ozonPerformanceBaseUrl,
   clientId: env.ozonPerformanceClientId,
   clientSecret: env.ozonPerformanceClientSecret,
+  reportsFile: env.paths.performanceReportsFile,
   sheetsService
 });
 

@@ -25,6 +25,9 @@ function getHelpText() {
     "/performance campaigns",
     "/performance stats 2026-05-01 2026-05-14",
     "/performance stats в таблицу 2026-05-01 2026-05-14",
+    "/performance report <uuid>",
+    "/performance report в таблицу <uuid>",
+    "/performance pending",
     "/performance debug",
     "/ai strategy",
     "/ai quick",
@@ -72,6 +75,22 @@ function parsePerformanceCommand(text) {
 
   if (normalized === "/performance debug") {
     return { type: "debug" };
+  }
+
+  if (normalized === "/performance pending") {
+    return { type: "pending" };
+  }
+
+  const reportMatch = normalized.match(
+    /^\/performance\s+report(?:\s+(в\s+таблицу))?\s+([a-z0-9-]+)$/i
+  );
+
+  if (reportMatch) {
+    return {
+      type: "report",
+      toSheet: Boolean(reportMatch[1]),
+      uuid: reportMatch[2]
+    };
   }
 
   const statsMatch = normalized.match(
@@ -231,6 +250,36 @@ function formatPerformanceCampaigns(rows) {
       ].join("\n");
     })
     .join("\n\n");
+}
+
+function formatPendingReports(reports) {
+  if (!reports.length) {
+    return "Нет ожидающих отчётов Performance.";
+  }
+
+  return reports
+    .slice(0, 20)
+    .map(item => {
+      return [
+        "UUID: " + item.uuid,
+        "Type: " + (item.reportType || "-"),
+        "Range: " + (item.dateFrom || "-") + " -> " + (item.dateTo || "-"),
+        "Status: " + (item.status || "-")
+      ].join("\n");
+    })
+    .join("\n\n");
+}
+
+function formatPerformanceSummary(summary, uuid) {
+  return [
+    "UUID: " + uuid,
+    "Rows: " + summary.rows,
+    "Impressions: " + summary.impressions,
+    "Clicks: " + summary.clicks,
+    "Spend: " + summary.spend,
+    "Orders: " + summary.orders,
+    "Revenue: " + summary.revenue
+  ].join("\n");
 }
 
 function formatHealthInfo() {
@@ -499,6 +548,20 @@ function startTelegramBot({
       return;
     }
 
+    if (performanceCommand && performanceCommand.type === "pending") {
+      try {
+        await sendLongMessage(
+          tgBot,
+          chatId,
+          formatPendingReports(performanceService.listPendingReports())
+        );
+      } catch (err) {
+        await tgBot.sendMessage(chatId, "Ошибка Performance pending: " + err.message);
+      }
+
+      return;
+    }
+
     if (performanceCommand && performanceCommand.type === "campaigns") {
       try {
         if (!performanceService.isConfigured()) {
@@ -529,18 +592,94 @@ function startTelegramBot({
           return;
         }
 
-        await tgBot.sendMessage(chatId, "Забираю статистику Performance API...");
-        const stats = await performanceService.getCampaignStats({
+        if (performanceCommand.toSheet) {
+          await tgBot.sendMessage(chatId, "Создал отчёт...");
+          const report = await performanceService.createStatsReport({
+            dateFrom: performanceCommand.dateFrom,
+            dateTo: performanceCommand.dateTo
+          });
+
+          await tgBot.sendMessage(chatId, "Жду готовность...");
+
+          try {
+            await performanceService.waitForReport(report.uuid, 10, 10_000);
+            await tgBot.sendMessage(chatId, "Отчёт готов, скачиваю...");
+            const resolved = await performanceService.resolveReport(report.uuid);
+
+            try {
+              const writeResult = await performanceService.writeStatsToMappedSheet({
+                rows: resolved.rows
+              });
+              await tgBot.sendMessage(
+                chatId,
+                "Записал " + writeResult.rowsWritten + " строк в " + writeResult.tabName
+              );
+            } catch (sheetError) {
+              await tgBot.sendMessage(
+                chatId,
+                "Performance data was received, but Sheets write failed: " + sheetError.message
+              );
+            }
+          } catch (err) {
+            if (err.code === "PERFORMANCE_REPORT_PENDING") {
+              await tgBot.sendMessage(
+                chatId,
+                "Отчёт Performance создан и готовится. Повтори команду через 1-2 минуты или используй /performance report " +
+                  report.uuid
+              );
+              return;
+            }
+
+            throw err;
+          }
+          return;
+        }
+
+        const report = await performanceService.createStatsReport({
           dateFrom: performanceCommand.dateFrom,
           dateTo: performanceCommand.dateTo
         });
+        await tgBot.sendMessage(
+          chatId,
+          "Отчёт Performance создан и готовится. Повтори команду через 1-2 минуты или используй /performance report " +
+            report.uuid
+        );
+      } catch (err) {
+        await tgBot.sendMessage(chatId, "Ошибка Performance API: " + err.message);
+      }
+
+      return;
+    }
+
+    if (performanceCommand && performanceCommand.type === "report") {
+      try {
+        if (!performanceService.isConfigured()) {
+          await tgBot.sendMessage(
+            chatId,
+            "Performance API не настроен: проверь OZON_PERFORMANCE_CLIENT_ID и OZON_PERFORMANCE_CLIENT_SECRET."
+          );
+          return;
+        }
+
+        const status = await performanceService.getReportStatus(performanceCommand.uuid);
+
+        if (!status.ready) {
+          await tgBot.sendMessage(
+            chatId,
+            "Отчёт Performance ещё готовится. Повтори команду через 1-2 минуты."
+          );
+          return;
+        }
+
+        await tgBot.sendMessage(chatId, "Отчёт готов, скачиваю...");
+        const resolved = await performanceService.resolveReport(performanceCommand.uuid);
+        const summary = performanceService.summarizeStats(resolved.rows);
 
         if (performanceCommand.toSheet) {
           try {
-            const writeResult = await sheetsService.clearAndWriteMappedRows(
-              "performance_stats",
-              performanceService.statsToRows(stats)
-            );
+            const writeResult = await performanceService.writeStatsToMappedSheet({
+              rows: resolved.rows
+            });
             await tgBot.sendMessage(
               chatId,
               "Записал " + writeResult.rowsWritten + " строк в " + writeResult.tabName
@@ -548,15 +687,29 @@ function startTelegramBot({
           } catch (sheetError) {
             await tgBot.sendMessage(
               chatId,
-              "Performance data received, but Sheets write failed: " + sheetError.message
+              "Performance data was received, but Sheets write failed: " + sheetError.message
             );
           }
           return;
         }
 
-        await sendLongMessage(tgBot, chatId, formatPerformanceRows(stats));
+        await sendLongMessage(
+          tgBot,
+          chatId,
+          formatPerformanceSummary(summary, performanceCommand.uuid) +
+            "\n\n" +
+            formatPerformanceRows(resolved.rows)
+        );
       } catch (err) {
-        await tgBot.sendMessage(chatId, "Ошибка Performance API: " + err.message);
+        if (err.code === "PERFORMANCE_REPORT_PENDING") {
+          await tgBot.sendMessage(
+            chatId,
+            "Отчёт Performance ещё готовится. Повтори команду через 1-2 минуты."
+          );
+          return;
+        }
+
+        await tgBot.sendMessage(chatId, "Ошибка Performance report: " + err.message);
       }
 
       return;

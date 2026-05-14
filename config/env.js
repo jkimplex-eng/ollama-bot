@@ -12,12 +12,15 @@ module.exports = {
     process.env.OLLAMA_URL ||
     "http://127.0.0.1:11434/api/chat",
   ollamaTimeoutMs: Number(process.env.OLLAMA_TIMEOUT_MS || 120000),
+  ollamaMaxPromptChars: Number(process.env.OLLAMA_MAX_PROMPT_CHARS || 12000),
+  ollamaDecisionTimeoutMs: Number(process.env.OLLAMA_DECISION_TIMEOUT_MS || 600000),
   ollamaModels: {
     chat:
       process.env.OLLAMA_CHAT_MODEL ||
       process.env.OLLAMA_MODEL ||
       "qwen2.5:3b",
     coder: process.env.OLLAMA_CODER_MODEL || "deepseek-r1:1.5b",
+    fast: process.env.OLLAMA_FAST_MODEL || "",
     analytics:
       process.env.OLLAMA_ANALYTICS_MODEL ||
       process.env.OLLAMA_CHAT_MODEL ||
@@ -46,6 +49,7 @@ module.exports = {
     alertsLogFile: path.join(rootDir, "logs", "alerts.log"),
     dataDir: path.join(rootDir, "data"),
     alertsStateFile: path.join(rootDir, "data", "alerts-state.json"),
+    performanceReportsFile: path.join(rootDir, "data", "performance-reports.json"),
     reportsDir: path.join(rootDir, "reports"),
     dailyReportsDir: path.join(rootDir, "reports", "daily")
   },

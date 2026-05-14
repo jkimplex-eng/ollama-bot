@@ -18,6 +18,10 @@ function run() {
     type: "campaigns"
   });
 
+  assert.deepStrictEqual(parsePerformanceCommand("/performance pending"), {
+    type: "pending"
+  });
+
   assert.deepStrictEqual(
     parsePerformanceCommand("/performance stats 2026-05-01 2026-05-14"),
     {
@@ -25,6 +29,24 @@ function run() {
       toSheet: false,
       dateFrom: "2026-05-01",
       dateTo: "2026-05-14"
+    }
+  );
+
+  assert.deepStrictEqual(
+    parsePerformanceCommand("/performance report 123e4567-e89b-12d3-a456-426614174000"),
+    {
+      type: "report",
+      toSheet: false,
+      uuid: "123e4567-e89b-12d3-a456-426614174000"
+    }
+  );
+
+  assert.deepStrictEqual(
+    parsePerformanceCommand("/performance report в таблицу 123e4567-e89b-12d3-a456-426614174000"),
+    {
+      type: "report",
+      toSheet: true,
+      uuid: "123e4567-e89b-12d3-a456-426614174000"
     }
   );
 

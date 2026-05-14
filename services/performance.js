@@ -1,6 +1,16 @@
+const fs = require("fs");
+const path = require("path");
+
 function createUnavailableError(message) {
   const error = new Error(message);
   error.code = "PERFORMANCE_UNAVAILABLE";
+  return error;
+}
+
+function createPendingReportError(uuid, message = "") {
+  const error = new Error(message || "Performance report is pending.");
+  error.code = "PERFORMANCE_REPORT_PENDING";
+  error.uuid = uuid;
   return error;
 }
 
@@ -17,6 +27,17 @@ function toNumber(value) {
     .replace(/[^\d.-]/g, "");
   const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function ensureParentDir(filePath) {
+  const dir = path.dirname(filePath);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
 }
 
 function parseSemicolonCsv(text) {
@@ -87,8 +108,8 @@ function normalizeCampaign(item) {
   };
 }
 
-function extractCampaignMeta(headerLine) {
-  const text = String(headerLine || "");
+function extractCampaignMeta(headerText) {
+  const text = String(headerText || "");
   const idMatch = text.match(/№\s*(\d+)/);
   const nameMatch = text.match(/;\s*(.+?),\s*период/i);
 
@@ -96,10 +117,6 @@ function extractCampaignMeta(headerLine) {
     campaignId: idMatch ? idMatch[1] : "",
     campaignName: nameMatch ? nameMatch[1].trim() : ""
   };
-}
-
-function findHeaderRowIndex(rows) {
-  return rows.findIndex(row => row.includes("sku") || row.includes("SKU"));
 }
 
 function getCell(row, indexMap, key) {
@@ -110,47 +127,71 @@ function getCell(row, indexMap, key) {
 
 function normalizeStatsFromCsv(csvText) {
   const rows = parseSemicolonCsv(csvText);
-  const headerRowIndex = findHeaderRowIndex(rows);
+  const result = [];
 
-  if (headerRowIndex === -1 || !rows[headerRowIndex + 1]) {
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    const hasHeader = row.includes("sku") || row.includes("SKU");
+
+    if (!hasHeader) {
+      continue;
+    }
+
+    const meta = extractCampaignMeta((rows[index - 1] || []).join(" "));
+    const headers = row.map(cell => cell.trim());
+    const indexMap = new Map(headers.map((header, headerIndex) => [header, headerIndex]));
+    const dateHeader = headers.find(header => header.includes("Дата"));
+
+    for (let dataIndex = index + 1; dataIndex < rows.length; dataIndex += 1) {
+      const dataRow = rows[dataIndex];
+      const nextHeader = dataRow.includes("sku") || dataRow.includes("SKU");
+
+      if (nextHeader) {
+        index = dataIndex - 1;
+        break;
+      }
+
+      if (!dataRow.length || !getCell(dataRow, indexMap, "sku")) {
+        continue;
+      }
+
+      result.push({
+        date: dateHeader ? getCell(dataRow, indexMap, dateHeader) : "",
+        campaignId: meta.campaignId,
+        campaignName: meta.campaignName,
+        sku: getCell(dataRow, indexMap, "sku"),
+        productName: getCell(dataRow, indexMap, "Название товара"),
+        price: toNumber(getCell(dataRow, indexMap, "Цена товара, Р")),
+        impressions: toNumber(getCell(dataRow, indexMap, "Показы")),
+        clicks: toNumber(getCell(dataRow, indexMap, "Клики")),
+        ctr: toNumber(getCell(dataRow, indexMap, "CTR (%)")),
+        addToCart: toNumber(getCell(dataRow, indexMap, "В корзину")),
+        avgCpc: toNumber(getCell(dataRow, indexMap, "Ср. цена клика, г")),
+        avgCpm: toNumber(getCell(dataRow, indexMap, "Ср. цена 1000 показов, Р")),
+        spend: toNumber(getCell(dataRow, indexMap, "Расход, Р, с НДС")),
+        orders: toNumber(getCell(dataRow, indexMap, "Заказы")),
+        revenue: toNumber(getCell(dataRow, indexMap, "Выручка, Р")),
+        modelOrders: toNumber(getCell(dataRow, indexMap, "Заказы модели")),
+        modelRevenue: toNumber(getCell(dataRow, indexMap, "Выручка с заказов модели, Р")),
+        drr:
+          toNumber(getCell(dataRow, indexMap, "ДРР, %: Дата добавления")) ??
+          toNumber(getCell(dataRow, indexMap, "ДРР, %"))
+      });
+    }
+  }
+
+  if (!result.length) {
     throw new Error("Performance API returned unexpected report shape.");
   }
 
-  const meta = extractCampaignMeta(rows[0]?.join(" "));
-  const headers = rows[headerRowIndex];
-  const dataRows = rows.slice(headerRowIndex + 1);
-  const indexMap = new Map(headers.map((header, index) => [header.trim(), index]));
-  const dateHeader = headers.find(header => header.includes("Дата"));
-
-  return dataRows
-    .filter(row => row.length && getCell(row, indexMap, "sku"))
-    .map(row => ({
-      date: dateHeader ? getCell(row, indexMap, dateHeader) : "",
-      campaignId: meta.campaignId,
-      campaignName: meta.campaignName,
-      sku: getCell(row, indexMap, "sku"),
-      productName: getCell(row, indexMap, "Название товара"),
-      price: toNumber(getCell(row, indexMap, "Цена товара, Р")),
-      impressions: toNumber(getCell(row, indexMap, "Показы")),
-      clicks: toNumber(getCell(row, indexMap, "Клики")),
-      ctr: toNumber(getCell(row, indexMap, "CTR (%)")),
-      addToCart: toNumber(getCell(row, indexMap, "В корзину")),
-      avgCpc: toNumber(getCell(row, indexMap, "Ср. цена клика, г")),
-      avgCpm: toNumber(getCell(row, indexMap, "Ср. цена 1000 показов, Р")),
-      spend: toNumber(getCell(row, indexMap, "Расход, Р, с НДС")),
-      orders: toNumber(getCell(row, indexMap, "Заказы")),
-      revenue: toNumber(getCell(row, indexMap, "Выручка, Р")),
-      modelOrders: toNumber(getCell(row, indexMap, "Заказы модели")),
-      modelRevenue: toNumber(getCell(row, indexMap, "Выручка с заказов модели, Р")),
-      drr: toNumber(getCell(row, indexMap, "ДРР, %: Дата добавления")) ??
-        toNumber(getCell(row, indexMap, "ДРР, %"))
-    }));
+  return result;
 }
 
 function createPerformanceService({
   baseUrl,
   clientId,
   clientSecret,
+  reportsFile,
   sheetsService,
   logger = console
 }) {
@@ -166,6 +207,55 @@ function createPerformanceService({
         "Performance API не настроен: проверь OZON_PERFORMANCE_CLIENT_ID и OZON_PERFORMANCE_CLIENT_SECRET."
       );
     }
+  }
+
+  function loadReports() {
+    if (!reportsFile || !fs.existsSync(reportsFile)) {
+      return [];
+    }
+
+    try {
+      const data = JSON.parse(fs.readFileSync(reportsFile, "utf8"));
+      return Array.isArray(data) ? data : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function saveReports(records) {
+    if (!reportsFile) return;
+    ensureParentDir(reportsFile);
+    fs.writeFileSync(reportsFile, JSON.stringify(records, null, 2), "utf8");
+  }
+
+  function upsertReportRecord(record) {
+    const reports = loadReports();
+    const index = reports.findIndex(item => item.uuid === record.uuid);
+    const next = {
+      ...record,
+      updatedAt: new Date().toISOString()
+    };
+
+    if (index >= 0) {
+      reports[index] = {
+        ...reports[index],
+        ...next
+      };
+    } else {
+      reports.push({
+        createdAt: new Date().toISOString(),
+        ...next
+      });
+    }
+
+    saveReports(reports);
+    return reports.find(item => item.uuid === record.uuid);
+  }
+
+  function listPendingReports() {
+    return loadReports()
+      .filter(item => item.status !== "ready" && item.status !== "downloaded")
+      .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)));
   }
 
   async function safeJson(response, fallback = {}) {
@@ -274,7 +364,7 @@ function createPerformanceService({
 
     if (contentType.includes("application/zip")) {
       throw new Error(
-        "Performance API returned ZIP report. Current implementation expects per-campaign CSV reports."
+        "Performance API returned ZIP report. Current implementation expects CSV report."
       );
     }
 
@@ -298,7 +388,7 @@ function createPerformanceService({
     return items.map(normalizeCampaign);
   }
 
-  async function createStatisticsReportRequest({ campaignIds, dateFrom, dateTo }) {
+  async function createStatisticsReportRequest({ campaignIds, dateFrom, dateTo, reportType = "stats" }) {
     const data = await requestJson("/api/client/statistics", {
       method: "POST",
       body: {
@@ -313,7 +403,15 @@ function createPerformanceService({
       throw new Error("Performance API did not return UUID for statistics request.");
     }
 
-    return data.UUID;
+    const record = upsertReportRecord({
+      uuid: data.UUID,
+      dateFrom: formatDate(dateFrom),
+      dateTo: formatDate(dateTo),
+      reportType,
+      status: "pending"
+    });
+
+    return record;
   }
 
   async function getStatisticsList(page = 1, pageSize = 100) {
@@ -332,50 +430,131 @@ function createPerformanceService({
     return data.items;
   }
 
-  async function waitForReport(uuid, attempts = 12, delayMs = 5000) {
-    for (let attempt = 1; attempt <= attempts; attempt += 1) {
-      const items = await getStatisticsList(1, 100);
-      const found = items.find(item => item.meta && item.meta.UUID === uuid);
+  async function getReportListItem(uuid) {
+    const items = await getStatisticsList(1, 100);
+    return items.find(item => item.meta && item.meta.UUID === uuid) || null;
+  }
 
-      if (found && found.meta && found.meta.link) {
-        return found;
+  async function getReportStatus(uuid) {
+    const found = await getReportListItem(uuid);
+
+    if (!found) {
+      const stored = loadReports().find(item => item.uuid === uuid);
+      if (stored) {
+        upsertReportRecord({
+          ...stored,
+          status: stored.status || "pending"
+        });
       }
 
-      if (found && found.meta && found.meta.error) {
-        throw new Error("Performance report failed: " + found.meta.error);
+      return {
+        uuid,
+        ready: false,
+        status: stored ? stored.status || "pending" : "pending",
+        message: "Отчёт ещё готовится."
+      };
+    }
+
+    if (found.meta && found.meta.error) {
+      upsertReportRecord({
+        uuid,
+        status: "error",
+        error: found.meta.error
+      });
+      throw new Error("Performance report failed: " + found.meta.error);
+    }
+
+    if (found.meta && found.meta.link) {
+      upsertReportRecord({
+        uuid,
+        status: "ready",
+        link: found.meta.link
+      });
+      return {
+        uuid,
+        ready: true,
+        status: "ready",
+        item: found
+      };
+    }
+
+    upsertReportRecord({
+      uuid,
+      status: "pending"
+    });
+
+    return {
+      uuid,
+      ready: false,
+      status: "pending",
+      item: found,
+      message: "Отчёт ещё готовится."
+    };
+  }
+
+  async function waitForReport(uuid, attempts = 12, delayMs = 5000) {
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      const status = await getReportStatus(uuid);
+
+      if (status.ready) {
+        return status;
       }
 
       if (attempt < attempts) {
-        await new Promise(resolve => setTimeout(resolve, delayMs));
+        await delay(delayMs);
       }
     }
 
-    throw new Error("Performance report is not ready yet. Try again later.");
+    throw createPendingReportError(uuid, "Отчёт ещё готовится.");
+  }
+
+  async function resolveReport(uuid) {
+    const status = await getReportStatus(uuid);
+
+    if (!status.ready) {
+      throw createPendingReportError(uuid, "Отчёт ещё готовится.");
+    }
+
+    const csvText = await requestReportDownload(uuid);
+    const rows = normalizeStatsFromCsv(csvText);
+    upsertReportRecord({
+      uuid,
+      status: "downloaded",
+      rowsCount: rows.length
+    });
+
+    return {
+      uuid,
+      rows,
+      csvText
+    };
+  }
+
+  async function createStatsReport({ dateFrom, dateTo }) {
+    if (!isConfigured()) return null;
+
+    const campaigns = await getCampaigns();
+    const report = await createStatisticsReportRequest({
+      campaignIds: campaigns.map(item => item.campaignId),
+      dateFrom,
+      dateTo,
+      reportType: "stats"
+    });
+
+    return {
+      ...report,
+      campaignsCount: campaigns.length
+    };
   }
 
   async function getCampaignStats({ dateFrom, dateTo } = {}) {
-    if (!isConfigured()) return [];
-
-    const campaigns = await getCampaigns();
-    const campaignRows = [];
-
-    for (const campaign of campaigns) {
-      const uuid = await createStatisticsReportRequest({
-        campaignIds: [campaign.campaignId],
-        dateFrom,
-        dateTo
-      });
-      await waitForReport(uuid);
-      const csvText = await requestReportDownload(uuid);
-      const rows = normalizeStatsFromCsv(csvText).map(row => ({
-        ...row,
-        campaignId: row.campaignId || campaign.campaignId,
-        campaignName: row.campaignName || campaign.campaignName
-      }));
-      campaignRows.push(...rows);
+    const report = await createStatsReport({ dateFrom, dateTo });
+    const resolved = await waitForReport(report.uuid);
+    if (!resolved.ready) {
+      throw createPendingReportError(report.uuid);
     }
 
-    return campaignRows;
+    return (await resolveReport(report.uuid)).rows;
   }
 
   function campaignsToRows(campaigns) {
@@ -416,6 +595,29 @@ function createPerformanceService({
     ]);
   }
 
+  function summarizeStats(rows) {
+    const totals = rows.reduce(
+      (acc, row) => {
+        acc.impressions += row.impressions || 0;
+        acc.clicks += row.clicks || 0;
+        acc.spend += row.spend || 0;
+        acc.orders += row.orders || 0;
+        acc.revenue += row.revenue || 0;
+        return acc;
+      },
+      { impressions: 0, clicks: 0, spend: 0, orders: 0, revenue: 0 }
+    );
+
+    return {
+      rows: rows.length,
+      impressions: totals.impressions,
+      clicks: totals.clicks,
+      spend: Number(totals.spend.toFixed(2)),
+      orders: totals.orders,
+      revenue: Number(totals.revenue.toFixed(2))
+    };
+  }
+
   async function writeCampaignsToMappedSheet() {
     const campaigns = await getCampaigns();
     const result = await sheetsService.clearAndWriteMappedRows(
@@ -429,17 +631,13 @@ function createPerformanceService({
     };
   }
 
-  async function writeStatsToMappedSheet({ dateFrom, dateTo }) {
-    const stats = await getCampaignStats({ dateFrom, dateTo });
+  async function writeStatsToMappedSheet({ rows }) {
     const result = await sheetsService.clearAndWriteMappedRows(
       "performance_stats",
-      statsToRows(stats)
+      statsToRows(rows)
     );
 
-    return {
-      stats,
-      sheetResult: result
-    };
+    return result;
   }
 
   async function debugSummary() {
@@ -459,20 +657,26 @@ function createPerformanceService({
       tokenExpiresAt: tokenCache ? new Date(tokenCache.expiresAt).toISOString() : null,
       campaignsCount: campaigns.length,
       sampleCampaigns: campaigns.slice(0, 5),
+      pendingReports: listPendingReports().slice(0, 10),
       authHeaderType: token ? "Bearer" : "missing"
     };
   }
 
   return {
     campaignsToRows,
+    createStatsReport,
     debugSummary,
     getCampaigns,
     getCampaignStats,
     getPerformanceToken,
+    getReportStatus,
     getStatisticsList,
     isConfigured,
+    listPendingReports,
     normalizeStatsFromCsv,
+    resolveReport,
     statsToRows,
+    summarizeStats,
     waitForReport,
     writeCampaignsToMappedSheet,
     writeStatsToMappedSheet
@@ -480,6 +684,7 @@ function createPerformanceService({
 }
 
 module.exports = {
+  createPendingReportError,
   createPerformanceService,
   normalizeStatsFromCsv,
   parseSemicolonCsv
