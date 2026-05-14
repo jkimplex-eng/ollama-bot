@@ -1,4 +1,5 @@
 const TelegramBot = require("node-telegram-bot-api");
+const env = require("../config/env");
 const { parseDailyCommand } = require("./dailySummary");
 
 const OZON_PRODUCTS_SHEET = "Ozon";
@@ -8,6 +9,7 @@ function getHelpText() {
   return [
     "Команды:",
     "/chatid",
+    "/health",
     "/daily",
     "/daily вчера",
     "/daily today",
@@ -24,6 +26,7 @@ function getHelpText() {
     "/performance stats",
     "/performance sku",
     "/ai strategy",
+    "/ai quick",
     "/ai actions",
     "/ai risks",
     "/ai закупка",
@@ -67,12 +70,13 @@ function parsePerformanceCommand(text) {
 
 function parseAiCommand(text) {
   const normalized = text.trim().replace(/\s+/g, " ").toLowerCase();
-  const match = normalized.match(/^\/ai\s+(strategy|actions|risks|закупка|реклама)$/);
+  const match = normalized.match(/^\/ai\s+(strategy|quick|actions|risks|закупка|реклама)$/);
 
   if (!match) return null;
 
   const modeMap = {
     "strategy": "strategy",
+    "quick": "quick",
     "actions": "actions",
     "risks": "risks",
     "закупка": "purchase",
@@ -145,6 +149,7 @@ function formatOzonProducts(products) {
 function formatModelsInfo(ollamaModels, ollamaStatus) {
   const lines = [
     "Chat model: " + ollamaModels.chat,
+    "Fast model: " + (ollamaModels.fast || "-"),
     "Coder model: " + ollamaModels.coder,
     "Analytics model: " + ollamaModels.analytics,
     "Ollama: " + (ollamaStatus.ok ? "online" : "offline")
@@ -186,6 +191,20 @@ function formatPerformanceRows(rows) {
       ].join("\n");
     })
     .join("\n\n");
+}
+
+function formatHealthInfo() {
+  return [
+    "bot online",
+    "server time: " + new Date().toISOString(),
+    "",
+    "TELEGRAM_BOT_TOKEN: " + (env.telegramBotToken ? "ok" : "missing"),
+    "OZON_CLIENT_ID: " + (env.ozonClientId ? "ok" : "missing"),
+    "OZON_API_KEY: " + (env.ozonApiKey ? "ok" : "missing"),
+    "GOOGLE_SHEETS_WEBAPP_URL: " + (env.googleSheetsWebappUrl ? "ok" : "missing"),
+    "OLLAMA_CHAT_MODEL: " + env.ollamaModels.chat,
+    "STABLE_MODE: " + (process.env.STABLE_MODE || "")
+  ].join("\n");
 }
 
 async function sendLongMessage(bot, chatId, text) {
@@ -258,6 +277,11 @@ function startTelegramBot({
 
     if (text === "/chatid") {
       await tgBot.sendMessage(chatId, "Your chat id: " + msg.chat.id);
+      return;
+    }
+
+    if (text === "/health") {
+      await sendLongMessage(tgBot, chatId, formatHealthInfo());
       return;
     }
 
@@ -477,6 +501,12 @@ function startTelegramBot({
 
     if (aiCommand) {
       try {
+        if (aiCommand === "quick") {
+          const result = await decisionEngine.quickAnalyze();
+          await sendLongMessage(tgBot, chatId, result.reply);
+          return;
+        }
+
         await tgBot.sendMessage(chatId, "Собираю данные и запускаю AI Decision Engine...");
         const result = await decisionEngine.analyze(aiCommand);
         await sendLongMessage(tgBot, chatId, result.reply);

@@ -1,3 +1,7 @@
+const MAX_PRODUCTS = 20;
+const MAX_STOCK_ROWS = 20;
+const MAX_PERFORMANCE_ROWS = 20;
+
 function toNumber(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
@@ -78,8 +82,21 @@ function compactProducts(products) {
   return products.map(product => ({
     name: product.name,
     sku: product.sku,
+    offerId: product.offerId,
     price: product.price,
     stock: product.stock
+  }));
+}
+
+function compactPerformanceRows(rows) {
+  return rows.slice(0, MAX_PERFORMANCE_ROWS).map(row => ({
+    campaignName: row.campaignName || "",
+    sku: row.sku || "",
+    spend: row.spend ?? null,
+    orders: row.orders ?? null,
+    revenue: row.revenue ?? null,
+    roas: row.roas ?? null,
+    drr: row.drr ?? null
   }));
 }
 
@@ -105,30 +122,40 @@ function summarizePerformance(stats) {
 }
 
 function buildCompactPayload(topic, products, stocks, jobsStatus, performance) {
-  const summary = summarize(products);
+  const limitedProducts = products.slice(0, MAX_PRODUCTS);
+  const limitedStocks = stocks.slice(0, MAX_STOCK_ROWS);
+  const missingOfferIdCount = limitedProducts.filter(product => !product.offerId).length;
+  const suitableForReviewCount = limitedProducts.filter(product => {
+    const missingPrice = product.price === null;
+    const missingStock = product.stock === null;
+    const noOfferId = !product.offerId;
+    const lowStock = product.stock !== null && product.stock <= 5;
+    return missingPrice || missingStock || noOfferId || lowStock;
+  }).length;
+  const summary = summarize(limitedProducts);
   const strongProducts = compactProducts(
     sortByDescending(
-      products.filter(product => product.price !== null && (product.stock ?? 0) > 5),
+      limitedProducts.filter(product => product.price !== null && (product.stock ?? 0) > 5),
       "price"
-    ).slice(0, 10)
+    ).slice(0, 8)
   );
   const weakProducts = compactProducts(
     sortByAscending(
-      products.filter(product => product.stock === 0 || product.price === null),
+      limitedProducts.filter(product => product.stock === 0 || product.price === null),
       "stock"
-    ).slice(0, 10)
+    ).slice(0, 8)
   );
   const lowStockProducts = compactProducts(
     sortByAscending(
-      products.filter(product => product.stock !== null && product.stock <= 5),
+      limitedProducts.filter(product => product.stock !== null && product.stock <= 5),
       "stock"
-    ).slice(0, 10)
+    ).slice(0, 8)
   );
   const promotableProducts = compactProducts(
     sortByDescending(
-      products.filter(product => product.price !== null && (product.stock ?? 0) > 10),
+      limitedProducts.filter(product => product.price !== null && (product.stock ?? 0) > 10),
       "price"
-    ).slice(0, 10)
+    ).slice(0, 8)
   );
 
   return {
@@ -149,14 +176,26 @@ function buildCompactPayload(topic, products, stocks, jobsStatus, performance) {
       directAdsMetrics: performance.stats.length > 0 || performance.skuStats.length > 0
     },
     performanceSummary: performance.summary,
-    performanceCampaigns: performance.campaigns.slice(0, 20),
-    performanceStats: performance.stats.slice(0, 20),
-    performanceSkuStats: performance.skuStats.slice(0, 20),
+    quickMetrics: {
+      checkedProducts: limitedProducts.length,
+      missingOfferIdCount,
+      suitableForReviewCount,
+      lowStockCount: summary.lowStock,
+      stocksAvailable: limitedStocks.length > 0
+    },
+    topCampaigns: performance.campaigns.slice(0, 8).map(item => ({
+      campaignId: item.campaignId,
+      campaignName: item.campaignName,
+      status: item.status
+    })),
+    performanceStats: compactPerformanceRows(performance.stats),
+    performanceSkuStats: compactPerformanceRows(performance.skuStats),
     strongProducts,
     weakProducts,
     lowStockProducts,
     promotableProducts,
-    sampleProducts: compactProducts(products.slice(0, 20))
+    sampleProducts: compactProducts(limitedProducts),
+    stockRows: compactProducts(limitedStocks)
   };
 }
 
@@ -171,11 +210,11 @@ function buildAnalyticsPrompt(topic, payload) {
 
   return [
     "Ты сильный русскоязычный Ozon-аналитик для e-commerce бизнеса.",
-    "Проанализируй только данные из JSON. Не придумывай метрики, которых нет.",
+    "Используй только данные из JSON. Не придумывай метрики.",
     "Если прямых данных продаж или рекламы нет, прямо напиши: Прямые данные продаж/рекламы пока не подключены.",
     "Тема: " + topicLabels[topic],
     "",
-    "Сделай ответ в таком формате:",
+    "Формат:",
     "1. Краткий вывод",
     "2. Сильные товары",
     "3. Слабые товары",
@@ -184,11 +223,57 @@ function buildAnalyticsPrompt(topic, payload) {
     "6. Что проверить",
     "7. Конкретные действия",
     "",
-    "Пиши по-русски, по делу, в бизнес-стиле.",
-    "",
-    "JSON:",
     JSON.stringify(payload)
   ].join("\n");
+}
+
+function buildDeterministicSummary(topic, payload, reason) {
+  const performance = payload.performanceSummary;
+  const lines = [
+    "Ollama недоступен, показываю детерминированную сводку.",
+    "Причина: " + reason,
+    "",
+    "Тема: " + topic,
+    "Товаров в выборке: " + payload.summary.totalProducts,
+    "В наличии: " + payload.summary.inStock,
+    "Нет в наличии: " + payload.summary.outOfStock,
+    "Низкий остаток: " + payload.summary.lowStock,
+    "Без цены: " + payload.summary.withoutPrice
+  ];
+
+  if (performance) {
+    lines.push(
+      "Реклама: расход " +
+        performance.spend +
+        ", заказы " +
+        performance.orders +
+        ", выручка " +
+        performance.revenue
+    );
+  } else {
+    lines.push("Прямые данные продаж/рекламы пока не подключены.");
+  }
+
+  if (payload.strongProducts.length) {
+    lines.push("", "Сильные товары:");
+    for (const item of payload.strongProducts.slice(0, 5)) {
+      lines.push("- " + (item.name || item.sku) + " | цена: " + (item.price ?? "-") + " | остаток: " + (item.stock ?? "-"));
+    }
+  }
+
+  if (payload.lowStockProducts.length) {
+    lines.push("", "Риски остатков:");
+    for (const item of payload.lowStockProducts.slice(0, 5)) {
+      lines.push("- " + (item.name || item.sku) + " | остаток: " + (item.stock ?? "-"));
+    }
+  }
+
+  lines.push("", "Конкретные действия:");
+  lines.push("- Проверь товары без цены и без остатка.");
+  lines.push("- Поддерживай остаток по сильным товарам.");
+  lines.push("- Не запускай рекламу на SKU с низким остатком.");
+
+  return lines.join("\n");
 }
 
 function createAnalyticsService({ jobsService, ollamaService, ozonService, performanceService }) {
@@ -209,21 +294,21 @@ function createAnalyticsService({ jobsService, ollamaService, ozonService, perfo
     ]);
 
     return {
-      campaigns,
-      stats,
-      skuStats,
+      campaigns: campaigns.slice(0, MAX_PERFORMANCE_ROWS),
+      stats: stats.slice(0, MAX_PERFORMANCE_ROWS),
+      skuStats: skuStats.slice(0, MAX_PERFORMANCE_ROWS),
       summary: summarizePerformance(stats)
     };
   }
 
   async function collectSnapshot(topic) {
     const [productsRaw, stocksRaw] = await Promise.all([
-      ozonService.getProducts(100),
-      ozonService.getStocks(100).catch(() => [])
+      ozonService.getProducts(MAX_PRODUCTS),
+      ozonService.getStocks(MAX_STOCK_ROWS).catch(() => [])
     ]);
 
     const products = mergeProductData(productsRaw, stocksRaw);
-    const stocks = stocksRaw.map(normalizeProduct);
+    const stocks = stocksRaw.map(normalizeProduct).slice(0, MAX_STOCK_ROWS);
     const jobsStatus = jobsService ? jobsService.getStatus() : null;
     const performance = await collectPerformanceData();
 
@@ -239,17 +324,31 @@ function createAnalyticsService({ jobsService, ollamaService, ozonService, perfo
 
     const payload = await collectSnapshot(topic);
     const prompt = buildAnalyticsPrompt(topic, payload);
-    const reply = await ollamaService.askAnalytics(prompt);
 
-    return {
-      topic,
-      reply,
-      payload
-    };
+    try {
+      const reply = await ollamaService.askAnalytics(prompt, {
+        endpoint: "telegram-analytics"
+      });
+
+      return {
+        topic,
+        reply,
+        payload,
+        fallbackUsed: false
+      };
+    } catch (error) {
+      return {
+        topic,
+        reply: buildDeterministicSummary(topic, payload, error.message),
+        payload,
+        fallbackUsed: true
+      };
+    }
   }
 
   return {
     analyze,
+    buildDeterministicSummary,
     collectSnapshot
   };
 }
