@@ -5,3 +5,7 @@ profile.json
 files.json
 exports/
 uploads/
+data/
+logs/*.log
+reports/daily/*.md
+!reports/daily/.gitkeep

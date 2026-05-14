@@ -5,7 +5,12 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --check server.js && node --check config/env.js && node --check routes/api.js && node --check services/calendar.js && node --check services/ollama.js && node --check services/ozon.js && node --check services/sheets.js && node --check services/telegram.js"
+    "daily": "node scripts/runDailySummary.js",
+    "pm2:start": "pm2 start ecosystem.config.js",
+    "pm2:stop": "pm2 stop ollama-bot",
+    "pm2:restart": "pm2 restart ollama-bot",
+    "pm2:logs": "pm2 logs ollama-bot",
+    "test": "node --check server.js && node --check ecosystem.config.js && node --check config/env.js && node --check routes/api.js && node --check services/alerts.js && node --check services/analytics.js && node --check services/calendar.js && node --check services/dailySummary.js && node --check services/decisionEngine.js && node --check services/jobs.js && node --check services/ollama.js && node --check services/ozon.js && node --check services/performance.js && node --check services/sheets.js && node --check services/telegram.js && node --check scripts/runDailySummary.js"
   },
   "keywords": [],
   "author": "",

@@ -14,6 +14,8 @@ function createFileState(paths) {
   ensureDirectory(paths.uploadDir);
   ensureDirectory(paths.knowledgeDir);
   ensureDirectory(paths.exportDir);
+  if (paths.reportsDir) ensureDirectory(paths.reportsDir);
+  if (paths.dailyReportsDir) ensureDirectory(paths.dailyReportsDir);
 
   function loadJson(file, fallback) {
     if (!fs.existsSync(file)) return fallback;
@@ -489,7 +491,13 @@ function renderHomePage() {
   `;
 }
 
-function createApiRouter({ state, ollamaService, model }) {
+function createApiRouter({
+  state,
+  ollamaService,
+  defaultModel,
+  cronSecret = "",
+  dailySummaryService
+}) {
   const router = Router();
   const upload = multer({
     dest: state.paths.uploadDir,
@@ -538,7 +546,8 @@ function createApiRouter({ state, ollamaService, model }) {
 
   router.post("/export", (req, res) => {
     try {
-      const result = state.exportHistory(model);
+      const result = state.exportHistory(defaultModel);
+ 
 
       res.json({
         ok: true,
@@ -596,6 +605,34 @@ function createApiRouter({ state, ollamaService, model }) {
     }
   });
 
+  router.post("/cron/daily-summary", async (req, res) => {
+    const incomingSecret = req.headers["x-cron-secret"];
+
+    if (!cronSecret || incomingSecret !== cronSecret) {
+      res.status(401).json({ ok: false, error: "Unauthorized" });
+      return;
+    }
+
+    if (!dailySummaryService) {
+      res.status(503).json({ ok: false, error: "Daily summary service unavailable" });
+      return;
+    }
+
+    try {
+      const result = await dailySummaryService.generateDailySummary();
+      res.json({
+        ok: true,
+        reportPath: result.reportPath,
+        sentToTelegram: result.sentToTelegram
+      });
+    } catch (err) {
+      res.status(500).json({
+        ok: false,
+        error: err.message
+      });
+    }
+  });
+
   router.post("/chat-stream", async (req, res) => {
     try {
       const userMessage = req.body.message || "";
@@ -608,7 +645,7 @@ function createApiRouter({ state, ollamaService, model }) {
       res.setHeader("Cache-Control", "no-cache");
 
       if (isExportCommand(userMessage)) {
-        const result = state.exportHistory(model);
+        const result = state.exportHistory(defaultModel);
         const message =
           "История экспортирована.\n\nJSON: " +
           result.jsonPath +
@@ -730,9 +767,13 @@ function createApiRouter({ state, ollamaService, model }) {
         }
       ];
 
+      const selectedModel = coderMode
+        ? ollamaService.getModels().coder
+        : ollamaService.getModels().chat;
+
       let reply = await ollamaService.streamChat(messages, part => {
         res.write(part);
-      });
+      }, selectedModel);
 
       if (autoSaved) {
         const savedNote = "\n\n_Я сохранил новый факт в профиль: " + autoSaved + "_";
