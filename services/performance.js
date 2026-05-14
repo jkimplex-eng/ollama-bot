@@ -162,7 +162,7 @@ function createPerformanceService({
     return items.map(normalizeCampaign);
   }
 
-  async function getCampaignStats() {
+  async function getCampaignStats({ dateFrom, dateTo } = {}) {
     if (!isConfigured()) return [];
 
     const campaigns = await getCampaigns();
@@ -170,8 +170,8 @@ function createPerformanceService({
 
     const body = {
       campaign_ids: campaigns.map(item => item.campaignId),
-      from: formatDate(),
-      to: formatDate()
+      from: formatDate(dateFrom),
+      to: formatDate(dateTo)
     };
 
     const data = await requestPerformance("/api/client/statistics/json", {
@@ -188,7 +188,7 @@ function createPerformanceService({
     });
   }
 
-  async function getCampaignSkuStats() {
+  async function getCampaignSkuStats({ dateFrom, dateTo } = {}) {
     if (!isConfigured()) return [];
 
     const campaigns = await getCampaigns();
@@ -196,8 +196,8 @@ function createPerformanceService({
 
     const body = {
       campaign_ids: campaigns.map(item => item.campaignId),
-      from: formatDate(),
-      to: formatDate(),
+      from: formatDate(dateFrom),
+      to: formatDate(dateTo),
       group_by: "sku"
     };
 

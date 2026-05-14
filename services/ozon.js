@@ -38,9 +38,9 @@ function createOzonService({ clientId, apiKey }) {
 
     if (Array.isArray(stocks)) {
       const total = stocks.reduce((sum, item) => {
-      const value = item.present ?? item.stock ?? item.available ?? 0;
-      return sum + Number(value || 0);
-    }, 0);
+        const value = item.present ?? item.stock ?? item.available ?? 0;
+        return sum + Number(value || 0);
+      }, 0);
 
       return total;
     }
@@ -169,7 +169,55 @@ function createOzonService({ clientId, apiKey }) {
     return data.result || data;
   }
 
+  async function getFboPostings({ dateFrom, dateTo, lastId = "", limit = 1000 }) {
+    const data = await requestOzon("/v3/posting/fbo/list", {
+      dir: "ASC",
+      filter: {
+        since: dateFrom,
+        to: dateTo
+      },
+      limit,
+      offset: 0,
+      with: {
+        analytics_data: true,
+        financial_data: true
+      }
+    });
+
+    const result = data.result || data;
+    return {
+      postings: result.postings || result.items || [],
+      has_next: Boolean(result.has_next),
+      last_id: lastId
+    };
+  }
+
+  async function getFbsPostings({ dateFrom, dateTo, lastId = "", limit = 1000 }) {
+    const data = await requestOzon("/v3/posting/fbs/list", {
+      dir: "ASC",
+      filter: {
+        since: dateFrom,
+        to: dateTo
+      },
+      limit,
+      last_id: lastId,
+      with: {
+        analytics_data: true,
+        financial_data: true
+      }
+    });
+
+    const result = data.result || data;
+    return {
+      postings: result.postings || result.items || [],
+      has_next: Boolean(result.has_next),
+      last_id: result.last_id || ""
+    };
+  }
+
   return {
+    getFboPostings,
+    getFbsPostings,
     getFinanceTransactions,
     getProducts,
     getStocks

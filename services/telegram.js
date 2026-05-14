@@ -7,11 +7,14 @@ const TELEGRAM_MESSAGE_LIMIT = 4000;
 function getHelpText() {
   return [
     "Команды:",
+    "/chatid",
     "/daily",
     "/daily вчера",
     "/daily today",
     "/daily 2026-05-13",
     "/daily 2026-05-13 2026-05-14",
+    "/daily debug 2026-05-13",
+    "/daily raw 2026-05-13",
     "/analytics",
     "/analytics продажи",
     "/analytics реклама",
@@ -253,6 +256,11 @@ function startTelegramBot({
 
     if (!text || text.startsWith("/start")) return;
 
+    if (text === "/chatid") {
+      await tgBot.sendMessage(chatId, "Your chat id: " + msg.chat.id);
+      return;
+    }
+
     if (text.startsWith("/sheet ")) {
       try {
         const raw = text.replace("/sheet ", "").trim();
@@ -357,7 +365,23 @@ function startTelegramBot({
     const dailyCommand = parseDailyCommand(text);
 
     if (dailyCommand) {
+      if (dailyCommand.kind === "invalid") {
+        await tgBot.sendMessage(chatId, dailyCommand.error);
+        return;
+      }
+
       try {
+        if (dailyCommand.kind === "debug" || dailyCommand.kind === "raw") {
+          await tgBot.sendMessage(chatId, "Собираю diagnostics по Ozon...");
+          const result = await dailySummaryService.generateDiagnosticsReport(
+            dailyCommand.dateFrom,
+            dailyCommand.dateTo,
+            { rawOnly: dailyCommand.kind === "raw" }
+          );
+          await sendLongMessage(tgBot, chatId, result.reportText);
+          return;
+        }
+
         await tgBot.sendMessage(chatId, "Готовлю дневной P&L отчёт...");
         const result = await dailySummaryService.generateDailySummary(
           dailyCommand.dateFrom,

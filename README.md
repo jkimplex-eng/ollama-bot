@@ -84,6 +84,8 @@ Alerts:
 - `/daily today`
 - `/daily 2026-05-13`
 - `/daily 2026-05-13 2026-05-14`
+- `/daily debug 2026-05-13`
+- `/daily raw 2026-05-13`
 - `/analytics`
 - `/analytics продажи`
 - `/analytics реклама`
@@ -200,7 +202,19 @@ Daily P&L:
 - отчёт сохраняется в `reports/daily/YYYY-MM-DD.md`
 - summary уходит в Telegram
 - данные пишутся в `Daily_PL`, `SKU_PL`, `PL_History`
+- raw данные пишутся в `Ozon_Finance_Raw`, `Ozon_Orders_Raw`, `Ozon_PL_Diagnostics`
 - если есть `data/cogs.json`, бот использует локальную себестоимость по SKU
+- diagnostics доступны через `/daily debug YYYY-MM-DD` и `/daily raw YYYY-MM-DD`
+- выручка и заказы берутся из postings API, а не из списаний finance API
+- реклама берётся только из Performance API или явных рекламных операций в finance
+- прибыль считается только если есть выручка, fees и настроенный COGS
+
+Ограничения данных:
+
+- finance данные Ozon могут приходить с лагом
+- postings и finance за один день могут не совпадать по времени появления
+- без `data/cogs.json` бот не рассчитывает прибыль, а пишет, что COGS не настроен
+- если в finance есть только списания или корректировки без продаж, бот показывает предупреждение вместо фейкового P&L
 
 ## External cron
 
