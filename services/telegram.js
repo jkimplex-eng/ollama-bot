@@ -24,6 +24,7 @@ function getHelpText() {
     "/analytics проблемы",
     "/performance campaigns",
     "/performance stats 2026-05-01 2026-05-14",
+    "/performance stats активные 2026-05-01 2026-05-14",
     "/performance stats в таблицу 2026-05-01 2026-05-14",
     "/performance report <uuid>",
     "/performance report в таблицу <uuid>",
@@ -94,16 +95,17 @@ function parsePerformanceCommand(text) {
   }
 
   const statsMatch = normalized.match(
-    /^\/performance\s+stats(?:\s+(в\s+таблицу))?\s+(\d{4}-\d{2}-\d{2})\s+(\d{4}-\d{2}-\d{2})$/
+    /^\/performance\s+stats(?:\s+(активные))?(?:\s+(в\s+таблицу))?\s+(\d{4}-\d{2}-\d{2})\s+(\d{4}-\d{2}-\d{2})$/
   );
 
   if (!statsMatch) return null;
 
   return {
     type: "stats",
-    toSheet: Boolean(statsMatch[1]),
-    dateFrom: statsMatch[2],
-    dateTo: statsMatch[3]
+    activeOnly: Boolean(statsMatch[1]),
+    toSheet: Boolean(statsMatch[2]),
+    dateFrom: statsMatch[3],
+    dateTo: statsMatch[4]
   };
 }
 
@@ -262,9 +264,11 @@ function formatPendingReports(reports) {
     .map(item => {
       return [
         "UUID: " + item.uuid,
+        "Request Group: " + (item.requestGroupId || "-"),
         "Type: " + (item.reportType || "-"),
         "Range: " + (item.dateFrom || "-") + " -> " + (item.dateTo || "-"),
-        "Status: " + (item.status || "-")
+        "Status: " + (item.status || "-"),
+        "Chunk: " + (item.chunkIndex || "-") + "/" + (item.totalChunks || "-")
       ].join("\n");
     })
     .join("\n\n");
@@ -280,6 +284,33 @@ function formatPerformanceSummary(summary, uuid) {
     "Orders: " + summary.orders,
     "Revenue: " + summary.revenue
   ].join("\n");
+}
+
+function formatCreatedReports(created) {
+  const lines = [];
+
+  if (created.campaignsCount > 10) {
+    lines.push("Найдено " + created.campaignsCount + " кампаний. Создаю отчёты пачками по 10.");
+  } else {
+    lines.push("Создал отчёт Performance.");
+  }
+
+  lines.push("Request Group: " + created.requestGroupId);
+  lines.push("UUIDs:");
+
+  for (const report of created.reports) {
+    lines.push(
+      "- " +
+        report.uuid +
+        " (chunk " +
+        report.chunkIndex +
+        "/" +
+        report.totalChunks +
+        ")"
+    );
+  }
+
+  return lines.join("\n");
 }
 
 function formatHealthInfo() {
@@ -594,21 +625,44 @@ function startTelegramBot({
 
         if (performanceCommand.toSheet) {
           await tgBot.sendMessage(chatId, "Создал отчёт...");
-          const report = await performanceService.createStatsReport({
+          const created = await performanceService.createStatsReport({
             dateFrom: performanceCommand.dateFrom,
-            dateTo: performanceCommand.dateTo
+            dateTo: performanceCommand.dateTo,
+            activeOnly: performanceCommand.activeOnly
           });
 
-          await tgBot.sendMessage(chatId, "Жду готовность...");
+          if (created.campaignsCount > 10) {
+            await tgBot.sendMessage(
+              chatId,
+              "Найдено " + created.campaignsCount + " кампаний. Создаю отчёты пачками по 10."
+            );
+          }
 
-          try {
-            await performanceService.waitForReport(report.uuid, 10, 10_000);
-            await tgBot.sendMessage(chatId, "Отчёт готов, скачиваю...");
-            const resolved = await performanceService.resolveReport(report.uuid);
+          const combinedRows = [];
+          const pendingUuids = [];
+
+          for (const report of created.reports) {
+            await tgBot.sendMessage(chatId, "Жду готовность... " + report.uuid);
 
             try {
+              await performanceService.waitForReport(report.uuid, 10, 10_000);
+              await tgBot.sendMessage(chatId, "Отчёт готов, скачиваю... " + report.uuid);
+              const resolved = await performanceService.resolveReport(report.uuid);
+              combinedRows.push(...resolved.rows);
+            } catch (err) {
+              if (err.code === "PERFORMANCE_REPORT_PENDING") {
+                pendingUuids.push(report.uuid);
+                continue;
+              }
+
+              throw err;
+            }
+          }
+
+          if (combinedRows.length) {
+            try {
               const writeResult = await performanceService.writeStatsToMappedSheet({
-                rows: resolved.rows
+                rows: combinedRows
               });
               await tgBot.sendMessage(
                 chatId,
@@ -620,30 +674,24 @@ function startTelegramBot({
                 "Performance data was received, but Sheets write failed: " + sheetError.message
               );
             }
-          } catch (err) {
-            if (err.code === "PERFORMANCE_REPORT_PENDING") {
-              await tgBot.sendMessage(
-                chatId,
-                "Отчёт Performance создан и готовится. Повтори команду через 1-2 минуты или используй /performance report " +
-                  report.uuid
-              );
-              return;
-            }
+          }
 
-            throw err;
+          if (pendingUuids.length) {
+            await tgBot.sendMessage(
+              chatId,
+              "Часть отчётов ещё не готова. Повтори позже:\n" +
+                pendingUuids.map(uuid => "/performance report " + uuid).join("\n")
+            );
           }
           return;
         }
 
-        const report = await performanceService.createStatsReport({
+        const created = await performanceService.createStatsReport({
           dateFrom: performanceCommand.dateFrom,
-          dateTo: performanceCommand.dateTo
+          dateTo: performanceCommand.dateTo,
+          activeOnly: performanceCommand.activeOnly
         });
-        await tgBot.sendMessage(
-          chatId,
-          "Отчёт Performance создан и готовится. Повтори команду через 1-2 минуты или используй /performance report " +
-            report.uuid
-        );
+        await sendLongMessage(tgBot, chatId, formatCreatedReports(created));
       } catch (err) {
         await tgBot.sendMessage(chatId, "Ошибка Performance API: " + err.message);
       }

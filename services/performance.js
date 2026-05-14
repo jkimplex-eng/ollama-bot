@@ -33,6 +33,20 @@ function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function chunkArray(items, size) {
+  const chunks = [];
+
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+
+  return chunks;
+}
+
+function createRequestGroupId() {
+  return "perf-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8);
+}
+
 function ensureParentDir(filePath) {
   const dir = path.dirname(filePath);
   if (!fs.existsSync(dir)) {
@@ -388,7 +402,20 @@ function createPerformanceService({
     return items.map(normalizeCampaign);
   }
 
-  async function createStatisticsReportRequest({ campaignIds, dateFrom, dateTo, reportType = "stats" }) {
+  async function createStatisticsReportRequest({
+    campaignIds,
+    dateFrom,
+    dateTo,
+    reportType = "stats",
+    requestGroupId = "",
+    chunkIndex = 0,
+    totalChunks = 1,
+    campaignFilter = "all"
+  }) {
+    if (campaignIds.length > 10) {
+      throw new Error("Performance statistics request cannot contain more than 10 campaigns.");
+    }
+
     const data = await requestJson("/api/client/statistics", {
       method: "POST",
       body: {
@@ -408,6 +435,11 @@ function createPerformanceService({
       dateFrom: formatDate(dateFrom),
       dateTo: formatDate(dateTo),
       reportType,
+      requestGroupId,
+      chunkIndex,
+      totalChunks,
+      campaignIds,
+      campaignFilter,
       status: "pending"
     });
 
@@ -530,31 +562,62 @@ function createPerformanceService({
     };
   }
 
-  async function createStatsReport({ dateFrom, dateTo }) {
+  async function createStatsReport({ dateFrom, dateTo, activeOnly = false }) {
     if (!isConfigured()) return null;
 
     const campaigns = await getCampaigns();
-    const report = await createStatisticsReportRequest({
-      campaignIds: campaigns.map(item => item.campaignId),
-      dateFrom,
-      dateTo,
-      reportType: "stats"
-    });
+    const filteredCampaigns = activeOnly
+      ? campaigns.filter(item => String(item.status || "").toLowerCase().includes("active"))
+      : campaigns;
+    const campaignChunks = chunkArray(
+      filteredCampaigns.map(item => item.campaignId),
+      10
+    );
+    const requestGroupId = createRequestGroupId();
+    const reports = [];
+
+    for (let index = 0; index < campaignChunks.length; index += 1) {
+      const report = await createStatisticsReportRequest({
+        campaignIds: campaignChunks[index],
+        dateFrom,
+        dateTo,
+        reportType: "stats",
+        requestGroupId,
+        chunkIndex: index + 1,
+        totalChunks: campaignChunks.length,
+        campaignFilter: activeOnly ? "active" : "all"
+      });
+      reports.push(report);
+    }
 
     return {
-      ...report,
-      campaignsCount: campaigns.length
+      requestGroupId,
+      campaignsCount: filteredCampaigns.length,
+      totalCampaigns: campaigns.length,
+      activeOnly,
+      reports
     };
   }
 
-  async function getCampaignStats({ dateFrom, dateTo } = {}) {
-    const report = await createStatsReport({ dateFrom, dateTo });
-    const resolved = await waitForReport(report.uuid);
-    if (!resolved.ready) {
-      throw createPendingReportError(report.uuid);
+  async function resolveRequestReports(reports) {
+    const combinedRows = [];
+
+    for (const report of reports) {
+      const resolved = await waitForReport(report.uuid);
+      if (!resolved.ready) {
+        throw createPendingReportError(report.uuid);
+      }
+
+      const reportData = await resolveReport(report.uuid);
+      combinedRows.push(...reportData.rows);
     }
 
-    return (await resolveReport(report.uuid)).rows;
+    return combinedRows;
+  }
+
+  async function getCampaignStats({ dateFrom, dateTo, activeOnly = false } = {}) {
+    const created = await createStatsReport({ dateFrom, dateTo, activeOnly });
+    return resolveRequestReports(created.reports);
   }
 
   function campaignsToRows(campaigns) {
@@ -663,6 +726,7 @@ function createPerformanceService({
   }
 
   return {
+    chunkArray,
     campaignsToRows,
     createStatsReport,
     debugSummary,
@@ -675,6 +739,7 @@ function createPerformanceService({
     listPendingReports,
     normalizeStatsFromCsv,
     resolveReport,
+    resolveRequestReports,
     statsToRows,
     summarizeStats,
     waitForReport,

@@ -26,6 +26,18 @@ function run() {
     parsePerformanceCommand("/performance stats 2026-05-01 2026-05-14"),
     {
       type: "stats",
+      activeOnly: false,
+      toSheet: false,
+      dateFrom: "2026-05-01",
+      dateTo: "2026-05-14"
+    }
+  );
+
+  assert.deepStrictEqual(
+    parsePerformanceCommand("/performance stats активные 2026-05-01 2026-05-14"),
+    {
+      type: "stats",
+      activeOnly: true,
       toSheet: false,
       dateFrom: "2026-05-01",
       dateTo: "2026-05-14"
@@ -54,6 +66,7 @@ function run() {
     parsePerformanceCommand("/performance stats в таблицу 2026-05-01 2026-05-14"),
     {
       type: "stats",
+      activeOnly: false,
       toSheet: true,
       dateFrom: "2026-05-01",
       dateTo: "2026-05-14"
