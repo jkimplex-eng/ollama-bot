@@ -173,7 +173,7 @@ function buildCompactPayload(topic, products, stocks, jobsStatus, performance) {
       products: products.length > 0,
       stocks: stocks.length > 0,
       directSalesMetrics: false,
-      directAdsMetrics: performance.stats.length > 0 || performance.skuStats.length > 0
+      directAdsMetrics: performance.stats.length > 0
     },
     performanceSummary: performance.summary,
     quickMetrics: {
@@ -189,7 +189,6 @@ function buildCompactPayload(topic, products, stocks, jobsStatus, performance) {
       status: item.status
     })),
     performanceStats: compactPerformanceRows(performance.stats),
-    performanceSkuStats: compactPerformanceRows(performance.skuStats),
     strongProducts,
     weakProducts,
     lowStockProducts,
@@ -282,21 +281,18 @@ function createAnalyticsService({ jobsService, ollamaService, ozonService, perfo
       return {
         campaigns: [],
         stats: [],
-        skuStats: [],
         summary: null
       };
     }
 
-    const [campaigns, stats, skuStats] = await Promise.all([
+    const [campaigns, stats] = await Promise.all([
       performanceService.getCampaigns().catch(() => []),
-      performanceService.getCampaignStats().catch(() => []),
-      performanceService.getCampaignSkuStats().catch(() => [])
+      performanceService.getCampaignStats().catch(() => [])
     ]);
 
     return {
       campaigns: campaigns.slice(0, MAX_PERFORMANCE_ROWS),
       stats: stats.slice(0, MAX_PERFORMANCE_ROWS),
-      skuStats: skuStats.slice(0, MAX_PERFORMANCE_ROWS),
       summary: summarizePerformance(stats)
     };
   }

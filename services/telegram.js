@@ -2,7 +2,7 @@ const TelegramBot = require("node-telegram-bot-api");
 const env = require("../config/env");
 const { parseDailyCommand } = require("./dailySummary");
 
-const OZON_PRODUCTS_SHEET = "Ozon";
+const OZON_PRODUCTS_SHEET = "products";
 const TELEGRAM_MESSAGE_LIMIT = 4000;
 
 function getHelpText() {
@@ -23,8 +23,9 @@ function getHelpText() {
     "/analytics остатки",
     "/analytics проблемы",
     "/performance campaigns",
-    "/performance stats",
-    "/performance sku",
+    "/performance stats 2026-05-01 2026-05-14",
+    "/performance stats в таблицу 2026-05-01 2026-05-14",
+    "/performance debug",
     "/ai strategy",
     "/ai quick",
     "/ai actions",
@@ -64,8 +65,27 @@ function parseAnalyticsCommand(text) {
 
 function parsePerformanceCommand(text) {
   const normalized = text.trim().replace(/\s+/g, " ").toLowerCase();
-  const match = normalized.match(/^\/performance\s+(campaigns|stats|sku)$/);
-  return match ? match[1] : null;
+
+  if (normalized === "/performance campaigns") {
+    return { type: "campaigns" };
+  }
+
+  if (normalized === "/performance debug") {
+    return { type: "debug" };
+  }
+
+  const statsMatch = normalized.match(
+    /^\/performance\s+stats(?:\s+(в\s+таблицу))?\s+(\d{4}-\d{2}-\d{2})\s+(\d{4}-\d{2}-\d{2})$/
+  );
+
+  if (!statsMatch) return null;
+
+  return {
+    type: "stats",
+    toSheet: Boolean(statsMatch[1]),
+    dateFrom: statsMatch[2],
+    dateTo: statsMatch[3]
+  };
 }
 
 function parseAiCommand(text) {
@@ -121,6 +141,7 @@ function productToSheetRow(product) {
   return [
     product.name ?? "",
     product.sku ?? product.offerId ?? product.productId ?? "",
+    product.offerId ?? "",
     product.price ?? "",
     product.stock ?? ""
   ];
@@ -188,6 +209,25 @@ function formatPerformanceRows(rows) {
         "Выручка: " + (row.revenue ?? "-"),
         "ДРР: " + (row.drr ?? "-"),
         "ROAS: " + (row.roas ?? "-")
+      ].join("\n");
+    })
+    .join("\n\n");
+}
+
+function formatPerformanceCampaigns(rows) {
+  if (!rows.length) {
+    return "Кампании Performance API не найдены.";
+  }
+
+  return rows
+    .slice(0, 20)
+    .map(row => {
+      return [
+        "Campaign ID: " + (row.campaignId || "-"),
+        "Campaign Name: " + (row.campaignName || "-"),
+        "State: " + (row.status || "-"),
+        "Type: " + (row.advObjectType || "-"),
+        "Payment Type: " + (row.paymentType || "-")
       ].join("\n");
     })
     .join("\n\n");
@@ -299,7 +339,7 @@ function startTelegramBot({
         }
 
         await sheetsService.addRow(sheetName, row);
-        await tgBot.sendMessage(chatId, "Записал строку в Google Таблицу ✅");
+        await tgBot.sendMessage(chatId, "Записал строку в Google Таблицу: " + sheetName + " ✅");
       } catch (err) {
         await tgBot.sendMessage(chatId, "Ошибка записи в таблицу: " + err.message);
       }
@@ -448,7 +488,18 @@ function startTelegramBot({
 
     const performanceCommand = parsePerformanceCommand(text);
 
-    if (performanceCommand) {
+    if (performanceCommand && performanceCommand.type === "debug") {
+      try {
+        const debug = await performanceService.debugSummary();
+        await sendLongMessage(tgBot, chatId, JSON.stringify(debug, null, 2));
+      } catch (err) {
+        await tgBot.sendMessage(chatId, "Ошибка Performance debug: " + err.message);
+      }
+
+      return;
+    }
+
+    if (performanceCommand && performanceCommand.type === "campaigns") {
       try {
         if (!performanceService.isConfigured()) {
           await tgBot.sendMessage(
@@ -458,38 +509,52 @@ function startTelegramBot({
           return;
         }
 
-        await tgBot.sendMessage(chatId, "Забираю данные Performance API...");
+        await tgBot.sendMessage(chatId, "Забираю кампании Performance API...");
+        const rows = await performanceService.getCampaigns();
+        await sendLongMessage(tgBot, chatId, formatPerformanceCampaigns(rows));
+      } catch (err) {
+        await tgBot.sendMessage(chatId, "Ошибка Performance API: " + err.message);
+      }
 
-        if (performanceCommand === "campaigns") {
-          const rows = await performanceService.syncCampaignsToSheets();
-          await sendLongMessage(
-            tgBot,
+      return;
+    }
+
+    if (performanceCommand && performanceCommand.type === "stats") {
+      try {
+        if (!performanceService.isConfigured()) {
+          await tgBot.sendMessage(
             chatId,
-            "Кампании выгружены в Ozon_Performance_Campaigns.\n\n" +
-              rows
-                .slice(0, 20)
-                .map(item => item.campaignId + " | " + item.campaignName)
-                .join("\n")
+            "Performance API не настроен: проверь OZON_PERFORMANCE_CLIENT_ID и OZON_PERFORMANCE_CLIENT_SECRET."
           );
           return;
         }
 
-        if (performanceCommand === "stats") {
-          const rows = await performanceService.syncStatsToSheets();
-          await sendLongMessage(
-            tgBot,
-            chatId,
-            "Статистика выгружена в Ozon_Performance_Stats.\n\n" + formatPerformanceRows(rows)
-          );
+        await tgBot.sendMessage(chatId, "Забираю статистику Performance API...");
+        const stats = await performanceService.getCampaignStats({
+          dateFrom: performanceCommand.dateFrom,
+          dateTo: performanceCommand.dateTo
+        });
+
+        if (performanceCommand.toSheet) {
+          try {
+            const writeResult = await sheetsService.clearAndWriteMappedRows(
+              "performance_stats",
+              performanceService.statsToRows(stats)
+            );
+            await tgBot.sendMessage(
+              chatId,
+              "Записал " + writeResult.rowsWritten + " строк в " + writeResult.tabName
+            );
+          } catch (sheetError) {
+            await tgBot.sendMessage(
+              chatId,
+              "Performance data received, but Sheets write failed: " + sheetError.message
+            );
+          }
           return;
         }
 
-        const rows = await performanceService.syncSkuStatsToSheets();
-        await sendLongMessage(
-          tgBot,
-          chatId,
-          "SKU-статистика выгружена в Ozon_Performance_SKU.\n\n" + formatPerformanceRows(rows)
-        );
+        await sendLongMessage(tgBot, chatId, formatPerformanceRows(stats));
       } catch (err) {
         await tgBot.sendMessage(chatId, "Ошибка Performance API: " + err.message);
       }
@@ -530,12 +595,9 @@ function startTelegramBot({
         }
 
         if (ozonProductsCommand.toSheet) {
-          const rows = [
-            ["Название", "SKU", "Цена", "Остаток"],
-            ...products.map(productToSheetRow)
-          ];
+          const rows = products.map(productToSheetRow);
 
-          await sheetsService.addRows(OZON_PRODUCTS_SHEET, rows);
+          await sheetsService.clearAndWriteMappedRows(OZON_PRODUCTS_SHEET, rows);
           await tgBot.sendMessage(
             chatId,
             "Записал товары Ozon в Google Таблицу: " + products.length

@@ -1,8 +1,8 @@
 const fs = require("fs");
 const path = require("path");
 
-const PRODUCT_SHEET = "Ozon Products";
-const STOCKS_SHEET = "Ozon Stocks";
+const PRODUCT_SHEET = "products";
+const STOCKS_SHEET = "stocks";
 
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -12,15 +12,18 @@ function productToSheetRow(product) {
   return [
     product.name ?? "",
     product.sku ?? product.offerId ?? product.productId ?? "",
+    product.offerId ?? "",
     product.price ?? "",
     product.stock ?? ""
   ];
 }
 
-function rowsWithHeader(products) {
+function stockToSheetRow(product) {
   return [
-    ["Название", "SKU", "Цена", "Остаток"],
-    ...products.map(productToSheetRow)
+    product.name ?? "",
+    product.sku ?? product.offerId ?? product.productId ?? "",
+    product.offerId ?? "",
+    product.stock ?? ""
   ];
 }
 
@@ -166,9 +169,9 @@ function createJobsService({
   async function syncProducts() {
     return runJob("products", async () => {
       const products = await ozonService.getProducts(productLimit);
-      const rows = rowsWithHeader(products);
+      const rows = products.map(productToSheetRow);
 
-      await sheetsService.addRows(PRODUCT_SHEET, rows);
+      await sheetsService.clearAndWriteMappedRows(PRODUCT_SHEET, rows);
       return { rows: products.length };
     });
   }
@@ -176,9 +179,9 @@ function createJobsService({
   async function syncStocks() {
     return runJob("stocks", async () => {
       const stocks = await ozonService.getStocks(stockLimit);
-      const rows = rowsWithHeader(stocks);
+      const rows = stocks.map(stockToSheetRow);
 
-      await sheetsService.addRows(STOCKS_SHEET, rows);
+      await sheetsService.clearAndWriteMappedRows(STOCKS_SHEET, rows);
       return { rows: stocks.length };
     });
   }
@@ -276,5 +279,5 @@ module.exports = {
   STOCKS_SHEET,
   createJobsService,
   productToSheetRow,
-  rowsWithHeader
+  stockToSheetRow
 };

@@ -830,7 +830,7 @@ function createDailySummaryService({
   }
 
   async function writeSheets(label, diagnostics) {
-    await sheetsService.addRow("Daily_PL", [
+    await sheetsService.addRow("daily_summary", [
       label,
       diagnostics.summary.revenue,
       diagnostics.summary.payout,
@@ -845,7 +845,7 @@ function createDailySummaryService({
     ]);
 
     await sheetsService.addRows(
-      "SKU_PL",
+      "daily_sku",
       diagnostics.ordersSummary.bySku.map(row => [
         row.date,
         row.sku,
@@ -856,7 +856,7 @@ function createDailySummaryService({
       ])
     );
 
-    await sheetsService.addRow("PL_History", [
+    await sheetsService.addRow("daily_history", [
       label,
       diagnostics.summary.revenue,
       diagnostics.summary.payout,
@@ -867,9 +867,9 @@ function createDailySummaryService({
       diagnostics.summary.warnings.join(" | ")
     ]);
 
-    await sheetsService.addRows(FINANCE_RAW_SHEET, buildFinanceRawRows(label, diagnostics.financeTransactions));
-    await sheetsService.addRows(ORDERS_RAW_SHEET, buildOrdersRawRows(label, diagnostics.postings));
-    await sheetsService.addRows(DIAGNOSTICS_SHEET, buildDiagnosticsRows(label, diagnostics));
+    await sheetsService.addRows("finance_raw", buildFinanceRawRows(label, diagnostics.financeTransactions).slice(1));
+    await sheetsService.addRows("orders_raw", buildOrdersRawRows(label, diagnostics.postings).slice(1));
+    await sheetsService.addRows("pl_diagnostics", buildDiagnosticsRows(label, diagnostics).slice(1));
   }
 
   async function sendReport(reportPath, reportText) {
