@@ -429,3 +429,31 @@ function jsonResponse(data) {
 - `/performance stats в таблицу 2026-05-01 2026-05-14`
 - `/performance debug`
 - `/ozon товары 10 в таблицу`
+
+## How to work with Codex safely
+
+- начинайте с небольших изменений
+- сначала читайте текущие сервисы и docs из `docs/`
+- не меняйте stable core без тестов
+- перед коммитом запускайте:
+  - `npm test`
+  - `npm run health`
+- не коммитьте `.env` и секреты
+- не делайте широких переписываний, если задача точечная
+
+Operator docs:
+
+- [docs/AGENT.md](</C:/Users/user/Documents/Codex/2026-05-13/github/ollama-bot/docs/AGENT.md:1>)
+- [docs/ROADMAP.md](</C:/Users/user/Documents/Codex/2026-05-13/github/ollama-bot/docs/ROADMAP.md:1>)
+- [docs/RUNBOOK.md](</C:/Users/user/Documents/Codex/2026-05-13/github/ollama-bot/docs/RUNBOOK.md:1>)
+
+## Stable Core
+
+Do not change stable core without tests. In practice this includes:
+
+- Telegram command routing
+- Google Sheets mapped writes
+- Ozon Seller core product flows
+- Ozon Performance report lifecycle
+- daily summary generation
+- startup and PM2 behavior
