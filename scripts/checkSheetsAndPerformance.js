@@ -26,6 +26,17 @@ function run() {
     toSheet: false
   });
 
+  assert.deepStrictEqual(parsePerformanceCommand("/performance campaigns debug active"), {
+    type: "campaigns_debug",
+    filter: "running"
+  });
+
+  assert.deepStrictEqual(parsePerformanceCommand("/performance campaigns running"), {
+    type: "campaigns",
+    filter: "running",
+    toSheet: false
+  });
+
   assert.deepStrictEqual(parsePerformanceCommand("/performance campaigns sku"), {
     type: "campaigns",
     filter: "sku",
@@ -44,11 +55,44 @@ function run() {
     toSheet: false
   });
 
+  assert.deepStrictEqual(parsePerformanceCommand("/performance campaigns в таблицу"), {
+    type: "campaigns",
+    filter: "",
+    toSheet: true
+  });
+
   assert.deepStrictEqual(
     parsePerformanceCommand("/performance campaigns active в таблицу"),
     {
       type: "campaigns",
       filter: "running",
+      toSheet: true
+    }
+  );
+
+  assert.deepStrictEqual(
+    parsePerformanceCommand("/performance campaigns sku в таблицу"),
+    {
+      type: "campaigns",
+      filter: "sku",
+      toSheet: true
+    }
+  );
+
+  assert.deepStrictEqual(
+    parsePerformanceCommand("/performance campaigns search_promo в таблицу"),
+    {
+      type: "campaigns",
+      filter: "search_promo",
+      toSheet: true
+    }
+  );
+
+  assert.deepStrictEqual(
+    parsePerformanceCommand("/performance campaigns banner в таблицу"),
+    {
+      type: "campaigns",
+      filter: "banner",
       toSheet: true
     }
   );
@@ -127,6 +171,11 @@ function run() {
       dateTo: "2026-05-14"
     }
   );
+
+  assert.strictEqual(parsePerformanceCommand("/performance campaigns active в таблицу extra"), null);
+  assert.strictEqual(parsePerformanceCommand("/performance limits extra"), null);
+  assert.strictEqual(parsePerformanceCommand("/performance minbid"), null);
+  assert.strictEqual(parsePerformanceCommand("/performance stats active 2026-05-01 2026-05-14"), null);
 
   console.log("Sheets/performance checks passed");
 }

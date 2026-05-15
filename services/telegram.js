@@ -24,6 +24,7 @@ function getHelpText() {
     "/analytics проблемы",
     "/performance campaigns",
     "/performance campaigns active",
+    "/performance campaigns debug active",
     "/performance campaigns running",
     "/performance campaigns sku",
     "/performance campaigns search_promo",
@@ -82,118 +83,47 @@ function parseAnalyticsCommand(text) {
 function parsePerformanceCommand(text) {
   const normalized = text.trim().replace(/\s+/g, " ").toLowerCase();
 
-  if (normalized === "/performance debug") {
-    return { type: "debug" };
-  }
-
-  if (normalized === "/performance queue" || normalized === "/performance pending") {
-    return { type: "queue" };
-  }
-
-  if (normalized === "/performance continue") {
-    return { type: "continue" };
-  }
-
-  if (normalized === "/performance reset") {
-    return { type: "reset" };
-  }
-
-  if (normalized === "/performance limits") {
-    return { type: "limits" };
-  }
-
-  const objectsMatch = normalized.match(/^\/performance\s+objects\s+(\d+)$/);
-
-  if (objectsMatch) {
-    return {
-      type: "objects",
-      campaignId: objectsMatch[1]
-    };
-  }
-
-  const minBidMatch = normalized.match(/^\/performance\s+minbid\s+(\d+)$/);
-
-  if (minBidMatch) {
-    return {
-      type: "minbid",
-      sku: minBidMatch[1]
-    };
-  }
-
-  const campaignTokens = normalized.split(" ");
-
-  if (campaignTokens[0] === "/performance" && campaignTokens[1] === "campaigns") {
-    const flags = new Set(campaignTokens.slice(2));
-    let filter = "";
-
-    if (flags.has("active") || flags.has("running")) {
-      filter = "running";
-    } else if (flags.has("sku")) {
-      filter = "sku";
-    } else if (flags.has("search_promo")) {
-      filter = "search_promo";
-    } else if (flags.has("banner")) {
-      filter = "banner";
-    }
-
-    return {
-      type: "campaigns",
-      filter,
-      toSheet: flags.has("таблицу")
-    };
-  }
-
-  const exportMatch = normalized.match(/^\/performance\s+export\s+([a-z0-9-]+)$/i);
-
-  if (exportMatch) {
-    return {
-      type: "export",
-      requestGroupId: exportMatch[1]
-    };
-  }
-
-  const reportMatch = normalized.match(/^\/performance\s+report\s+([a-z0-9-]+)$/i);
-
-  if (reportMatch) {
-    return {
-      type: "report",
-      uuid: reportMatch[1]
-    };
-  }
-
-  const statsTokens = normalized.split(" ");
-
-  if (statsTokens[0] === "/performance" && statsTokens[1] === "stats") {
-    const flags = new Set();
-    const dates = [];
-
-    for (const token of statsTokens.slice(2)) {
-      if (token === "активные") {
-        flags.add("active");
-        continue;
-      }
-
-      if (token === "в" || token === "таблицу") {
-        flags.add("sheet");
-        continue;
-      }
-
-      if (/^\d{4}-\d{2}-\d{2}$/.test(token)) {
-        dates.push(token);
-        continue;
-      }
-    }
-
-    if (dates.length === 2) {
-      return {
+  const commandPatterns = [
+    [/^\/performance debug$/, () => ({ type: "debug" })],
+    [/^\/performance campaigns debug active$/, () => ({ type: "campaigns_debug", filter: "running" })],
+    [/^\/performance(?: queue| pending)$/, () => ({ type: "queue" })],
+    [/^\/performance continue$/, () => ({ type: "continue" })],
+    [/^\/performance reset$/, () => ({ type: "reset" })],
+    [/^\/performance limits$/, () => ({ type: "limits" })],
+    [/^\/performance objects (\d+)$/, match => ({ type: "objects", campaignId: match[1] })],
+    [/^\/performance minbid (\d+)$/, match => ({ type: "minbid", sku: match[1] })],
+    [/^\/performance export ([a-z0-9-]+)$/i, match => ({ type: "export", requestGroupId: match[1] })],
+    [/^\/performance report ([a-z0-9-]+)$/i, match => ({ type: "report", uuid: match[1] })],
+    [
+      /^\/performance campaigns(?: (active|running|sku|search_promo|banner))?(?: в таблицу)?$/,
+      match => ({
+        type: "campaigns",
+        filter:
+          match[1] === "active" || match[1] === "running"
+            ? "running"
+            : match[1] || "",
+        toSheet: normalized.endsWith(" в таблицу")
+      })
+    ],
+    [
+      /^\/performance stats(?: (активные))?(?: в таблицу)? (\d{4}-\d{2}-\d{2}) (\d{4}-\d{2}-\d{2})$/,
+      match => ({
         type: "stats",
-        activeOnly: flags.has("active"),
-        toSheet: flags.has("sheet"),
-        dateFrom: dates[0],
-        dateTo: dates[1]
-      };
+        activeOnly: Boolean(match[1]),
+        toSheet: normalized.includes(" в таблицу "),
+        dateFrom: match[2],
+        dateTo: match[3]
+      })
+    ]
+  ];
+
+  for (const [pattern, build] of commandPatterns) {
+    const match = normalized.match(pattern);
+    if (match) {
+      return build(match);
     }
   }
+
   return null;
 }
 
@@ -727,226 +657,254 @@ function startTelegramBot({
 
     const performanceCommand = parsePerformanceCommand(text);
 
-    if (performanceCommand && performanceCommand.type === "debug") {
+    if (performanceCommand) {
       try {
-        const debug = await performanceService.debugSummary();
-        await sendLongMessage(tgBot, chatId, JSON.stringify(debug, null, 2));
-      } catch (err) {
-        await tgBot.sendMessage(chatId, "Ошибка Performance debug: " + err.message);
-      }
+        switch (performanceCommand.type) {
+          case "debug": {
+            const debug = await performanceService.debugSummary();
+            await sendLongMessage(tgBot, chatId, JSON.stringify(debug, null, 2));
+            return;
+          }
+          case "queue": {
+            await sendLongMessage(tgBot, chatId, formatQueueItems(performanceService.listQueue()));
+            return;
+          }
+          case "reset": {
+            performanceService.resetQueue();
+            await tgBot.sendMessage(chatId, "Локальная очередь Performance очищена.");
+            return;
+          }
+          case "continue": {
+            const result = await performanceService.continueQueue();
 
-      return;
-    }
+            if (result.state === "empty") {
+              await tgBot.sendMessage(chatId, "Очередь Performance пуста.");
+              return;
+            }
 
-    if (performanceCommand && performanceCommand.type === "queue") {
-      try {
-        await sendLongMessage(
-          tgBot,
-          chatId,
-          formatQueueItems(performanceService.listQueue())
-        );
-      } catch (err) {
-        await tgBot.sendMessage(chatId, "Ошибка Performance queue: " + err.message);
-      }
+            if (result.state === "pending") {
+              await tgBot.sendMessage(chatId, "Текущий отчёт ещё готовится.");
+              return;
+            }
 
-      return;
-    }
+            if (result.state === "started") {
+              await tgBot.sendMessage(chatId, "Запущен следующий отчёт: " + result.current.uuid);
+              return;
+            }
 
-    if (performanceCommand && performanceCommand.type === "reset") {
-      try {
-        performanceService.resetQueue();
-        await tgBot.sendMessage(chatId, "Локальная очередь Performance очищена.");
-      } catch (err) {
-        await tgBot.sendMessage(chatId, "Ошибка Performance reset: " + err.message);
-      }
+            if (result.state === "active_limit") {
+              await tgBot.sendMessage(
+                chatId,
+                "Текущий chunk завершён, но Ozon всё ещё держит лимит активных запросов. Повтори /performance continue позже."
+              );
+              return;
+            }
 
-      return;
-    }
-
-    if (performanceCommand && performanceCommand.type === "continue") {
-      try {
-        const result = await performanceService.continueQueue();
-
-        if (result.state === "empty") {
-          await tgBot.sendMessage(chatId, "Очередь Performance пуста.");
-          return;
-        }
-
-        if (result.state === "pending") {
-          await tgBot.sendMessage(chatId, "Текущий отчёт ещё готовится.");
-          return;
-        }
-
-        if (result.state === "started") {
-          await tgBot.sendMessage(
-            chatId,
-            "Запущен следующий отчёт: " + result.current.uuid
-          );
-          return;
-        }
-
-        if (result.state === "active_limit") {
-          await tgBot.sendMessage(
-            chatId,
-            "Текущий chunk завершён, но Ozon всё ещё держит лимит активных запросов. Повтори /performance continue позже."
-          );
-          return;
-        }
-
-        await tgBot.sendMessage(
-          chatId,
-          result.next
-            ? "Chunk " +
-                result.completed.chunkIndex +
-                "/" +
-                result.completed.totalChunks +
-                " готов. Запущен следующий отчёт: " +
-                result.next.uuid
-            : "Chunk " +
-                result.completed.chunkIndex +
-                "/" +
-                result.completed.totalChunks +
-                " готов. В очереди больше нет chunk-ов."
-        );
-      } catch (err) {
-        await tgBot.sendMessage(chatId, "Ошибка Performance continue: " + err.message);
-      }
-
-      return;
-    }
-
-    if (performanceCommand && performanceCommand.type === "campaigns") {
-      try {
-        if (!performanceService.isConfigured()) {
-          await tgBot.sendMessage(
-            chatId,
-            "Performance API не настроен: проверь OZON_PERFORMANCE_CLIENT_ID и OZON_PERFORMANCE_CLIENT_SECRET."
-          );
-          return;
-        }
-
-        await tgBot.sendMessage(chatId, "Забираю кампании Performance API...");
-        const filters = getCampaignFilters(performanceCommand.filter);
-
-        if (performanceCommand.toSheet) {
-          const campaigns = await performanceService.getCampaigns(filters);
-          let result;
-
-          try {
-            result = await performanceService.writeCampaignRowsToMappedSheet(campaigns);
-          } catch (sheetError) {
             await tgBot.sendMessage(
               chatId,
-              "Performance data was received but Sheets write failed: " + sheetError.message
+              result.next
+                ? "Chunk " +
+                    result.completed.chunkIndex +
+                    "/" +
+                    result.completed.totalChunks +
+                    " готов. Запущен следующий отчёт: " +
+                    result.next.uuid
+                : "Chunk " +
+                    result.completed.chunkIndex +
+                    "/" +
+                    result.completed.totalChunks +
+                    " готов. В очереди больше нет chunk-ов."
             );
             return;
           }
+          case "campaigns": {
+            if (!performanceService.isConfigured()) {
+              await tgBot.sendMessage(
+                chatId,
+                "Performance API не настроен: проверь OZON_PERFORMANCE_CLIENT_ID и OZON_PERFORMANCE_CLIENT_SECRET."
+              );
+              return;
+            }
 
+            await tgBot.sendMessage(chatId, "Забираю кампании Performance API...");
+            const filters = getCampaignFilters(performanceCommand.filter);
+
+            if (performanceCommand.toSheet) {
+              const campaigns = await performanceService.getCampaigns(filters);
+
+              try {
+                const result = await performanceService.writeCampaignRowsToMappedSheet(campaigns);
+                await tgBot.sendMessage(
+                  chatId,
+                  "Записал " + result.rowsWritten + " строк в " + result.tabName
+                );
+              } catch (sheetError) {
+                await tgBot.sendMessage(
+                  chatId,
+                  "Performance data was received but Sheets write failed: " + sheetError.message
+                );
+              }
+
+              return;
+            }
+
+            const rows = await performanceService.getCampaigns(filters);
+            await sendLongMessage(tgBot, chatId, formatPerformanceCampaigns(rows));
+            return;
+          }
+          case "campaigns_debug": {
+            if (!performanceService.isConfigured()) {
+              await tgBot.sendMessage(
+                chatId,
+                "Performance API не настроен: проверь OZON_PERFORMANCE_CLIENT_ID и OZON_PERFORMANCE_CLIENT_SECRET."
+              );
+              return;
+            }
+
+            const filters = getCampaignFilters(performanceCommand.filter);
+            const rows = await performanceService.getCampaigns(filters);
+            await sendLongMessage(
+              tgBot,
+              chatId,
+              JSON.stringify(rows.slice(0, 3), null, 2)
+            );
+            return;
+          }
+          case "objects": {
+            const campaigns = await performanceService.getCampaigns({
+              pageSize: 100,
+              campaignIds: [performanceCommand.campaignId]
+            });
+            const campaign = campaigns.find(item => item.campaignId === performanceCommand.campaignId);
+
+            if (campaign && campaign.advObjectType === "SEARCH_PROMO") {
+              await tgBot.sendMessage(
+                chatId,
+                "For SEARCH_PROMO campaigns another products endpoint is required and will be added separately."
+              );
+              return;
+            }
+
+            const objects = await performanceService.getCampaignObjects(performanceCommand.campaignId);
+            await sendLongMessage(
+              tgBot,
+              chatId,
+              "Campaign ID: " +
+                performanceCommand.campaignId +
+                "\n\n" +
+                formatPerformanceObjects(performanceCommand.campaignId, objects)
+            );
+            return;
+          }
+          case "limits": {
+            const limits = await performanceService.getBidLimits();
+            await sendLongMessage(tgBot, chatId, formatPerformanceLimits(limits));
+            return;
+          }
+          case "minbid": {
+            const result = await performanceService.getMinBidBySku(performanceCommand.sku);
+            await sendLongMessage(tgBot, chatId, formatMinBidResponse(performanceCommand.sku, result));
+            return;
+          }
+          case "stats": {
+            if (!performanceService.isConfigured()) {
+              await tgBot.sendMessage(
+                chatId,
+                "Performance API не настроен: проверь OZON_PERFORMANCE_CLIENT_ID и OZON_PERFORMANCE_CLIENT_SECRET."
+              );
+              return;
+            }
+
+            if (performanceCommand.toSheet) {
+              const created = await performanceService.createStatsQueue({
+                dateFrom: performanceCommand.dateFrom,
+                dateTo: performanceCommand.dateTo,
+                activeOnly: performanceCommand.activeOnly,
+                toSheet: true
+              });
+              await sendLongMessage(tgBot, chatId, formatCreatedReports(created));
+              await tgBot.sendMessage(
+                chatId,
+                "Когда все chunk-отчёты будут готовы, используй /performance export " +
+                  created.requestGroupId
+              );
+              return;
+            }
+
+            const created = await performanceService.createStatsQueue({
+              dateFrom: performanceCommand.dateFrom,
+              dateTo: performanceCommand.dateTo,
+              activeOnly: performanceCommand.activeOnly,
+              toSheet: false
+            });
+            await sendLongMessage(tgBot, chatId, formatCreatedReports(created));
+            return;
+          }
+          case "export": {
+            const result = await performanceService.exportGroup(performanceCommand.requestGroupId);
+
+            if (!result.ok) {
+              await tgBot.sendMessage(
+                chatId,
+                "Не все chunk-отчёты готовы. Не хватает:\n" +
+                  result.missing
+                    .map(item => "chunk " + item.chunkIndex + "/" + item.totalChunks + " | UUID: " + (item.uuid || "-"))
+                    .join("\n")
+              );
+              return;
+            }
+
+            await tgBot.sendMessage(
+              chatId,
+              "Записал " + result.writeResult.rowsWritten + " строк в " + result.writeResult.tabName
+            );
+            return;
+          }
+          case "report": {
+            if (!performanceService.isConfigured()) {
+              await tgBot.sendMessage(
+                chatId,
+                "Performance API не настроен: проверь OZON_PERFORMANCE_CLIENT_ID и OZON_PERFORMANCE_CLIENT_SECRET."
+              );
+              return;
+            }
+
+            const status = await performanceService.getReportStatus(performanceCommand.uuid);
+
+            if (!status.ready) {
+              await tgBot.sendMessage(
+                chatId,
+                "Отчёт Performance ещё готовится. Повтори команду через 1-2 минуты."
+              );
+              return;
+            }
+
+            await tgBot.sendMessage(chatId, "Отчёт готов, скачиваю...");
+            const resolved = await performanceService.resolveReport(performanceCommand.uuid);
+            const summary = performanceService.summarizeStats(resolved.rows);
+
+            await sendLongMessage(
+              tgBot,
+              chatId,
+              formatPerformanceSummary(summary, performanceCommand.uuid) +
+                "\n\n" +
+                formatPerformanceRows(resolved.rows)
+            );
+            return;
+          }
+          default:
+            return;
+        }
+      } catch (err) {
+        if (performanceCommand.type === "report" && err.code === "PERFORMANCE_REPORT_PENDING") {
           await tgBot.sendMessage(
             chatId,
-            "Записал " + result.rowsWritten + " строк в " + result.tabName
+            "Отчёт Performance ещё готовится. Повтори команду через 1-2 минуты."
           );
           return;
         }
 
-        const rows = await performanceService.getCampaigns(filters);
-        await sendLongMessage(tgBot, chatId, formatPerformanceCampaigns(rows));
-      } catch (err) {
-        await tgBot.sendMessage(chatId, "Ошибка Performance API: " + err.message);
-      }
-
-      return;
-    }
-
-    if (performanceCommand && performanceCommand.type === "objects") {
-      try {
-        const campaigns = await performanceService.getCampaigns({
-          pageSize: 100,
-          campaignIds: [performanceCommand.campaignId]
-        });
-        const campaign = campaigns.find(item => item.campaignId === performanceCommand.campaignId);
-
-        if (campaign && campaign.advObjectType === "SEARCH_PROMO") {
-          await tgBot.sendMessage(
-            chatId,
-            "For SEARCH_PROMO campaigns another products endpoint is required and will be added separately."
-          );
-          return;
-        }
-
-        const objects = await performanceService.getCampaignObjects(performanceCommand.campaignId);
-        await sendLongMessage(
-          tgBot,
-          chatId,
-          "Campaign ID: " +
-            performanceCommand.campaignId +
-            "\n\n" +
-            formatPerformanceObjects(performanceCommand.campaignId, objects)
-        );
-      } catch (err) {
-        await tgBot.sendMessage(chatId, "Ошибка Performance objects: " + err.message);
-      }
-
-      return;
-    }
-
-    if (performanceCommand && performanceCommand.type === "limits") {
-      try {
-        const limits = await performanceService.getBidLimits();
-        await sendLongMessage(tgBot, chatId, formatPerformanceLimits(limits));
-      } catch (err) {
-        await tgBot.sendMessage(chatId, "Ошибка Performance limits: " + err.message);
-      }
-
-      return;
-    }
-
-    if (performanceCommand && performanceCommand.type === "minbid") {
-      try {
-        const result = await performanceService.getMinBidBySku(performanceCommand.sku);
-        await sendLongMessage(tgBot, chatId, formatMinBidResponse(performanceCommand.sku, result));
-      } catch (err) {
-        await tgBot.sendMessage(chatId, "Ошибка Performance minbid: " + err.message);
-      }
-
-      return;
-    }
-
-    if (performanceCommand && performanceCommand.type === "stats") {
-      try {
-        if (!performanceService.isConfigured()) {
-          await tgBot.sendMessage(
-            chatId,
-            "Performance API не настроен: проверь OZON_PERFORMANCE_CLIENT_ID и OZON_PERFORMANCE_CLIENT_SECRET."
-          );
-          return;
-        }
-
-        if (performanceCommand.toSheet) {
-          const created = await performanceService.createStatsQueue({
-            dateFrom: performanceCommand.dateFrom,
-            dateTo: performanceCommand.dateTo,
-            activeOnly: performanceCommand.activeOnly,
-            toSheet: true
-          });
-          await sendLongMessage(tgBot, chatId, formatCreatedReports(created));
-          await tgBot.sendMessage(
-            chatId,
-            "Когда все chunk-отчёты будут готовы, используй /performance export " +
-              created.requestGroupId
-          );
-          return;
-        }
-
-        const created = await performanceService.createStatsQueue({
-          dateFrom: performanceCommand.dateFrom,
-          dateTo: performanceCommand.dateTo,
-          activeOnly: performanceCommand.activeOnly,
-          toSheet: false
-        });
-        await sendLongMessage(tgBot, chatId, formatCreatedReports(created));
-      } catch (err) {
-        if (err.code === "PERFORMANCE_ACTIVE_LIMIT") {
+        if (performanceCommand.type === "stats" && err.code === "PERFORMANCE_ACTIVE_LIMIT") {
           await tgBot.sendMessage(
             chatId,
             "Ozon ограничил активные отчёты. Состояние сохранено, повтори /performance continue позже."
@@ -954,82 +912,12 @@ function startTelegramBot({
           return;
         }
 
-        await tgBot.sendMessage(chatId, "Ошибка Performance API: " + err.message);
-      }
-
-      return;
-    }
-
-    if (performanceCommand && performanceCommand.type === "export") {
-      try {
-        const result = await performanceService.exportGroup(performanceCommand.requestGroupId);
-
-        if (!result.ok) {
-          await tgBot.sendMessage(
-            chatId,
-            "Не все chunk-отчёты готовы. Не хватает:\n" +
-              result.missing
-                .map(item => "chunk " + item.chunkIndex + "/" + item.totalChunks + " | UUID: " + (item.uuid || "-"))
-                .join("\n")
-          );
-          return;
-        }
-
         await tgBot.sendMessage(
           chatId,
-          "Записал " + result.writeResult.rowsWritten + " строк в " + result.writeResult.tabName
+          "Ошибка Performance " + performanceCommand.type + ": " + err.message
         );
-      } catch (err) {
-        await tgBot.sendMessage(chatId, "Ошибка Performance export: " + err.message);
+        return;
       }
-
-      return;
-    }
-
-    if (performanceCommand && performanceCommand.type === "report") {
-      try {
-        if (!performanceService.isConfigured()) {
-          await tgBot.sendMessage(
-            chatId,
-            "Performance API не настроен: проверь OZON_PERFORMANCE_CLIENT_ID и OZON_PERFORMANCE_CLIENT_SECRET."
-          );
-          return;
-        }
-
-        const status = await performanceService.getReportStatus(performanceCommand.uuid);
-
-        if (!status.ready) {
-          await tgBot.sendMessage(
-            chatId,
-            "Отчёт Performance ещё готовится. Повтори команду через 1-2 минуты."
-          );
-          return;
-        }
-
-        await tgBot.sendMessage(chatId, "Отчёт готов, скачиваю...");
-        const resolved = await performanceService.resolveReport(performanceCommand.uuid);
-        const summary = performanceService.summarizeStats(resolved.rows);
-
-        await sendLongMessage(
-          tgBot,
-          chatId,
-          formatPerformanceSummary(summary, performanceCommand.uuid) +
-            "\n\n" +
-            formatPerformanceRows(resolved.rows)
-        );
-      } catch (err) {
-        if (err.code === "PERFORMANCE_REPORT_PENDING") {
-          await tgBot.sendMessage(
-            chatId,
-            "Отчёт Performance ещё готовится. Повтори команду через 1-2 минуты."
-          );
-          return;
-        }
-
-        await tgBot.sendMessage(chatId, "Ошибка Performance report: " + err.message);
-      }
-
-      return;
     }
 
     const aiCommand = parseAiCommand(text);
