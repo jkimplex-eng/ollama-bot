@@ -1,5 +1,6 @@
 const assert = require("assert");
 const { getSheetMapping } = require("../config/sheetsMap");
+const { inferPaymentType, normalizeCampaign } = require("../services/performance");
 const { normalizeRows } = require("../services/sheets");
 const { parsePerformanceCommand } = require("../services/telegram");
 
@@ -176,6 +177,56 @@ function run() {
   assert.strictEqual(parsePerformanceCommand("/performance limits extra"), null);
   assert.strictEqual(parsePerformanceCommand("/performance minbid"), null);
   assert.strictEqual(parsePerformanceCommand("/performance stats active 2026-05-01 2026-05-14"), null);
+
+  assert.strictEqual(
+    inferPaymentType({
+      advObjectType: "SKU",
+      paymentType: "",
+      placementValues: ["PLACEMENT_TOP_PROMOTION"]
+    }),
+    "CPC_TOP / Поиск"
+  );
+
+  assert.strictEqual(
+    inferPaymentType({
+      advObjectType: "SEARCH_PROMO",
+      paymentType: "",
+      placementValues: []
+    }),
+    "CPO / Оплата за заказ"
+  );
+
+  assert.deepStrictEqual(
+    normalizeCampaign({
+      id: 123,
+      title: "Test campaign",
+      state: "CAMPAIGN_STATE_RUNNING",
+      advObjectType: "SKU",
+      paymentType: "",
+      budget: 0,
+      dailyBudget: 0,
+      weeklyBudget: 125000000,
+      placement: ["PLACEMENT_TOP_PROMOTION", "PLACEMENT_SEARCH_AND_CATEGORY"],
+      fromDate: "2026-05-01"
+    }),
+    {
+      campaignId: "123",
+      campaignName: "Test campaign",
+      status: "CAMPAIGN_STATE_RUNNING",
+      advObjectType: "SKU",
+      paymentType: "CPC_TOP / Поиск",
+      rawPaymentType: "",
+      fromDate: "2026-05-01",
+      toDate: "",
+      budget: 0,
+      dailyBudget: 0,
+      weeklyBudget: 125,
+      placement: "PLACEMENT_TOP_PROMOTION, PLACEMENT_SEARCH_AND_CATEGORY",
+      productCampaignMode: "",
+      createdAt: "",
+      updatedAt: ""
+    }
+  );
 
   console.log("Sheets/performance checks passed");
 }

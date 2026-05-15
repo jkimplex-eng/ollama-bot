@@ -266,11 +266,9 @@ function formatPerformanceCampaigns(rows) {
         "Campaign Name: " + (row.campaignName || "-"),
         "State: " + (row.status || "-"),
         "Type: " + (row.advObjectType || "-"),
-        "Payment Type: " + (row.paymentType || "-"),
+        "Payment Type: " + (row.paymentType ?? ""),
         "From Date: " + (row.fromDate || "-"),
-        "To Date: " + (row.toDate || "-"),
-        "Budget: " + (row.budget === "" ? "-" : row.budget),
-        "Daily Budget: " + (row.dailyBudget === "" ? "-" : row.dailyBudget),
+        "Weekly Budget: " + (row.weeklyBudget === "" ? "-" : row.weeklyBudget),
         "Placement: " + (row.placement || "-")
       ].join("\n");
     })

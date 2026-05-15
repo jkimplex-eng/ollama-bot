@@ -115,23 +115,64 @@ function normalizeCampaign(item) {
   const dailyBudget = toNumber(item.dailyBudget);
   const budget = toNumber(item.budget);
   const weeklyBudget = toNumber(item.weeklyBudget);
+  const advObjectType = item.advObjectType ?? item.adv_object_type ?? "";
+  const rawPaymentType = item.paymentType ?? "";
+  const placementValues = Array.isArray(item.placement)
+    ? item.placement.filter(Boolean)
+    : item.placement
+      ? [item.placement]
+      : [];
+  const placement = placementValues.join(", ");
 
   return {
     campaignId: String(item.id ?? ""),
     campaignName: item.title ?? "",
     status: item.state ?? "",
-    advObjectType: item.advObjectType ?? item.adv_object_type ?? "",
-    paymentType: item.paymentType ?? "",
+    advObjectType,
+    paymentType: inferPaymentType({
+      advObjectType,
+      paymentType: rawPaymentType,
+      placementValues
+    }),
+    rawPaymentType,
     fromDate: item.fromDate ?? "",
     toDate: item.toDate ?? "",
     budget: budget === null ? "" : budget / 1_000_000,
     dailyBudget: dailyBudget === null ? "" : dailyBudget / 1_000_000,
     weeklyBudget: weeklyBudget === null ? "" : weeklyBudget / 1_000_000,
-    placement: item.placement ?? "",
+    placement,
     productCampaignMode: item.productCampaignMode ?? item.productAutopilotStrategy ?? "",
     createdAt: item.createdAt ?? "",
     updatedAt: item.updatedAt ?? ""
   };
+}
+
+function inferPaymentType({ advObjectType, paymentType, placementValues }) {
+  if (paymentType) {
+    return paymentType;
+  }
+
+  if (advObjectType === "SEARCH_PROMO") {
+    return "CPO / Оплата за заказ";
+  }
+
+  if (advObjectType === "SKU") {
+    if (placementValues.includes("PLACEMENT_TOP_PROMOTION")) {
+      return "CPC_TOP / Поиск";
+    }
+
+    if (placementValues.includes("PLACEMENT_SEARCH_AND_CATEGORY")) {
+      return "CPC / Поиск и рекомендации";
+    }
+
+    if (placementValues.includes("PLACEMENT_OVERTOP")) {
+      return "CPC / Спецразмещение";
+    }
+
+    return "SKU / unknown payment";
+  }
+
+  return "";
 }
 
 function formatBudgetValue(value) {
@@ -1063,6 +1104,8 @@ module.exports = {
   createActiveLimitError,
   createPendingReportError,
   createPerformanceService,
+  inferPaymentType,
+  normalizeCampaign,
   normalizeStatsFromCsv,
   parseSemicolonCsv
 };
