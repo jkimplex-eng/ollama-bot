@@ -152,7 +152,7 @@ function inferPaymentType({ advObjectType, paymentType, placementValues }) {
     return paymentType;
   }
 
-  if (advObjectType === "SEARCH_PROMO") {
+  if (advObjectType === "SEARCH_PROMO" || advObjectType === "ALL_SKU_PROMO") {
     return "CPO / Оплата за заказ";
   }
 

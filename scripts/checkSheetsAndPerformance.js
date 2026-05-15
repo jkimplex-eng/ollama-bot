@@ -196,6 +196,15 @@ function run() {
     "CPO / Оплата за заказ"
   );
 
+  assert.strictEqual(
+    inferPaymentType({
+      advObjectType: "ALL_SKU_PROMO",
+      paymentType: "",
+      placementValues: []
+    }),
+    "CPO / Оплата за заказ"
+  );
+
   assert.deepStrictEqual(
     normalizeCampaign({
       id: 123,
