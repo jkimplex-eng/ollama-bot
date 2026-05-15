@@ -51,6 +51,10 @@ function createRequestGroupId() {
   return "perf-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8);
 }
 
+function createRecoveredGroupId(uuid) {
+  return "recovered-" + String(uuid || "").toLowerCase();
+}
+
 function ensureParentDir(filePath) {
   const dir = path.dirname(filePath);
   if (!fs.existsSync(dir)) {
@@ -179,6 +183,41 @@ function formatBudgetValue(value) {
   const number = toNumber(value);
   if (number === null) return "";
   return Number(number.toFixed(2));
+}
+
+function inferRemoteReportStatus(item) {
+  const meta = item?.meta || {};
+
+  if (meta.error) {
+    return "failed";
+  }
+
+  if (meta.link) {
+    return "ready";
+  }
+
+  return "pending";
+}
+
+function normalizeRemoteReport(item) {
+  const meta = item?.meta || {};
+  const uuid = meta.UUID || item?.UUID || item?.uuid || "";
+
+  return {
+    uuid,
+    status: inferRemoteReportStatus(item),
+    createdAt:
+      meta.createdAt ||
+      meta.createTime ||
+      meta.created ||
+      item?.createdAt ||
+      item?.createTime ||
+      "",
+    dateFrom: meta.dateFrom || item?.dateFrom || "",
+    dateTo: meta.dateTo || item?.dateTo || "",
+    reportType: meta.reportType || item?.reportType || meta.groupBy || item?.groupBy || "",
+    item
+  };
 }
 
 function extractCampaignMeta(headerText) {
@@ -650,6 +689,102 @@ function createPerformanceService({
     return data.items;
   }
 
+  async function getAllStatisticsList(pageSize = 100) {
+    const items = [];
+    let page = 1;
+
+    while (true) {
+      const batch = await getStatisticsList(page, pageSize);
+      items.push(...batch);
+
+      if (!batch.length || batch.length < pageSize) {
+        break;
+      }
+
+      page += 1;
+    }
+
+    return items;
+  }
+
+  async function discoverRemoteReports(limit = 20) {
+    const items = await getAllStatisticsList(100);
+
+    return items
+      .map(normalizeRemoteReport)
+      .filter(report => report.uuid)
+      .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")))
+      .slice(0, limit);
+  }
+
+  function hasQueueItemForUuid(uuid) {
+    return listQueue().some(item => item.uuid === uuid);
+  }
+
+  function recoverQueueFromRemoteReport(report) {
+    const existing = listQueue().find(item => item.uuid === report.uuid);
+
+    if (existing) {
+      return existing;
+    }
+
+    const queueItem = {
+      requestGroupId: createRecoveredGroupId(report.uuid),
+      chunkIndex: 1,
+      totalChunks: 1,
+      campaignIds: [],
+      dateFrom: formatDate(report.dateFrom || report.createdAt),
+      dateTo: formatDate(report.dateTo || report.createdAt),
+      activeOnly: false,
+      toSheet: false,
+      status: report.status === "ready" ? "ready" : report.status === "failed" ? "failed" : "pending",
+      uuid: report.uuid,
+      recovered: true,
+      reportType: report.reportType || "stats",
+      createdAt: report.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    const queue = loadQueue();
+    queue.push(queueItem);
+    saveQueue(queue);
+
+    upsertReportRecord({
+      uuid: report.uuid,
+      status: queueItem.status,
+      reportType: queueItem.reportType,
+      requestGroupId: queueItem.requestGroupId,
+      chunkIndex: 1,
+      totalChunks: 1,
+      dateFrom: queueItem.dateFrom,
+      dateTo: queueItem.dateTo,
+      recovered: true
+    });
+
+    return queueItem;
+  }
+
+  async function discoverAndRecoverRemoteReport() {
+    const reports = await discoverRemoteReports(20);
+    const recoverable = reports.find(report => report.status === "pending" || report.status === "ready");
+
+    if (!recoverable) {
+      return {
+        recovered: false,
+        reports
+      };
+    }
+
+    const queueItem = recoverQueueFromRemoteReport(recoverable);
+
+    return {
+      recovered: true,
+      report: recoverable,
+      queueItem,
+      reports
+    };
+  }
+
   async function getReportListItem(uuid) {
     const items = await getStatisticsList(1, 100);
     return items.find(item => item.meta && item.meta.UUID === uuid) || null;
@@ -814,7 +949,7 @@ function createPerformanceService({
 
     const allCampaigns = await getCampaigns();
     const filteredCampaigns = activeOnly
-      ? allCampaigns.filter(item => String(item.status || "").toLowerCase().includes("active"))
+      ? allCampaigns.filter(item => String(item.status || "").toLowerCase().includes("running"))
       : allCampaigns;
     const queueGroup = buildQueueItems({
       dateFrom,
@@ -836,6 +971,12 @@ function createPerformanceService({
       startedFirst = firstItem && firstItem.status === "pending";
     }
 
+    let recovered = null;
+
+    if (firstItem && !startedFirst && !hasPending) {
+      recovered = await discoverAndRecoverRemoteReport();
+    }
+
     return {
       requestGroupId: queueGroup.requestGroupId,
       campaignsCount: filteredCampaigns.length,
@@ -845,6 +986,7 @@ function createPerformanceService({
       startedFirst,
       hasPendingBefore: hasPending,
       firstItem,
+      recovered,
       queuedItems: listQueue().filter(item => item.requestGroupId === queueGroup.requestGroupId)
     };
   }
@@ -856,8 +998,27 @@ function createPerformanceService({
       const next = getNextQueuedItem();
 
       if (!next) {
+        const discovered = await discoverAndRecoverRemoteReport();
+
+        if (discovered.recovered) {
+          current = discovered.queueItem;
+
+          if (current.status === "ready") {
+            return {
+              state: "recovered_ready",
+              current
+            };
+          }
+
+          return {
+            state: "recovered",
+            current
+          };
+        }
+
         return {
-          state: "empty"
+          state: "empty",
+          discovered
         };
       }
 
@@ -1065,6 +1226,7 @@ function createPerformanceService({
       tokenExpiresAt: tokenCache ? new Date(tokenCache.expiresAt).toISOString() : null,
       campaignsCount: campaigns.length,
       sampleCampaigns: campaigns.slice(0, 5),
+      remoteReports: await discoverRemoteReports(5),
       queue: listQueue().slice(0, 20),
       authHeaderType: token ? "Bearer" : "missing"
     };
@@ -1076,6 +1238,8 @@ function createPerformanceService({
     continueQueue,
     createStatsQueue,
     debugSummary,
+    discoverAndRecoverRemoteReport,
+    discoverRemoteReports,
     exportGroup,
     formatBudgetValue,
     getBidLimits,

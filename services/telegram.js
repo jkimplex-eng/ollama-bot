@@ -37,6 +37,7 @@ function getHelpText() {
     "/performance objects <campaignId>",
     "/performance limits",
     "/performance minbid <sku>",
+    "/performance discover",
     "/performance continue",
     "/performance queue",
     "/performance reset",
@@ -87,6 +88,7 @@ function parsePerformanceCommand(text) {
     [/^\/performance debug$/, () => ({ type: "debug" })],
     [/^\/performance campaigns debug active$/, () => ({ type: "campaigns_debug", filter: "running" })],
     [/^\/performance(?: queue| pending)$/, () => ({ type: "queue" })],
+    [/^\/performance discover$/, () => ({ type: "discover" })],
     [/^\/performance continue$/, () => ({ type: "continue" })],
     [/^\/performance reset$/, () => ({ type: "reset" })],
     [/^\/performance limits$/, () => ({ type: "limits" })],
@@ -363,6 +365,25 @@ function formatQueueItems(reports) {
     .join("\n\n");
 }
 
+function formatDiscoveredReports(reports) {
+  if (!reports.length) {
+    return "Активные или недавние отчёты Performance на стороне Ozon не найдены.";
+  }
+
+  return reports
+    .slice(0, 20)
+    .map(report => {
+      return [
+        "UUID: " + (report.uuid || "-"),
+        "Status: " + (report.status || "-"),
+        "Created: " + (report.createdAt || "-"),
+        "Range: " + (report.dateFrom || "-") + " -> " + (report.dateTo || "-"),
+        "Type: " + (report.reportType || "-")
+      ].join("\n");
+    })
+    .join("\n\n");
+}
+
 function formatPerformanceSummary(summary, uuid) {
   return [
     "UUID: " + uuid,
@@ -388,9 +409,16 @@ function formatCreatedReports(created) {
         ". Остальные поставлены в очередь. Используй /performance continue."
     );
   } else {
-    lines.push(
-      "Активный отчёт уже существует. Новые chunk-отчёты поставлены в очередь. Используй /performance continue."
-    );
+    if (created.recovered?.recovered && created.recovered.report?.uuid) {
+      lines.push(
+        "Найден активный отчёт Ozon, восстановил очередь. Используй /performance continue."
+      );
+      lines.push("UUID активного отчёта: " + created.recovered.report.uuid);
+    } else {
+      lines.push(
+        "Активный отчёт уже существует. Новые chunk-отчёты поставлены в очередь. Используй /performance continue."
+      );
+    }
   }
   lines.push("Request Group: " + created.requestGroupId);
   if (created.firstItem?.uuid) {
@@ -667,9 +695,34 @@ function startTelegramBot({
             await sendLongMessage(tgBot, chatId, formatQueueItems(performanceService.listQueue()));
             return;
           }
+          case "discover": {
+            if (!performanceService.isConfigured()) {
+              await tgBot.sendMessage(
+                chatId,
+                "Performance API не настроен: проверь OZON_PERFORMANCE_CLIENT_ID и OZON_PERFORMANCE_CLIENT_SECRET."
+              );
+              return;
+            }
+
+            const reports = await performanceService.discoverRemoteReports();
+            const recovered = await performanceService.discoverAndRecoverRemoteReport();
+            let text = formatDiscoveredReports(reports);
+
+            if (recovered.recovered) {
+              text =
+                "Найден активный отчёт Ozon, восстановил очередь. Используй /performance continue.\n\n" +
+                text;
+            }
+
+            await sendLongMessage(tgBot, chatId, text);
+            return;
+          }
           case "reset": {
             performanceService.resetQueue();
-            await tgBot.sendMessage(chatId, "Локальная очередь Performance очищена.");
+            await tgBot.sendMessage(
+              chatId,
+              "Локальная очередь очищена, но активный отчёт на стороне Ozon может ещё готовиться. Используй /performance discover."
+            );
             return;
           }
           case "continue": {
@@ -677,6 +730,22 @@ function startTelegramBot({
 
             if (result.state === "empty") {
               await tgBot.sendMessage(chatId, "Очередь Performance пуста.");
+              return;
+            }
+
+            if (result.state === "recovered") {
+              await tgBot.sendMessage(
+                chatId,
+                "Найден активный отчёт Ozon, восстановил очередь. Используй /performance continue."
+              );
+              return;
+            }
+
+            if (result.state === "recovered_ready") {
+              await tgBot.sendMessage(
+                chatId,
+                "Найден готовый отчёт Ozon, восстановил очередь. Повтори /performance continue, чтобы обработать его."
+              );
               return;
             }
 
@@ -903,9 +972,20 @@ function startTelegramBot({
         }
 
         if (performanceCommand.type === "stats" && err.code === "PERFORMANCE_ACTIVE_LIMIT") {
+          const recovered = await performanceService.discoverAndRecoverRemoteReport();
+
+          if (recovered.recovered && recovered.report?.uuid) {
+            await tgBot.sendMessage(
+              chatId,
+              "Найден активный отчёт Ozon, восстановил очередь. Используй /performance continue.\nUUID: " +
+                recovered.report.uuid
+            );
+            return;
+          }
+
           await tgBot.sendMessage(
             chatId,
-            "Ozon ограничил активные отчёты. Состояние сохранено, повтори /performance continue позже."
+            "Ozon ограничил активные отчёты. Активный UUID не найден, попробуй /performance discover позже."
           );
           return;
         }

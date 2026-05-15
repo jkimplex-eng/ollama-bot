@@ -116,6 +116,10 @@ function run() {
     type: "queue"
   });
 
+  assert.deepStrictEqual(parsePerformanceCommand("/performance discover"), {
+    type: "discover"
+  });
+
   assert.deepStrictEqual(parsePerformanceCommand("/performance continue"), {
     type: "continue"
   });
