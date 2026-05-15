@@ -50,6 +50,7 @@ module.exports = {
     dataDir: path.join(rootDir, "data"),
     alertsStateFile: path.join(rootDir, "data", "alerts-state.json"),
     performanceReportsFile: path.join(rootDir, "data", "performance-reports.json"),
+    performanceQueueFile: path.join(rootDir, "data", "performance-queue.json"),
     reportsDir: path.join(rootDir, "reports"),
     dailyReportsDir: path.join(rootDir, "reports", "daily")
   },

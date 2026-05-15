@@ -18,8 +18,16 @@ function run() {
     type: "campaigns"
   });
 
-  assert.deepStrictEqual(parsePerformanceCommand("/performance pending"), {
-    type: "pending"
+  assert.deepStrictEqual(parsePerformanceCommand("/performance queue"), {
+    type: "queue"
+  });
+
+  assert.deepStrictEqual(parsePerformanceCommand("/performance continue"), {
+    type: "continue"
+  });
+
+  assert.deepStrictEqual(parsePerformanceCommand("/performance reset"), {
+    type: "reset"
   });
 
   assert.deepStrictEqual(
@@ -48,17 +56,15 @@ function run() {
     parsePerformanceCommand("/performance report 123e4567-e89b-12d3-a456-426614174000"),
     {
       type: "report",
-      toSheet: false,
       uuid: "123e4567-e89b-12d3-a456-426614174000"
     }
   );
 
   assert.deepStrictEqual(
-    parsePerformanceCommand("/performance report в таблицу 123e4567-e89b-12d3-a456-426614174000"),
+    parsePerformanceCommand("/performance export perf-12345-abcd"),
     {
-      type: "report",
-      toSheet: true,
-      uuid: "123e4567-e89b-12d3-a456-426614174000"
+      type: "export",
+      requestGroupId: "perf-12345-abcd"
     }
   );
 

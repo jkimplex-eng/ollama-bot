@@ -26,9 +26,11 @@ function getHelpText() {
     "/performance stats 2026-05-01 2026-05-14",
     "/performance stats активные 2026-05-01 2026-05-14",
     "/performance stats в таблицу 2026-05-01 2026-05-14",
+    "/performance continue",
+    "/performance queue",
+    "/performance reset",
+    "/performance export <requestGroupId>",
     "/performance report <uuid>",
-    "/performance report в таблицу <uuid>",
-    "/performance pending",
     "/performance debug",
     "/ai strategy",
     "/ai quick",
@@ -78,35 +80,70 @@ function parsePerformanceCommand(text) {
     return { type: "debug" };
   }
 
-  if (normalized === "/performance pending") {
-    return { type: "pending" };
+  if (normalized === "/performance queue" || normalized === "/performance pending") {
+    return { type: "queue" };
   }
 
-  const reportMatch = normalized.match(
-    /^\/performance\s+report(?:\s+(в\s+таблицу))?\s+([a-z0-9-]+)$/i
-  );
+  if (normalized === "/performance continue") {
+    return { type: "continue" };
+  }
+
+  if (normalized === "/performance reset") {
+    return { type: "reset" };
+  }
+
+  const exportMatch = normalized.match(/^\/performance\s+export\s+([a-z0-9-]+)$/i);
+
+  if (exportMatch) {
+    return {
+      type: "export",
+      requestGroupId: exportMatch[1]
+    };
+  }
+
+  const reportMatch = normalized.match(/^\/performance\s+report\s+([a-z0-9-]+)$/i);
 
   if (reportMatch) {
     return {
       type: "report",
-      toSheet: Boolean(reportMatch[1]),
-      uuid: reportMatch[2]
+      uuid: reportMatch[1]
     };
   }
 
-  const statsMatch = normalized.match(
-    /^\/performance\s+stats(?:\s+(активные))?(?:\s+(в\s+таблицу))?\s+(\d{4}-\d{2}-\d{2})\s+(\d{4}-\d{2}-\d{2})$/
-  );
+  const statsTokens = normalized.split(" ");
 
-  if (!statsMatch) return null;
+  if (statsTokens[0] === "/performance" && statsTokens[1] === "stats") {
+    const flags = new Set();
+    const dates = [];
 
-  return {
-    type: "stats",
-    activeOnly: Boolean(statsMatch[1]),
-    toSheet: Boolean(statsMatch[2]),
-    dateFrom: statsMatch[3],
-    dateTo: statsMatch[4]
-  };
+    for (const token of statsTokens.slice(2)) {
+      if (token === "активные") {
+        flags.add("active");
+        continue;
+      }
+
+      if (token === "в" || token === "таблицу") {
+        flags.add("sheet");
+        continue;
+      }
+
+      if (/^\d{4}-\d{2}-\d{2}$/.test(token)) {
+        dates.push(token);
+        continue;
+      }
+    }
+
+    if (dates.length === 2) {
+      return {
+        type: "stats",
+        activeOnly: flags.has("active"),
+        toSheet: flags.has("sheet"),
+        dateFrom: dates[0],
+        dateTo: dates[1]
+      };
+    }
+  }
+  return null;
 }
 
 function parseAiCommand(text) {
@@ -254,18 +291,18 @@ function formatPerformanceCampaigns(rows) {
     .join("\n\n");
 }
 
-function formatPendingReports(reports) {
+function formatQueueItems(reports) {
   if (!reports.length) {
-    return "Нет ожидающих отчётов Performance.";
+    return "Очередь Performance пуста.";
   }
 
   return reports
     .slice(0, 20)
     .map(item => {
       return [
-        "UUID: " + item.uuid,
+        "UUID: " + (item.uuid || "-"),
         "Request Group: " + (item.requestGroupId || "-"),
-        "Type: " + (item.reportType || "-"),
+        "Type: stats",
         "Range: " + (item.dateFrom || "-") + " -> " + (item.dateTo || "-"),
         "Status: " + (item.status || "-"),
         "Chunk: " + (item.chunkIndex || "-") + "/" + (item.totalChunks || "-")
@@ -291,23 +328,21 @@ function formatCreatedReports(created) {
 
   if (created.campaignsCount > 10) {
     lines.push("Найдено " + created.campaignsCount + " кампаний. Создаю отчёты пачками по 10.");
-  } else {
-    lines.push("Создал отчёт Performance.");
   }
-
-  lines.push("Request Group: " + created.requestGroupId);
-  lines.push("UUIDs:");
-
-  for (const report of created.reports) {
+  if (created.startedFirst) {
     lines.push(
-      "- " +
-        report.uuid +
-        " (chunk " +
-        report.chunkIndex +
-        "/" +
-        report.totalChunks +
-        ")"
+      "Создан первый отчёт 1/" +
+        created.totalChunks +
+        ". Остальные поставлены в очередь. Используй /performance continue."
     );
+  } else {
+    lines.push(
+      "Активный отчёт уже существует. Новые chunk-отчёты поставлены в очередь. Используй /performance continue."
+    );
+  }
+  lines.push("Request Group: " + created.requestGroupId);
+  if (created.firstItem?.uuid) {
+    lines.push("UUID первого отчёта: " + created.firstItem.uuid);
   }
 
   return lines.join("\n");
@@ -579,15 +614,78 @@ function startTelegramBot({
       return;
     }
 
-    if (performanceCommand && performanceCommand.type === "pending") {
+    if (performanceCommand && performanceCommand.type === "queue") {
       try {
         await sendLongMessage(
           tgBot,
           chatId,
-          formatPendingReports(performanceService.listPendingReports())
+          formatQueueItems(performanceService.listQueue())
         );
       } catch (err) {
-        await tgBot.sendMessage(chatId, "Ошибка Performance pending: " + err.message);
+        await tgBot.sendMessage(chatId, "Ошибка Performance queue: " + err.message);
+      }
+
+      return;
+    }
+
+    if (performanceCommand && performanceCommand.type === "reset") {
+      try {
+        performanceService.resetQueue();
+        await tgBot.sendMessage(chatId, "Локальная очередь Performance очищена.");
+      } catch (err) {
+        await tgBot.sendMessage(chatId, "Ошибка Performance reset: " + err.message);
+      }
+
+      return;
+    }
+
+    if (performanceCommand && performanceCommand.type === "continue") {
+      try {
+        const result = await performanceService.continueQueue();
+
+        if (result.state === "empty") {
+          await tgBot.sendMessage(chatId, "Очередь Performance пуста.");
+          return;
+        }
+
+        if (result.state === "pending") {
+          await tgBot.sendMessage(chatId, "Текущий отчёт ещё готовится.");
+          return;
+        }
+
+        if (result.state === "started") {
+          await tgBot.sendMessage(
+            chatId,
+            "Запущен следующий отчёт: " + result.current.uuid
+          );
+          return;
+        }
+
+        if (result.state === "active_limit") {
+          await tgBot.sendMessage(
+            chatId,
+            "Текущий chunk завершён, но Ozon всё ещё держит лимит активных запросов. Повтори /performance continue позже."
+          );
+          return;
+        }
+
+        await tgBot.sendMessage(
+          chatId,
+          result.next
+            ? "Chunk " +
+                result.completed.chunkIndex +
+                "/" +
+                result.completed.totalChunks +
+                " готов. Запущен следующий отчёт: " +
+                result.next.uuid
+            : "Chunk " +
+                result.completed.chunkIndex +
+                "/" +
+                result.completed.totalChunks +
+                " готов. В очереди больше нет chunk-ов."
+        );
+      } catch (err) {
+        await tgBot.sendMessage(chatId, "Ошибка Performance continue: " + err.message);
       }
 
       return;
@@ -624,76 +722,64 @@ function startTelegramBot({
         }
 
         if (performanceCommand.toSheet) {
-          await tgBot.sendMessage(chatId, "Создал отчёт...");
-          const created = await performanceService.createStatsReport({
+          const created = await performanceService.createStatsQueue({
             dateFrom: performanceCommand.dateFrom,
             dateTo: performanceCommand.dateTo,
-            activeOnly: performanceCommand.activeOnly
+            activeOnly: performanceCommand.activeOnly,
+            toSheet: true
           });
-
-          if (created.campaignsCount > 10) {
-            await tgBot.sendMessage(
-              chatId,
-              "Найдено " + created.campaignsCount + " кампаний. Создаю отчёты пачками по 10."
-            );
-          }
-
-          const combinedRows = [];
-          const pendingUuids = [];
-
-          for (const report of created.reports) {
-            await tgBot.sendMessage(chatId, "Жду готовность... " + report.uuid);
-
-            try {
-              await performanceService.waitForReport(report.uuid, 10, 10_000);
-              await tgBot.sendMessage(chatId, "Отчёт готов, скачиваю... " + report.uuid);
-              const resolved = await performanceService.resolveReport(report.uuid);
-              combinedRows.push(...resolved.rows);
-            } catch (err) {
-              if (err.code === "PERFORMANCE_REPORT_PENDING") {
-                pendingUuids.push(report.uuid);
-                continue;
-              }
-
-              throw err;
-            }
-          }
-
-          if (combinedRows.length) {
-            try {
-              const writeResult = await performanceService.writeStatsToMappedSheet({
-                rows: combinedRows
-              });
-              await tgBot.sendMessage(
-                chatId,
-                "Записал " + writeResult.rowsWritten + " строк в " + writeResult.tabName
-              );
-            } catch (sheetError) {
-              await tgBot.sendMessage(
-                chatId,
-                "Performance data was received, but Sheets write failed: " + sheetError.message
-              );
-            }
-          }
-
-          if (pendingUuids.length) {
-            await tgBot.sendMessage(
-              chatId,
-              "Часть отчётов ещё не готова. Повтори позже:\n" +
-                pendingUuids.map(uuid => "/performance report " + uuid).join("\n")
-            );
-          }
+          await sendLongMessage(tgBot, chatId, formatCreatedReports(created));
+          await tgBot.sendMessage(
+            chatId,
+            "Когда все chunk-отчёты будут готовы, используй /performance export " +
+              created.requestGroupId
+          );
           return;
         }
 
-        const created = await performanceService.createStatsReport({
+        const created = await performanceService.createStatsQueue({
           dateFrom: performanceCommand.dateFrom,
           dateTo: performanceCommand.dateTo,
-          activeOnly: performanceCommand.activeOnly
+          activeOnly: performanceCommand.activeOnly,
+          toSheet: false
         });
         await sendLongMessage(tgBot, chatId, formatCreatedReports(created));
       } catch (err) {
+        if (err.code === "PERFORMANCE_ACTIVE_LIMIT") {
+          await tgBot.sendMessage(
+            chatId,
+            "Ozon ограничил активные отчёты. Состояние сохранено, повтори /performance continue позже."
+          );
+          return;
+        }
+
         await tgBot.sendMessage(chatId, "Ошибка Performance API: " + err.message);
+      }
+
+      return;
+    }
+
+    if (performanceCommand && performanceCommand.type === "export") {
+      try {
+        const result = await performanceService.exportGroup(performanceCommand.requestGroupId);
+
+        if (!result.ok) {
+          await tgBot.sendMessage(
+            chatId,
+            "Не все chunk-отчёты готовы. Не хватает:\n" +
+              result.missing
+                .map(item => "chunk " + item.chunkIndex + "/" + item.totalChunks + " | UUID: " + (item.uuid || "-"))
+                .join("\n")
+          );
+          return;
+        }
+
+        await tgBot.sendMessage(
+          chatId,
+          "Записал " + result.writeResult.rowsWritten + " строк в " + result.writeResult.tabName
+        );
+      } catch (err) {
+        await tgBot.sendMessage(chatId, "Ошибка Performance export: " + err.message);
       }
 
       return;
@@ -722,24 +808,6 @@ function startTelegramBot({
         await tgBot.sendMessage(chatId, "Отчёт готов, скачиваю...");
         const resolved = await performanceService.resolveReport(performanceCommand.uuid);
         const summary = performanceService.summarizeStats(resolved.rows);
-
-        if (performanceCommand.toSheet) {
-          try {
-            const writeResult = await performanceService.writeStatsToMappedSheet({
-              rows: resolved.rows
-            });
-            await tgBot.sendMessage(
-              chatId,
-              "Записал " + writeResult.rowsWritten + " строк в " + writeResult.tabName
-            );
-          } catch (sheetError) {
-            await tgBot.sendMessage(
-              chatId,
-              "Performance data was received, but Sheets write failed: " + sheetError.message
-            );
-          }
-          return;
-        }
 
         await sendLongMessage(
           tgBot,

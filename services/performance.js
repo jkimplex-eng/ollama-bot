@@ -1,6 +1,8 @@
 const fs = require("fs");
 const path = require("path");
 
+const MAX_CAMPAIGNS_PER_REQUEST = 10;
+
 function createUnavailableError(message) {
   const error = new Error(message);
   error.code = "PERFORMANCE_UNAVAILABLE";
@@ -11,6 +13,12 @@ function createPendingReportError(uuid, message = "") {
   const error = new Error(message || "Performance report is pending.");
   error.code = "PERFORMANCE_REPORT_PENDING";
   error.uuid = uuid;
+  return error;
+}
+
+function createActiveLimitError(message = "") {
+  const error = new Error(message || "Performance active report limit reached.");
+  error.code = "PERFORMANCE_ACTIVE_LIMIT";
   return error;
 }
 
@@ -27,10 +35,6 @@ function toNumber(value) {
     .replace(/[^\d.-]/g, "");
   const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : null;
-}
-
-function delay(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 function chunkArray(items, size) {
@@ -205,6 +209,7 @@ function createPerformanceService({
   baseUrl,
   clientId,
   clientSecret,
+  queueFile,
   reportsFile,
   sheetsService,
   logger = console
@@ -223,23 +228,31 @@ function createPerformanceService({
     }
   }
 
-  function loadReports() {
-    if (!reportsFile || !fs.existsSync(reportsFile)) {
+  function loadJsonArray(filePath) {
+    if (!filePath || !fs.existsSync(filePath)) {
       return [];
     }
 
     try {
-      const data = JSON.parse(fs.readFileSync(reportsFile, "utf8"));
+      const data = JSON.parse(fs.readFileSync(filePath, "utf8"));
       return Array.isArray(data) ? data : [];
     } catch {
       return [];
     }
   }
 
+  function saveJsonArray(filePath, items) {
+    if (!filePath) return;
+    ensureParentDir(filePath);
+    fs.writeFileSync(filePath, JSON.stringify(items, null, 2), "utf8");
+  }
+
+  function loadReports() {
+    return loadJsonArray(reportsFile);
+  }
+
   function saveReports(records) {
-    if (!reportsFile) return;
-    ensureParentDir(reportsFile);
-    fs.writeFileSync(reportsFile, JSON.stringify(records, null, 2), "utf8");
+    saveJsonArray(reportsFile, records);
   }
 
   function upsertReportRecord(record) {
@@ -266,10 +279,52 @@ function createPerformanceService({
     return reports.find(item => item.uuid === record.uuid);
   }
 
-  function listPendingReports() {
-    return loadReports()
-      .filter(item => item.status !== "ready" && item.status !== "downloaded")
-      .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)));
+  function loadQueue() {
+    return loadJsonArray(queueFile);
+  }
+
+  function saveQueue(items) {
+    saveJsonArray(queueFile, items);
+  }
+
+  function resetQueue() {
+    saveQueue([]);
+    return { ok: true };
+  }
+
+  function updateQueueItem(matcher, patch) {
+    const queue = loadQueue();
+    const index = queue.findIndex(matcher);
+
+    if (index === -1) {
+      return null;
+    }
+
+    queue[index] = {
+      ...queue[index],
+      ...patch,
+      updatedAt: new Date().toISOString()
+    };
+    saveQueue(queue);
+    return queue[index];
+  }
+
+  function listQueue() {
+    return loadQueue().sort((left, right) => {
+      if (left.requestGroupId === right.requestGroupId) {
+        return left.chunkIndex - right.chunkIndex;
+      }
+
+      return String(left.createdAt).localeCompare(String(right.createdAt));
+    });
+  }
+
+  function getCurrentPendingQueueItem() {
+    return listQueue().find(item => item.status === "pending") || null;
+  }
+
+  function getNextQueuedItem() {
+    return listQueue().find(item => item.status === "queued") || null;
   }
 
   async function safeJson(response, fallback = {}) {
@@ -319,11 +374,11 @@ function createPerformanceService({
     return tokenCache.accessToken;
   }
 
-  async function requestJson(path, options = {}) {
+  async function requestJson(endpoint, options = {}) {
     assertConfigured();
     const token = await getPerformanceToken();
     const method = options.method || "GET";
-    const url = new URL(baseUrl + path);
+    const url = new URL(baseUrl + endpoint);
 
     for (const [key, value] of Object.entries(options.query || {})) {
       if (value !== undefined && value !== null && value !== "") {
@@ -349,6 +404,11 @@ function createPerformanceService({
         data.error_description ||
         data.error ||
         "Performance API returned " + response.status;
+
+      if (String(message).toLowerCase().includes("максимум 1")) {
+        throw createActiveLimitError(message);
+      }
+
       throw new Error(message);
     }
 
@@ -410,10 +470,14 @@ function createPerformanceService({
     requestGroupId = "",
     chunkIndex = 0,
     totalChunks = 1,
-    campaignFilter = "all"
+    activeOnly = false
   }) {
-    if (campaignIds.length > 10) {
-      throw new Error("Performance statistics request cannot contain more than 10 campaigns.");
+    if (campaignIds.length > MAX_CAMPAIGNS_PER_REQUEST) {
+      throw new Error(
+        "Performance statistics request cannot contain more than " +
+          MAX_CAMPAIGNS_PER_REQUEST +
+          " campaigns."
+      );
     }
 
     const data = await requestJson("/api/client/statistics", {
@@ -439,7 +503,7 @@ function createPerformanceService({
       chunkIndex,
       totalChunks,
       campaignIds,
-      campaignFilter,
+      activeOnly,
       status: "pending"
     });
 
@@ -472,13 +536,6 @@ function createPerformanceService({
 
     if (!found) {
       const stored = loadReports().find(item => item.uuid === uuid);
-      if (stored) {
-        upsertReportRecord({
-          ...stored,
-          status: stored.status || "pending"
-        });
-      }
-
       return {
         uuid,
         ready: false,
@@ -552,7 +609,8 @@ function createPerformanceService({
     upsertReportRecord({
       uuid,
       status: "downloaded",
-      rowsCount: rows.length
+      rowsCount: rows.length,
+      rows
     });
 
     return {
@@ -562,62 +620,226 @@ function createPerformanceService({
     };
   }
 
-  async function createStatsReport({ dateFrom, dateTo, activeOnly = false }) {
-    if (!isConfigured()) return null;
-
-    const campaigns = await getCampaigns();
-    const filteredCampaigns = activeOnly
-      ? campaigns.filter(item => String(item.status || "").toLowerCase().includes("active"))
-      : campaigns;
-    const campaignChunks = chunkArray(
-      filteredCampaigns.map(item => item.campaignId),
-      10
-    );
+  function buildQueueItems({ dateFrom, dateTo, activeOnly, toSheet, campaigns }) {
     const requestGroupId = createRequestGroupId();
-    const reports = [];
-
-    for (let index = 0; index < campaignChunks.length; index += 1) {
-      const report = await createStatisticsReportRequest({
-        campaignIds: campaignChunks[index],
-        dateFrom,
-        dateTo,
-        reportType: "stats",
-        requestGroupId,
-        chunkIndex: index + 1,
-        totalChunks: campaignChunks.length,
-        campaignFilter: activeOnly ? "active" : "all"
-      });
-      reports.push(report);
-    }
+    const campaignChunks = chunkArray(
+      campaigns.map(item => item.campaignId),
+      MAX_CAMPAIGNS_PER_REQUEST
+    );
 
     return {
       requestGroupId,
-      campaignsCount: filteredCampaigns.length,
-      totalCampaigns: campaigns.length,
-      activeOnly,
-      reports
+      campaignsCount: campaigns.length,
+      totalChunks: campaignChunks.length,
+      items: campaignChunks.map((campaignIds, index) => ({
+        requestGroupId,
+        chunkIndex: index + 1,
+        totalChunks: campaignChunks.length,
+        campaignIds,
+        dateFrom: formatDate(dateFrom),
+        dateTo: formatDate(dateTo),
+        activeOnly,
+        toSheet: Boolean(toSheet),
+        status: "queued",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }))
     };
   }
 
-  async function resolveRequestReports(reports) {
-    const combinedRows = [];
+  async function startQueueItem(item) {
+    try {
+      const report = await createStatisticsReportRequest({
+        campaignIds: item.campaignIds,
+        dateFrom: item.dateFrom,
+        dateTo: item.dateTo,
+        reportType: "stats",
+        requestGroupId: item.requestGroupId,
+        chunkIndex: item.chunkIndex,
+        totalChunks: item.totalChunks,
+        activeOnly: item.activeOnly
+      });
 
-    for (const report of reports) {
-      const resolved = await waitForReport(report.uuid);
-      if (!resolved.ready) {
-        throw createPendingReportError(report.uuid);
+      return updateQueueItem(
+        queueItem =>
+          queueItem.requestGroupId === item.requestGroupId &&
+          queueItem.chunkIndex === item.chunkIndex,
+        {
+          status: "pending",
+          uuid: report.uuid
+        }
+      );
+    } catch (error) {
+      if (error.code === "PERFORMANCE_ACTIVE_LIMIT") {
+        return updateQueueItem(
+          queueItem =>
+            queueItem.requestGroupId === item.requestGroupId &&
+            queueItem.chunkIndex === item.chunkIndex,
+          {
+            status: "queued"
+          }
+        );
       }
 
-      const reportData = await resolveReport(report.uuid);
-      combinedRows.push(...reportData.rows);
+      throw error;
     }
-
-    return combinedRows;
   }
 
-  async function getCampaignStats({ dateFrom, dateTo, activeOnly = false } = {}) {
-    const created = await createStatsReport({ dateFrom, dateTo, activeOnly });
-    return resolveRequestReports(created.reports);
+  async function createStatsQueue({ dateFrom, dateTo, activeOnly = false, toSheet = false }) {
+    if (!isConfigured()) return null;
+
+    const allCampaigns = await getCampaigns();
+    const filteredCampaigns = activeOnly
+      ? allCampaigns.filter(item => String(item.status || "").toLowerCase().includes("active"))
+      : allCampaigns;
+    const queueGroup = buildQueueItems({
+      dateFrom,
+      dateTo,
+      activeOnly,
+      toSheet,
+      campaigns: filteredCampaigns
+    });
+
+    const existingQueue = loadQueue();
+    saveQueue([...existingQueue, ...queueGroup.items]);
+
+    let firstItem = queueGroup.items[0] || null;
+    const hasPending = existingQueue.some(item => item.status === "pending");
+    let startedFirst = false;
+
+    if (firstItem && !hasPending) {
+      firstItem = await startQueueItem(firstItem);
+      startedFirst = firstItem && firstItem.status === "pending";
+    }
+
+    return {
+      requestGroupId: queueGroup.requestGroupId,
+      campaignsCount: filteredCampaigns.length,
+      totalCampaigns: allCampaigns.length,
+      activeOnly,
+      totalChunks: queueGroup.totalChunks,
+      startedFirst,
+      hasPendingBefore: hasPending,
+      firstItem,
+      queuedItems: listQueue().filter(item => item.requestGroupId === queueGroup.requestGroupId)
+    };
+  }
+
+  async function continueQueue() {
+    let current = getCurrentPendingQueueItem();
+
+    if (!current) {
+      const next = getNextQueuedItem();
+
+      if (!next) {
+        return {
+          state: "empty"
+        };
+      }
+
+      const started = await startQueueItem(next);
+
+      if (started.status !== "pending") {
+        return {
+          state: "blocked"
+        };
+      }
+
+      return {
+        state: "started",
+        current: started
+      };
+    }
+
+    const status = await getReportStatus(current.uuid);
+
+    if (!status.ready) {
+      return {
+        state: "pending",
+        current
+      };
+    }
+
+    const resolved = await resolveReport(current.uuid);
+    current = updateQueueItem(
+      item => item.requestGroupId === current.requestGroupId && item.chunkIndex === current.chunkIndex,
+      {
+        status: "ready",
+        rowsCount: resolved.rows.length
+      }
+    );
+
+    const next = listQueue().find(
+      item => item.requestGroupId === current.requestGroupId && item.status === "queued"
+    ) || getNextQueuedItem();
+
+    if (!next) {
+      return {
+        state: "completed_chunk",
+        completed: current,
+        next: null
+      };
+    }
+
+    const started = await startQueueItem(next);
+
+    if (started.status !== "pending") {
+      return {
+        state: "active_limit",
+        completed: current,
+        next: started
+      };
+    }
+
+    return {
+      state: "completed_chunk",
+      completed: current,
+      next: started
+    };
+  }
+
+  function getGroupItems(requestGroupId) {
+    return listQueue().filter(item => item.requestGroupId === requestGroupId);
+  }
+
+  function getReportRows(uuid) {
+    const record = loadReports().find(item => item.uuid === uuid);
+    return Array.isArray(record?.rows) ? record.rows : [];
+  }
+
+  async function exportGroup(requestGroupId) {
+    const items = getGroupItems(requestGroupId);
+
+    if (!items.length) {
+      throw new Error("Performance queue group not found: " + requestGroupId);
+    }
+
+    const missing = items
+      .filter(item => item.status !== "ready")
+      .map(item => ({
+        chunkIndex: item.chunkIndex,
+        totalChunks: item.totalChunks,
+        uuid: item.uuid || ""
+      }));
+
+    if (missing.length) {
+      return {
+        ok: false,
+        missing
+      };
+    }
+
+    const combinedRows = items.flatMap(item => getReportRows(item.uuid));
+    const writeResult = await sheetsService.clearAndWriteMappedRows(
+      "performance_stats",
+      statsToRows(combinedRows)
+    );
+
+    return {
+      ok: true,
+      rows: combinedRows,
+      writeResult
+    };
   }
 
   function campaignsToRows(campaigns) {
@@ -694,15 +916,6 @@ function createPerformanceService({
     };
   }
 
-  async function writeStatsToMappedSheet({ rows }) {
-    const result = await sheetsService.clearAndWriteMappedRows(
-      "performance_stats",
-      statsToRows(rows)
-    );
-
-    return result;
-  }
-
   async function debugSummary() {
     if (!isConfigured()) {
       return {
@@ -720,35 +933,38 @@ function createPerformanceService({
       tokenExpiresAt: tokenCache ? new Date(tokenCache.expiresAt).toISOString() : null,
       campaignsCount: campaigns.length,
       sampleCampaigns: campaigns.slice(0, 5),
-      pendingReports: listPendingReports().slice(0, 10),
+      queue: listQueue().slice(0, 20),
       authHeaderType: token ? "Bearer" : "missing"
     };
   }
 
   return {
-    chunkArray,
     campaignsToRows,
-    createStatsReport,
+    chunkArray,
+    continueQueue,
+    createStatsQueue,
     debugSummary,
+    exportGroup,
     getCampaigns,
-    getCampaignStats,
+    getCurrentPendingQueueItem,
     getPerformanceToken,
     getReportStatus,
     getStatisticsList,
+    getGroupItems,
     isConfigured,
-    listPendingReports,
+    listQueue,
     normalizeStatsFromCsv,
+    resetQueue,
     resolveReport,
-    resolveRequestReports,
     statsToRows,
     summarizeStats,
     waitForReport,
-    writeCampaignsToMappedSheet,
-    writeStatsToMappedSheet
+    writeCampaignsToMappedSheet
   };
 }
 
 module.exports = {
+  createActiveLimitError,
   createPendingReportError,
   createPerformanceService,
   normalizeStatsFromCsv,
