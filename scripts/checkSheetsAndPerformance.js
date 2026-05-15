@@ -117,7 +117,13 @@ function run() {
   });
 
   assert.deepStrictEqual(parsePerformanceCommand("/performance discover"), {
-    type: "discover"
+    type: "discover",
+    raw: false
+  });
+
+  assert.deepStrictEqual(parsePerformanceCommand("/performance discover raw"), {
+    type: "discover",
+    raw: true
   });
 
   assert.deepStrictEqual(parsePerformanceCommand("/performance continue"), {
@@ -180,6 +186,7 @@ function run() {
   assert.strictEqual(parsePerformanceCommand("/performance campaigns active в таблицу extra"), null);
   assert.strictEqual(parsePerformanceCommand("/performance limits extra"), null);
   assert.strictEqual(parsePerformanceCommand("/performance minbid"), null);
+  assert.strictEqual(parsePerformanceCommand("/performance discover raw extra"), null);
   assert.strictEqual(parsePerformanceCommand("/performance stats active 2026-05-01 2026-05-14"), null);
 
   assert.strictEqual(

@@ -38,6 +38,7 @@ function getHelpText() {
     "/performance limits",
     "/performance minbid <sku>",
     "/performance discover",
+    "/performance discover raw",
     "/performance continue",
     "/performance queue",
     "/performance reset",
@@ -88,7 +89,7 @@ function parsePerformanceCommand(text) {
     [/^\/performance debug$/, () => ({ type: "debug" })],
     [/^\/performance campaigns debug active$/, () => ({ type: "campaigns_debug", filter: "running" })],
     [/^\/performance(?: queue| pending)$/, () => ({ type: "queue" })],
-    [/^\/performance discover$/, () => ({ type: "discover" })],
+    [/^\/performance discover(?: (raw))?$/, match => ({ type: "discover", raw: Boolean(match[1]) })],
     [/^\/performance continue$/, () => ({ type: "continue" })],
     [/^\/performance reset$/, () => ({ type: "reset" })],
     [/^\/performance limits$/, () => ({ type: "limits" })],
@@ -346,11 +347,20 @@ function getCampaignFilters(filter) {
 }
 
 function formatQueueItems(reports) {
-  if (!reports.length) {
-    return "Очередь Performance пуста.";
+  const lines = [];
+  const queueMeta = reports.meta || {};
+
+  if (queueMeta.lastActiveLimitAt) {
+    lines.push("Last active-limit: " + queueMeta.lastActiveLimitAt);
   }
 
-  return reports
+  if (!reports.items.length) {
+    lines.push("Очередь Performance пуста.");
+    return lines.join("\n");
+  }
+
+  return lines.concat(
+    reports.items
     .slice(0, 20)
     .map(item => {
       return [
@@ -362,7 +372,7 @@ function formatQueueItems(reports) {
         "Chunk: " + (item.chunkIndex || "-") + "/" + (item.totalChunks || "-")
       ].join("\n");
     })
-    .join("\n\n");
+  ).join("\n\n");
 }
 
 function formatDiscoveredReports(reports) {
@@ -375,7 +385,7 @@ function formatDiscoveredReports(reports) {
     .map(report => {
       return [
         "UUID: " + (report.uuid || "-"),
-        "Status: " + (report.status || "-"),
+        "Status: " + (report.status || "unknown"),
         "Created: " + (report.createdAt || "-"),
         "Range: " + (report.dateFrom || "-") + " -> " + (report.dateTo || "-"),
         "Type: " + (report.reportType || "-")
@@ -692,7 +702,14 @@ function startTelegramBot({
             return;
           }
           case "queue": {
-            await sendLongMessage(tgBot, chatId, formatQueueItems(performanceService.listQueue()));
+            await sendLongMessage(
+              tgBot,
+              chatId,
+              formatQueueItems({
+                items: performanceService.listQueue(),
+                meta: performanceService.getQueueMeta()
+              })
+            );
             return;
           }
           case "discover": {
@@ -704,7 +721,17 @@ function startTelegramBot({
               return;
             }
 
-            const reports = await performanceService.discoverRemoteReports();
+            if (performanceCommand.raw) {
+              const raw = await performanceService.getStatisticsListRaw(1, 100);
+              await sendLongMessage(
+                tgBot,
+                chatId,
+                JSON.stringify(raw, null, 2).slice(0, 4000)
+              );
+              return;
+            }
+
+            const reports = await performanceService.discoverRemoteReports(10);
             const recovered = await performanceService.discoverAndRecoverRemoteReport();
             let text = formatDiscoveredReports(reports);
 
@@ -985,7 +1012,15 @@ function startTelegramBot({
 
           await tgBot.sendMessage(
             chatId,
-            "Ozon ограничил активные отчёты. Активный UUID не найден, попробуй /performance discover позже."
+            "Ozon reports an active report but did not expose UUID in statistics/list. Wait 10-20 minutes."
+          );
+          return;
+        }
+
+        if (performanceCommand.type === "stats" && err.code === "PERFORMANCE_COOLDOWN") {
+          await tgBot.sendMessage(
+            chatId,
+            err.message
           );
           return;
         }

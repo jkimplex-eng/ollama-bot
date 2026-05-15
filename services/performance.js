@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 
 const MAX_CAMPAIGNS_PER_REQUEST = 10;
+const ACTIVE_LIMIT_COOLDOWN_MS = 15 * 60 * 1000;
 
 function createUnavailableError(message) {
   const error = new Error(message);
@@ -19,6 +20,13 @@ function createPendingReportError(uuid, message = "") {
 function createActiveLimitError(message = "") {
   const error = new Error(message || "Performance active report limit reached.");
   error.code = "PERFORMANCE_ACTIVE_LIMIT";
+  return error;
+}
+
+function createCooldownError(until, message = "") {
+  const error = new Error(message || "Performance active limit cooldown in effect.");
+  error.code = "PERFORMANCE_COOLDOWN";
+  error.until = until;
   return error;
 }
 
@@ -53,6 +61,13 @@ function createRequestGroupId() {
 
 function createRecoveredGroupId(uuid) {
   return "recovered-" + String(uuid || "").toLowerCase();
+}
+
+function formatClockTime(value) {
+  const date = new Date(value);
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return hours + ":" + minutes;
 }
 
 function ensureParentDir(filePath) {
@@ -196,16 +211,25 @@ function inferRemoteReportStatus(item) {
     return "ready";
   }
 
+  if (!Object.keys(meta).length && !item?.status && !item?.state) {
+    return "unknown";
+  }
+
+  if (item?.status || item?.state) {
+    return String(item.status || item.state || "").toLowerCase();
+  }
+
   return "pending";
 }
 
 function normalizeRemoteReport(item) {
   const meta = item?.meta || {};
   const uuid = meta.UUID || item?.UUID || item?.uuid || "";
+  const status = inferRemoteReportStatus(item);
 
   return {
-    uuid,
-    status: inferRemoteReportStatus(item),
+    uuid: uuid || "-",
+    status,
     createdAt:
       meta.createdAt ||
       meta.createTime ||
@@ -322,31 +346,31 @@ function createPerformanceService({
     }
   }
 
-  function loadJsonArray(filePath) {
+  function loadJsonData(filePath) {
     if (!filePath || !fs.existsSync(filePath)) {
-      return [];
+      return null;
     }
 
     try {
-      const data = JSON.parse(fs.readFileSync(filePath, "utf8"));
-      return Array.isArray(data) ? data : [];
+      return JSON.parse(fs.readFileSync(filePath, "utf8"));
     } catch {
-      return [];
+      return null;
     }
   }
 
-  function saveJsonArray(filePath, items) {
+  function saveJsonData(filePath, value) {
     if (!filePath) return;
     ensureParentDir(filePath);
-    fs.writeFileSync(filePath, JSON.stringify(items, null, 2), "utf8");
+    fs.writeFileSync(filePath, JSON.stringify(value, null, 2), "utf8");
   }
 
   function loadReports() {
-    return loadJsonArray(reportsFile);
+    const data = loadJsonData(reportsFile);
+    return Array.isArray(data) ? data : [];
   }
 
   function saveReports(records) {
-    saveJsonArray(reportsFile, records);
+    saveJsonData(reportsFile, records);
   }
 
   function upsertReportRecord(record) {
@@ -373,16 +397,106 @@ function createPerformanceService({
     return reports.find(item => item.uuid === record.uuid);
   }
 
+  function loadQueueState() {
+    const data = loadJsonData(queueFile);
+
+    if (Array.isArray(data)) {
+      return {
+        items: data,
+        meta: {}
+      };
+    }
+
+    if (data && typeof data === "object") {
+      return {
+        items: Array.isArray(data.items) ? data.items : [],
+        meta: data.meta && typeof data.meta === "object" ? data.meta : {}
+      };
+    }
+
+    return {
+      items: [],
+      meta: {}
+    };
+  }
+
+  function saveQueueState(state) {
+    saveJsonData(queueFile, {
+      items: Array.isArray(state.items) ? state.items : [],
+      meta: state.meta && typeof state.meta === "object" ? state.meta : {}
+    });
+  }
+
   function loadQueue() {
-    return loadJsonArray(queueFile);
+    return loadQueueState().items;
   }
 
   function saveQueue(items) {
-    saveJsonArray(queueFile, items);
+    const state = loadQueueState();
+    state.items = items;
+    saveQueueState(state);
+  }
+
+  function getQueueMeta() {
+    return loadQueueState().meta;
+  }
+
+  function updateQueueMeta(patch) {
+    const state = loadQueueState();
+    state.meta = {
+      ...state.meta,
+      ...patch,
+      updatedAt: new Date().toISOString()
+    };
+    saveQueueState(state);
+    return state.meta;
+  }
+
+  function setActiveLimitTimestamp(timestamp = new Date().toISOString()) {
+    return updateQueueMeta({
+      lastActiveLimitAt: timestamp
+    });
+  }
+
+  function getActiveLimitCooldownUntil() {
+    const meta = getQueueMeta();
+    if (!meta.lastActiveLimitAt) {
+      return null;
+    }
+
+    const until = new Date(meta.lastActiveLimitAt).getTime() + ACTIVE_LIMIT_COOLDOWN_MS;
+    return Number.isFinite(until) ? new Date(until).toISOString() : null;
+  }
+
+  function isActiveLimitCooldown() {
+    const until = getActiveLimitCooldownUntil();
+    if (!until) {
+      return null;
+    }
+
+    if (new Date(until).getTime() > Date.now()) {
+      return until;
+    }
+
+    return null;
+  }
+
+  function clearActiveLimitTimestamp() {
+    const state = loadQueueState();
+    if (!state.meta.lastActiveLimitAt) {
+      return state.meta;
+    }
+
+    delete state.meta.lastActiveLimitAt;
+    state.meta.updatedAt = new Date().toISOString();
+    saveQueueState(state);
+    return state.meta;
   }
 
   function resetQueue() {
-    saveQueue([]);
+    const state = loadQueueState();
+    state.items = [];
+    saveQueueState(state);
     return { ok: true };
   }
 
@@ -689,6 +803,16 @@ function createPerformanceService({
     return data.items;
   }
 
+  async function getStatisticsListRaw(page = 1, pageSize = 100) {
+    return requestJson("/api/client/statistics/list", {
+      method: "GET",
+      query: {
+        page,
+        pageSize
+      }
+    });
+  }
+
   async function getAllStatisticsList(pageSize = 100) {
     const items = [];
     let page = 1;
@@ -707,12 +831,11 @@ function createPerformanceService({
     return items;
   }
 
-  async function discoverRemoteReports(limit = 20) {
+  async function discoverRemoteReports(limit = 10) {
     const items = await getAllStatisticsList(100);
 
     return items
       .map(normalizeRemoteReport)
-      .filter(report => report.uuid)
       .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")))
       .slice(0, limit);
   }
@@ -722,7 +845,7 @@ function createPerformanceService({
   }
 
   function recoverQueueFromRemoteReport(report) {
-    const existing = listQueue().find(item => item.uuid === report.uuid);
+    const existing = listQueue().find(item => item.uuid === report.uuid && report.uuid !== "-");
 
     if (existing) {
       return existing;
@@ -737,8 +860,8 @@ function createPerformanceService({
       dateTo: formatDate(report.dateTo || report.createdAt),
       activeOnly: false,
       toSheet: false,
-      status: report.status === "ready" ? "ready" : report.status === "failed" ? "failed" : "pending",
-      uuid: report.uuid,
+      status: report.status === "ready" ? "ready" : report.status === "failed" ? "failed" : report.status === "unknown" ? "pending" : "pending",
+      uuid: report.uuid === "-" ? "" : report.uuid,
       recovered: true,
       reportType: report.reportType || "stats",
       createdAt: report.createdAt || new Date().toISOString(),
@@ -750,7 +873,7 @@ function createPerformanceService({
     saveQueue(queue);
 
     upsertReportRecord({
-      uuid: report.uuid,
+      uuid: queueItem.uuid || report.uuid,
       status: queueItem.status,
       reportType: queueItem.reportType,
       requestGroupId: queueItem.requestGroupId,
@@ -766,7 +889,9 @@ function createPerformanceService({
 
   async function discoverAndRecoverRemoteReport() {
     const reports = await discoverRemoteReports(20);
-    const recoverable = reports.find(report => report.status === "pending" || report.status === "ready");
+    const recoverable = reports.find(
+      report => (report.status === "pending" || report.status === "ready") && report.uuid && report.uuid !== "-"
+    );
 
     if (!recoverable) {
       return {
@@ -813,6 +938,7 @@ function createPerformanceService({
     }
 
     if (found.meta && found.meta.link) {
+      clearActiveLimitTimestamp();
       upsertReportRecord({
         uuid,
         status: "ready",
@@ -930,6 +1056,7 @@ function createPerformanceService({
       );
     } catch (error) {
       if (error.code === "PERFORMANCE_ACTIVE_LIMIT") {
+        setActiveLimitTimestamp();
         return updateQueueItem(
           queueItem =>
             queueItem.requestGroupId === item.requestGroupId &&
@@ -946,6 +1073,17 @@ function createPerformanceService({
 
   async function createStatsQueue({ dateFrom, dateTo, activeOnly = false, toSheet = false }) {
     if (!isConfigured()) return null;
+
+    const cooldownUntil = isActiveLimitCooldown();
+
+    if (cooldownUntil) {
+      throw createCooldownError(
+        cooldownUntil,
+        "Ждём освобождения лимита Ozon до " +
+          formatClockTime(cooldownUntil) +
+          ". Используй /performance discover raw для диагностики."
+      );
+    }
 
     const allCampaigns = await getCampaigns();
     const filteredCampaigns = activeOnly
@@ -975,6 +1113,9 @@ function createPerformanceService({
 
     if (firstItem && !startedFirst && !hasPending) {
       recovered = await discoverAndRecoverRemoteReport();
+      if (!recovered.recovered) {
+        setActiveLimitTimestamp();
+      }
     }
 
     return {
@@ -1227,12 +1368,14 @@ function createPerformanceService({
       campaignsCount: campaigns.length,
       sampleCampaigns: campaigns.slice(0, 5),
       remoteReports: await discoverRemoteReports(5),
+      queueMeta: getQueueMeta(),
       queue: listQueue().slice(0, 20),
       authHeaderType: token ? "Bearer" : "missing"
     };
   }
 
   return {
+    ACTIVE_LIMIT_COOLDOWN_MS,
     campaignsToRows,
     chunkArray,
     continueQueue,
@@ -1250,8 +1393,11 @@ function createPerformanceService({
     getPerformanceToken,
     getReportStatus,
     getStatisticsList,
+    getStatisticsListRaw,
     getGroupItems,
+    getQueueMeta,
     isConfigured,
+    isActiveLimitCooldown,
     listQueue,
     normalizeStatsFromCsv,
     resetQueue,
