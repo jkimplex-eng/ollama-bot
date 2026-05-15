@@ -3,6 +3,7 @@ const path = require("path");
 
 const MAX_CAMPAIGNS_PER_REQUEST = 10;
 const ACTIVE_LIMIT_COOLDOWN_MS = 15 * 60 * 1000;
+const REPORT_POLL_MIN_INTERVAL_MS = 20 * 1000;
 
 function createUnavailableError(message) {
   const error = new Error(message);
@@ -27,6 +28,14 @@ function createCooldownError(until, message = "") {
   const error = new Error(message || "Performance active limit cooldown in effect.");
   error.code = "PERFORMANCE_COOLDOWN";
   error.until = until;
+  return error;
+}
+
+function createPollThrottleError(uuid, nextAllowedAt, message = "") {
+  const error = new Error(message || "Performance report polling is throttled.");
+  error.code = "PERFORMANCE_REPORT_POLL_THROTTLED";
+  error.uuid = uuid;
+  error.nextAllowedAt = nextAllowedAt;
   return error;
 }
 
@@ -68,6 +77,10 @@ function formatClockTime(value) {
   const hours = String(date.getHours()).padStart(2, "0");
   const minutes = String(date.getMinutes()).padStart(2, "0");
   return hours + ":" + minutes;
+}
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 function ensureParentDir(filePath) {
@@ -657,6 +670,36 @@ function createPerformanceService({
     return bodyText;
   }
 
+  async function requestReportDownloadStatus(uuid) {
+    const token = await getPerformanceToken();
+    const url = new URL(baseUrl + "/api/client/statistics/report");
+    url.searchParams.set("UUID", uuid);
+
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        "Accept": "*/*",
+        "Authorization": "Bearer " + token
+      }
+    });
+
+    const contentType = response.headers.get("content-type") || "";
+    let bodyText = "";
+
+    try {
+      bodyText = await response.text();
+    } catch {
+      bodyText = "";
+    }
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      contentType,
+      bodyPreview: bodyText.slice(0, 500)
+    };
+  }
+
   async function getCampaigns({ state, advObjectType, campaignIds, pageSize = 100 } = {}) {
     if (!isConfigured()) return [];
     const campaigns = [];
@@ -964,27 +1007,85 @@ function createPerformanceService({
   }
 
   async function getReportListItem(uuid) {
-    const items = await getStatisticsList(1, 100);
+    const items = await getAllStatisticsList(100);
     return items.find(item => item.meta && item.meta.UUID === uuid) || null;
   }
 
-  async function getReportStatus(uuid) {
+  function getReportRecord(uuid) {
+    return loadReports().find(item => item.uuid === uuid) || null;
+  }
+
+  function getReportAgeMinutes(record) {
+    const createdAt = record?.createdAt;
+    if (!createdAt) {
+      return null;
+    }
+
+    const diffMs = Date.now() - new Date(createdAt).getTime();
+    if (!Number.isFinite(diffMs) || diffMs < 0) {
+      return null;
+    }
+
+    return Math.floor(diffMs / 60000);
+  }
+
+  function assertPollInterval(uuid, { bypassThrottle = false } = {}) {
+    if (bypassThrottle) {
+      return;
+    }
+
+    const record = getReportRecord(uuid);
+    const lastPollAt = record?.lastPollAt;
+    if (!lastPollAt) {
+      return;
+    }
+
+    const nextAllowedAt = new Date(new Date(lastPollAt).getTime() + REPORT_POLL_MIN_INTERVAL_MS).toISOString();
+    if (new Date(nextAllowedAt).getTime() > Date.now()) {
+      throw createPollThrottleError(
+        uuid,
+        nextAllowedAt,
+        "Не опрашивай UUID слишком часто. Следующая проверка после " + formatClockTime(nextAllowedAt) + "."
+      );
+    }
+  }
+
+  function markReportPolled(uuid, status) {
+    const existing = getReportRecord(uuid);
+    const retries = Number(existing?.retries || 0) + 1;
+
+    upsertReportRecord({
+      uuid,
+      retries,
+      lastKnownStatus: status,
+      lastPollAt: new Date().toISOString()
+    });
+  }
+
+  async function getReportStatus(uuid, options = {}) {
+    assertPollInterval(uuid, options);
     const found = await getReportListItem(uuid);
 
     if (!found) {
       const stored = loadReports().find(item => item.uuid === uuid);
+      markReportPolled(uuid, stored ? stored.status || "pending" : "not_found");
       return {
         uuid,
         ready: false,
         status: stored ? stored.status || "pending" : "pending",
+        rawStatus: stored ? stored.status || "pending" : "not_found",
+        ageMinutes: getReportAgeMinutes(stored),
+        retries: Number(stored?.retries || 1),
         message: "Отчёт ещё готовится."
       };
     }
 
     if (found.meta && found.meta.error) {
+      markReportPolled(uuid, "error");
       upsertReportRecord({
         uuid,
         status: "error",
+        lastKnownStatus: "error",
         error: found.meta.error
       });
       throw new Error("Performance report failed: " + found.meta.error);
@@ -992,36 +1093,71 @@ function createPerformanceService({
 
     if (found.meta && found.meta.link) {
       clearActiveLimitTimestamp();
+      markReportPolled(uuid, "ready");
       upsertReportRecord({
         uuid,
         status: "ready",
+        lastKnownStatus: "ready",
         link: found.meta.link
       });
+      const stored = getReportRecord(uuid);
       return {
         uuid,
         ready: true,
         status: "ready",
+        rawStatus: found.meta.status || found.status || found.state || "READY",
+        ageMinutes: getReportAgeMinutes(stored),
+        retries: Number(stored?.retries || 1),
         item: found
       };
     }
 
+    const rawStatus = found.meta?.status || found.status || found.state || "IN_PROGRESS";
+    markReportPolled(uuid, rawStatus);
     upsertReportRecord({
       uuid,
-      status: "pending"
+      status: "pending",
+      lastKnownStatus: rawStatus
     });
+    const stored = getReportRecord(uuid);
 
     return {
       uuid,
       ready: false,
       status: "pending",
+      rawStatus,
+      ageMinutes: getReportAgeMinutes(stored),
+      retries: Number(stored?.retries || 1),
       item: found,
       message: "Отчёт ещё готовится."
     };
   }
 
+  async function getReportDiagnostics(uuid) {
+    const listItem = await getReportListItem(uuid);
+    const record = getReportRecord(uuid);
+    let reportEndpoint = null;
+
+    try {
+      reportEndpoint = await requestReportDownloadStatus(uuid);
+    } catch (error) {
+      reportEndpoint = {
+        ok: false,
+        error: error.message
+      };
+    }
+
+    return {
+      uuid,
+      localRecord: record,
+      listItem,
+      reportEndpoint
+    };
+  }
+
   async function waitForReport(uuid, attempts = 12, delayMs = 5000) {
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
-      const status = await getReportStatus(uuid);
+      const status = await getReportStatus(uuid, { bypassThrottle: true });
 
       if (status.ready) {
         return status;
@@ -1036,7 +1172,7 @@ function createPerformanceService({
   }
 
   async function resolveReport(uuid) {
-    const status = await getReportStatus(uuid);
+    const status = await getReportStatus(uuid, { bypassThrottle: true });
 
     if (!status.ready) {
       throw createPendingReportError(uuid, "Отчёт ещё готовится.");
@@ -1443,6 +1579,7 @@ function createPerformanceService({
 
   return {
     ACTIVE_LIMIT_COOLDOWN_MS,
+    REPORT_POLL_MIN_INTERVAL_MS,
     campaignsToRows,
     chunkArray,
     continueQueue,
@@ -1462,6 +1599,7 @@ function createPerformanceService({
     getMinBidBySku,
     getPerformanceToken,
     getReportStatus,
+    getReportDiagnostics,
     getStatisticsList,
     getStatisticsListRaw,
     getGroupItems,

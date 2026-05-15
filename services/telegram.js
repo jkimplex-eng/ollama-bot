@@ -46,6 +46,8 @@ function getHelpText() {
     "/performance reset",
     "/performance export <requestGroupId>",
     "/performance report <uuid>",
+    "/performance report status <uuid>",
+    "/performance watch <uuid>",
     "/performance debug",
     "/ai strategy",
     "/ai quick",
@@ -98,7 +100,9 @@ function parsePerformanceCommand(text) {
     [/^\/performance objects (\d+)$/, match => ({ type: "objects", campaignId: match[1] })],
     [/^\/performance minbid (\d+)$/, match => ({ type: "minbid", sku: match[1] })],
     [/^\/performance export ([a-z0-9-]+)$/i, match => ({ type: "export", requestGroupId: match[1] })],
+    [/^\/performance report status ([a-z0-9-]+)$/i, match => ({ type: "report_status", uuid: match[1] })],
     [/^\/performance report(?: в таблицу)? ([a-z0-9-]+)$/i, match => ({ type: "report", uuid: match[1], toSheet: normalized.includes(" в таблицу ") })],
+    [/^\/performance watch ([a-z0-9-]+)$/i, match => ({ type: "watch", uuid: match[1] })],
     [
       /^\/performance campaigns(?: (active|running|sku|search_promo|banner))?(?: в таблицу)?$/,
       match => ({
@@ -425,6 +429,24 @@ function formatPerformanceSummary(summary, uuid) {
   ].join("\n");
 }
 
+function formatPendingReportStatus(status) {
+  const age = status.ageMinutes === null ? "неизвестно" : String(status.ageMinutes);
+  const retries = status.retries ?? 0;
+  const lastKnownStatus = status.rawStatus || status.status || "IN_PROGRESS";
+  const lines = [
+    "Отчёт готовится уже " + age + " минут. Последний статус: " + lastKnownStatus,
+    "UUID: " + status.uuid,
+    "Проверок: " + retries
+  ];
+
+  if (typeof status.ageMinutes === "number" && status.ageMinutes > 15) {
+    lines.push("Подсказка: попробуй меньший диапазон дат.");
+    lines.push("Подсказка: проверь, была ли активность у кампании.");
+  }
+
+  return lines.join("\n");
+}
+
 function formatCreatedReports(created) {
   const lines = [];
 
@@ -471,6 +493,10 @@ function formatHealthInfo() {
   ].join("\n");
 }
 
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 async function sendLongMessage(bot, chatId, text) {
   const parts = [];
 
@@ -507,6 +533,7 @@ function startTelegramBot({
 
   const tgBot = new TelegramBot(token, { polling: true });
   let lastChatId = null;
+  const activeWatches = new Map();
 
   async function sendText(chatId, text) {
     await sendLongMessage(tgBot, chatId, text);
@@ -1006,6 +1033,72 @@ function startTelegramBot({
             );
             return;
           }
+          case "watch": {
+            if (!performanceService.isConfigured()) {
+              await tgBot.sendMessage(
+                chatId,
+                "Performance API не настроен: проверь OZON_PERFORMANCE_CLIENT_ID и OZON_PERFORMANCE_CLIENT_SECRET."
+              );
+              return;
+            }
+
+            if (activeWatches.has(performanceCommand.uuid)) {
+              await tgBot.sendMessage(chatId, "Наблюдение за этим UUID уже запущено.");
+              return;
+            }
+
+            activeWatches.set(performanceCommand.uuid, true);
+            await tgBot.sendMessage(chatId, "Запустил наблюдение за отчётом " + performanceCommand.uuid + " на 10 минут.");
+
+            void (async () => {
+              const startedAt = Date.now();
+
+              try {
+                while (Date.now() - startedAt < 10 * 60 * 1000) {
+                  let status;
+
+                  try {
+                    status = await performanceService.getReportStatus(performanceCommand.uuid, {
+                      bypassThrottle: true
+                    });
+                  } catch (error) {
+                    if (error.code === "PERFORMANCE_REPORT_PENDING") {
+                      status = null;
+                    } else {
+                      throw error;
+                    }
+                  }
+
+                  if (status && status.ready) {
+                    const resolved = await performanceService.resolveReport(performanceCommand.uuid);
+                    const summary = performanceService.summarizeStats(resolved.rows);
+                    await sendLongMessage(
+                      tgBot,
+                      chatId,
+                      "Отчёт готов.\n\n" + formatPerformanceSummary(summary, performanceCommand.uuid)
+                    );
+                    return;
+                  }
+
+                  await delay(30 * 1000);
+                }
+
+                await tgBot.sendMessage(
+                  chatId,
+                  "Отчёт всё ещё не готов. Попробуй позже через /performance report " + performanceCommand.uuid
+                );
+              } catch (error) {
+                await tgBot.sendMessage(
+                  chatId,
+                  "Ошибка Performance watch: " + error.message
+                );
+              } finally {
+                activeWatches.delete(performanceCommand.uuid);
+              }
+            })();
+
+            return;
+          }
           case "export": {
             const result = await performanceService.exportGroup(performanceCommand.requestGroupId);
 
@@ -1026,6 +1119,23 @@ function startTelegramBot({
             );
             return;
           }
+          case "report_status": {
+            if (!performanceService.isConfigured()) {
+              await tgBot.sendMessage(
+                chatId,
+                "Performance API не настроен: проверь OZON_PERFORMANCE_CLIENT_ID и OZON_PERFORMANCE_CLIENT_SECRET."
+              );
+              return;
+            }
+
+            const diagnostics = await performanceService.getReportDiagnostics(performanceCommand.uuid);
+            await sendLongMessage(
+              tgBot,
+              chatId,
+              JSON.stringify(diagnostics, null, 2).slice(0, 4000)
+            );
+            return;
+          }
           case "report": {
             if (!performanceService.isConfigured()) {
               await tgBot.sendMessage(
@@ -1038,10 +1148,7 @@ function startTelegramBot({
             const status = await performanceService.getReportStatus(performanceCommand.uuid);
 
             if (!status.ready) {
-              await tgBot.sendMessage(
-                chatId,
-                "Отчёт Performance ещё готовится. Повтори команду через 1-2 минуты."
-              );
+              await sendLongMessage(tgBot, chatId, formatPendingReportStatus(status));
               return;
             }
 
@@ -1072,10 +1179,12 @@ function startTelegramBot({
         }
       } catch (err) {
         if (performanceCommand.type === "report" && err.code === "PERFORMANCE_REPORT_PENDING") {
-          await tgBot.sendMessage(
-            chatId,
-            "Отчёт Performance ещё готовится. Повтори команду через 1-2 минуты."
-          );
+          await tgBot.sendMessage(chatId, "Отчёт Performance ещё готовится. Повтори команду через 1-2 минуты.");
+          return;
+        }
+
+        if ((performanceCommand.type === "report" || performanceCommand.type === "report_status") && err.code === "PERFORMANCE_REPORT_POLL_THROTTLED") {
+          await tgBot.sendMessage(chatId, err.message);
           return;
         }
 

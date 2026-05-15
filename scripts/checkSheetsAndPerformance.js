@@ -185,11 +185,27 @@ function run() {
   );
 
   assert.deepStrictEqual(
+    parsePerformanceCommand("/performance report status 123e4567-e89b-12d3-a456-426614174000"),
+    {
+      type: "report_status",
+      uuid: "123e4567-e89b-12d3-a456-426614174000"
+    }
+  );
+
+  assert.deepStrictEqual(
     parsePerformanceCommand("/performance report в таблицу 123e4567-e89b-12d3-a456-426614174000"),
     {
       type: "report",
       uuid: "123e4567-e89b-12d3-a456-426614174000",
       toSheet: true
+    }
+  );
+
+  assert.deepStrictEqual(
+    parsePerformanceCommand("/performance watch 123e4567-e89b-12d3-a456-426614174000"),
+    {
+      type: "watch",
+      uuid: "123e4567-e89b-12d3-a456-426614174000"
     }
   );
 
