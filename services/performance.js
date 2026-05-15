@@ -787,6 +787,59 @@ function createPerformanceService({
     return record;
   }
 
+  async function createSingleCampaignStatsReport({ campaignId, dateFrom, dateTo, reportType = "stats_single" }) {
+    const cooldownUntil = isActiveLimitCooldown();
+
+    if (cooldownUntil) {
+      throw createCooldownError(
+        cooldownUntil,
+        "Ждём освобождения лимита Ozon до " +
+          formatClockTime(cooldownUntil) +
+          ". Используй /performance discover raw для диагностики."
+      );
+    }
+
+    try {
+      return await createStatisticsReportRequest({
+        campaignIds: [String(campaignId)],
+        dateFrom,
+        dateTo,
+        reportType,
+        requestGroupId: createRequestGroupId(),
+        chunkIndex: 1,
+        totalChunks: 1,
+        activeOnly: false
+      });
+    } catch (error) {
+      if (error.code === "PERFORMANCE_ACTIVE_LIMIT") {
+        setActiveLimitTimestamp();
+      }
+
+      throw error;
+    }
+  }
+
+  async function createTestStatsReport({ dateFrom, dateTo }) {
+    const campaigns = await getCampaigns({ state: "CAMPAIGN_STATE_RUNNING" });
+    const first = campaigns[0];
+
+    if (!first) {
+      throw new Error("Не найдена ни одна активная кампания для test-запроса.");
+    }
+
+    const report = await createSingleCampaignStatsReport({
+      campaignId: first.campaignId,
+      dateFrom,
+      dateTo,
+      reportType: "stats_test"
+    });
+
+    return {
+      campaign: first,
+      report
+    };
+  }
+
   async function getStatisticsList(page = 1, pageSize = 100) {
     const data = await requestJson("/api/client/statistics/list", {
       method: "GET",
@@ -1268,6 +1321,20 @@ function createPerformanceService({
     };
   }
 
+  async function exportReport(uuid) {
+    const resolved = await resolveReport(uuid);
+    const writeResult = await sheetsService.clearAndWriteMappedRows(
+      "performance_stats",
+      statsToRows(resolved.rows)
+    );
+
+    return {
+      uuid,
+      rows: resolved.rows,
+      writeResult
+    };
+  }
+
   function campaignsToRows(campaigns) {
     return campaigns.map(campaign => [
       campaign.campaignId,
@@ -1379,10 +1446,13 @@ function createPerformanceService({
     campaignsToRows,
     chunkArray,
     continueQueue,
+    createSingleCampaignStatsReport,
     createStatsQueue,
+    createTestStatsReport,
     debugSummary,
     discoverAndRecoverRemoteReport,
     discoverRemoteReports,
+    exportReport,
     exportGroup,
     formatBudgetValue,
     getBidLimits,

@@ -135,6 +135,25 @@ function run() {
   });
 
   assert.deepStrictEqual(
+    parsePerformanceCommand("/performance stats campaign 123 2026-05-01 2026-05-14"),
+    {
+      type: "stats_campaign",
+      campaignId: "123",
+      dateFrom: "2026-05-01",
+      dateTo: "2026-05-14"
+    }
+  );
+
+  assert.deepStrictEqual(
+    parsePerformanceCommand("/performance stats test 2026-05-01 2026-05-14"),
+    {
+      type: "stats_test",
+      dateFrom: "2026-05-01",
+      dateTo: "2026-05-14"
+    }
+  );
+
+  assert.deepStrictEqual(
     parsePerformanceCommand("/performance stats 2026-05-01 2026-05-14"),
     {
       type: "stats",
@@ -160,7 +179,17 @@ function run() {
     parsePerformanceCommand("/performance report 123e4567-e89b-12d3-a456-426614174000"),
     {
       type: "report",
-      uuid: "123e4567-e89b-12d3-a456-426614174000"
+      uuid: "123e4567-e89b-12d3-a456-426614174000",
+      toSheet: false
+    }
+  );
+
+  assert.deepStrictEqual(
+    parsePerformanceCommand("/performance report в таблицу 123e4567-e89b-12d3-a456-426614174000"),
+    {
+      type: "report",
+      uuid: "123e4567-e89b-12d3-a456-426614174000",
+      toSheet: true
     }
   );
 

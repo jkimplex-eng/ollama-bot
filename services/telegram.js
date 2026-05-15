@@ -32,6 +32,8 @@ function getHelpText() {
     "/performance campaigns в таблицу",
     "/performance campaigns active в таблицу",
     "/performance stats 2026-05-01 2026-05-14",
+    "/performance stats campaign <campaignId> 2026-05-01 2026-05-14",
+    "/performance stats test 2026-05-01 2026-05-14",
     "/performance stats активные 2026-05-01 2026-05-14",
     "/performance stats в таблицу 2026-05-01 2026-05-14",
     "/performance objects <campaignId>",
@@ -96,7 +98,7 @@ function parsePerformanceCommand(text) {
     [/^\/performance objects (\d+)$/, match => ({ type: "objects", campaignId: match[1] })],
     [/^\/performance minbid (\d+)$/, match => ({ type: "minbid", sku: match[1] })],
     [/^\/performance export ([a-z0-9-]+)$/i, match => ({ type: "export", requestGroupId: match[1] })],
-    [/^\/performance report ([a-z0-9-]+)$/i, match => ({ type: "report", uuid: match[1] })],
+    [/^\/performance report(?: в таблицу)? ([a-z0-9-]+)$/i, match => ({ type: "report", uuid: match[1], toSheet: normalized.includes(" в таблицу ") })],
     [
       /^\/performance campaigns(?: (active|running|sku|search_promo|banner))?(?: в таблицу)?$/,
       match => ({
@@ -106,6 +108,23 @@ function parsePerformanceCommand(text) {
             ? "running"
             : match[1] || "",
         toSheet: normalized.endsWith(" в таблицу")
+      })
+    ],
+    [
+      /^\/performance stats campaign (\d+) (\d{4}-\d{2}-\d{2}) (\d{4}-\d{2}-\d{2})$/,
+      match => ({
+        type: "stats_campaign",
+        campaignId: match[1],
+        dateFrom: match[2],
+        dateTo: match[3]
+      })
+    ],
+    [
+      /^\/performance stats test (\d{4}-\d{2}-\d{2}) (\d{4}-\d{2}-\d{2})$/,
+      match => ({
+        type: "stats_test",
+        dateFrom: match[1],
+        dateTo: match[2]
       })
     ],
     [
@@ -934,6 +953,59 @@ function startTelegramBot({
             await sendLongMessage(tgBot, chatId, formatCreatedReports(created));
             return;
           }
+          case "stats_campaign": {
+            if (!performanceService.isConfigured()) {
+              await tgBot.sendMessage(
+                chatId,
+                "Performance API не настроен: проверь OZON_PERFORMANCE_CLIENT_ID и OZON_PERFORMANCE_CLIENT_SECRET."
+              );
+              return;
+            }
+
+            const report = await performanceService.createSingleCampaignStatsReport({
+              campaignId: performanceCommand.campaignId,
+              dateFrom: performanceCommand.dateFrom,
+              dateTo: performanceCommand.dateTo
+            });
+
+            await tgBot.sendMessage(
+              chatId,
+              "Создал отчёт Performance для кампании " +
+                performanceCommand.campaignId +
+                ". UUID: " +
+                report.uuid +
+                "\nИспользуй /performance report " +
+                report.uuid
+            );
+            return;
+          }
+          case "stats_test": {
+            if (!performanceService.isConfigured()) {
+              await tgBot.sendMessage(
+                chatId,
+                "Performance API не настроен: проверь OZON_PERFORMANCE_CLIENT_ID и OZON_PERFORMANCE_CLIENT_SECRET."
+              );
+              return;
+            }
+
+            const result = await performanceService.createTestStatsReport({
+              dateFrom: performanceCommand.dateFrom,
+              dateTo: performanceCommand.dateTo
+            });
+
+            await tgBot.sendMessage(
+              chatId,
+              "Создал test-отчёт для кампании " +
+                result.campaign.campaignId +
+                " (" +
+                (result.campaign.campaignName || "-") +
+                "). UUID: " +
+                result.report.uuid +
+                "\nИспользуй /performance report " +
+                result.report.uuid
+            );
+            return;
+          }
           case "export": {
             const result = await performanceService.exportGroup(performanceCommand.requestGroupId);
 
@@ -974,6 +1046,15 @@ function startTelegramBot({
             }
 
             await tgBot.sendMessage(chatId, "Отчёт готов, скачиваю...");
+            if (performanceCommand.toSheet) {
+              const exported = await performanceService.exportReport(performanceCommand.uuid);
+              await tgBot.sendMessage(
+                chatId,
+                "Записал " + exported.writeResult.rowsWritten + " строк в " + exported.writeResult.tabName
+              );
+              return;
+            }
+
             const resolved = await performanceService.resolveReport(performanceCommand.uuid);
             const summary = performanceService.summarizeStats(resolved.rows);
 
