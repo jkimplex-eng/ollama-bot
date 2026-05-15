@@ -15,7 +15,56 @@ function run() {
   );
 
   assert.deepStrictEqual(parsePerformanceCommand("/performance campaigns"), {
-    type: "campaigns"
+    type: "campaigns",
+    filter: "",
+    toSheet: false
+  });
+
+  assert.deepStrictEqual(parsePerformanceCommand("/performance campaigns active"), {
+    type: "campaigns",
+    filter: "running",
+    toSheet: false
+  });
+
+  assert.deepStrictEqual(parsePerformanceCommand("/performance campaigns sku"), {
+    type: "campaigns",
+    filter: "sku",
+    toSheet: false
+  });
+
+  assert.deepStrictEqual(parsePerformanceCommand("/performance campaigns search_promo"), {
+    type: "campaigns",
+    filter: "search_promo",
+    toSheet: false
+  });
+
+  assert.deepStrictEqual(parsePerformanceCommand("/performance campaigns banner"), {
+    type: "campaigns",
+    filter: "banner",
+    toSheet: false
+  });
+
+  assert.deepStrictEqual(
+    parsePerformanceCommand("/performance campaigns active в таблицу"),
+    {
+      type: "campaigns",
+      filter: "running",
+      toSheet: true
+    }
+  );
+
+  assert.deepStrictEqual(parsePerformanceCommand("/performance objects 123"), {
+    type: "objects",
+    campaignId: "123"
+  });
+
+  assert.deepStrictEqual(parsePerformanceCommand("/performance limits"), {
+    type: "limits"
+  });
+
+  assert.deepStrictEqual(parsePerformanceCommand("/performance minbid 123456789"), {
+    type: "minbid",
+    sku: "123456789"
   });
 
   assert.deepStrictEqual(parsePerformanceCommand("/performance queue"), {

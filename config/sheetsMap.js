@@ -24,7 +24,11 @@ const sheetsMap = {
       "To Date",
       "Budget",
       "Daily Budget",
-      "Placement"
+      "Weekly Budget",
+      "Placement",
+      "Product Campaign Mode",
+      "Created At",
+      "Updated At"
     ],
     mode: "replace"
   },

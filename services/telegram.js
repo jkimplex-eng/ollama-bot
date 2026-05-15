@@ -23,9 +23,19 @@ function getHelpText() {
     "/analytics остатки",
     "/analytics проблемы",
     "/performance campaigns",
+    "/performance campaigns active",
+    "/performance campaigns running",
+    "/performance campaigns sku",
+    "/performance campaigns search_promo",
+    "/performance campaigns banner",
+    "/performance campaigns в таблицу",
+    "/performance campaigns active в таблицу",
     "/performance stats 2026-05-01 2026-05-14",
     "/performance stats активные 2026-05-01 2026-05-14",
     "/performance stats в таблицу 2026-05-01 2026-05-14",
+    "/performance objects <campaignId>",
+    "/performance limits",
+    "/performance minbid <sku>",
     "/performance continue",
     "/performance queue",
     "/performance reset",
@@ -72,10 +82,6 @@ function parseAnalyticsCommand(text) {
 function parsePerformanceCommand(text) {
   const normalized = text.trim().replace(/\s+/g, " ").toLowerCase();
 
-  if (normalized === "/performance campaigns") {
-    return { type: "campaigns" };
-  }
-
   if (normalized === "/performance debug") {
     return { type: "debug" };
   }
@@ -90,6 +96,51 @@ function parsePerformanceCommand(text) {
 
   if (normalized === "/performance reset") {
     return { type: "reset" };
+  }
+
+  if (normalized === "/performance limits") {
+    return { type: "limits" };
+  }
+
+  const objectsMatch = normalized.match(/^\/performance\s+objects\s+(\d+)$/);
+
+  if (objectsMatch) {
+    return {
+      type: "objects",
+      campaignId: objectsMatch[1]
+    };
+  }
+
+  const minBidMatch = normalized.match(/^\/performance\s+minbid\s+(\d+)$/);
+
+  if (minBidMatch) {
+    return {
+      type: "minbid",
+      sku: minBidMatch[1]
+    };
+  }
+
+  const campaignTokens = normalized.split(" ");
+
+  if (campaignTokens[0] === "/performance" && campaignTokens[1] === "campaigns") {
+    const flags = new Set(campaignTokens.slice(2));
+    let filter = "";
+
+    if (flags.has("active") || flags.has("running")) {
+      filter = "running";
+    } else if (flags.has("sku")) {
+      filter = "sku";
+    } else if (flags.has("search_promo")) {
+      filter = "search_promo";
+    } else if (flags.has("banner")) {
+      filter = "banner";
+    }
+
+    return {
+      type: "campaigns",
+      filter,
+      toSheet: flags.has("таблицу")
+    };
   }
 
   const exportMatch = normalized.match(/^\/performance\s+export\s+([a-z0-9-]+)$/i);
@@ -285,10 +336,83 @@ function formatPerformanceCampaigns(rows) {
         "Campaign Name: " + (row.campaignName || "-"),
         "State: " + (row.status || "-"),
         "Type: " + (row.advObjectType || "-"),
-        "Payment Type: " + (row.paymentType || "-")
+        "Payment Type: " + (row.paymentType || "-"),
+        "From Date: " + (row.fromDate || "-"),
+        "To Date: " + (row.toDate || "-"),
+        "Budget: " + (row.budget === "" ? "-" : row.budget),
+        "Daily Budget: " + (row.dailyBudget === "" ? "-" : row.dailyBudget),
+        "Placement: " + (row.placement || "-")
       ].join("\n");
     })
     .join("\n\n");
+}
+
+function formatPerformanceObjects(campaignId, objects) {
+  if (!objects.length) {
+    return "Для кампании " + campaignId + " объекты не найдены.";
+  }
+
+  return objects
+    .slice(0, 20)
+    .map(item => JSON.stringify(item, null, 2))
+    .join("\n\n");
+}
+
+function formatPerformanceLimits(rows) {
+  if (!rows.length) {
+    return "Лимиты ставок Performance API не найдены.";
+  }
+
+  return rows
+    .slice(0, 20)
+    .map(row => {
+      return [
+        "Type: " + (row.objectType || row.advObjectType || "-"),
+        "Payment: " + (row.paymentMethod || row.paymentType || "-"),
+        "Min Bid: " + (row.minBid ?? "-"),
+        "Max Bid: " + (row.maxBid ?? "-")
+      ].join("\n");
+    })
+    .join("\n\n");
+}
+
+function formatMinBidResponse(sku, data) {
+  const rows = data.list || data.items || data.result || data.sku || [];
+
+  if (Array.isArray(rows) && rows.length) {
+    return rows
+      .map(item => {
+        return [
+          "SKU: " + (item.sku || sku),
+          "Min Bid: " + (item.minBid ?? item.bid ?? "-"),
+          "Payment Type: " + (item.paymentType || "CPC"),
+          "Marketplace: " + (item.marketplaceId || "MARKETPLACE_ID_RU")
+        ].join("\n");
+      })
+      .join("\n\n");
+  }
+
+  return "SKU: " + sku + "\n" + JSON.stringify(data, null, 2);
+}
+
+function getCampaignFilters(filter) {
+  if (filter === "running") {
+    return { state: "CAMPAIGN_STATE_RUNNING" };
+  }
+
+  if (filter === "sku") {
+    return { advObjectType: "SKU" };
+  }
+
+  if (filter === "search_promo") {
+    return { advObjectType: "SEARCH_PROMO" };
+  }
+
+  if (filter === "banner") {
+    return { advObjectType: "BANNER" };
+  }
+
+  return {};
 }
 
 function formatQueueItems(reports) {
@@ -702,10 +826,87 @@ function startTelegramBot({
         }
 
         await tgBot.sendMessage(chatId, "Забираю кампании Performance API...");
-        const rows = await performanceService.getCampaigns();
+        const filters = getCampaignFilters(performanceCommand.filter);
+
+        if (performanceCommand.toSheet) {
+          const campaigns = await performanceService.getCampaigns(filters);
+          let result;
+
+          try {
+            result = await performanceService.writeCampaignRowsToMappedSheet(campaigns);
+          } catch (sheetError) {
+            await tgBot.sendMessage(
+              chatId,
+              "Performance data was received but Sheets write failed: " + sheetError.message
+            );
+            return;
+          }
+
+          await tgBot.sendMessage(
+            chatId,
+            "Записал " + result.rowsWritten + " строк в " + result.tabName
+          );
+          return;
+        }
+
+        const rows = await performanceService.getCampaigns(filters);
         await sendLongMessage(tgBot, chatId, formatPerformanceCampaigns(rows));
       } catch (err) {
         await tgBot.sendMessage(chatId, "Ошибка Performance API: " + err.message);
+      }
+
+      return;
+    }
+
+    if (performanceCommand && performanceCommand.type === "objects") {
+      try {
+        const campaigns = await performanceService.getCampaigns({
+          pageSize: 100,
+          campaignIds: [performanceCommand.campaignId]
+        });
+        const campaign = campaigns.find(item => item.campaignId === performanceCommand.campaignId);
+
+        if (campaign && campaign.advObjectType === "SEARCH_PROMO") {
+          await tgBot.sendMessage(
+            chatId,
+            "For SEARCH_PROMO campaigns another products endpoint is required and will be added separately."
+          );
+          return;
+        }
+
+        const objects = await performanceService.getCampaignObjects(performanceCommand.campaignId);
+        await sendLongMessage(
+          tgBot,
+          chatId,
+          "Campaign ID: " +
+            performanceCommand.campaignId +
+            "\n\n" +
+            formatPerformanceObjects(performanceCommand.campaignId, objects)
+        );
+      } catch (err) {
+        await tgBot.sendMessage(chatId, "Ошибка Performance objects: " + err.message);
+      }
+
+      return;
+    }
+
+    if (performanceCommand && performanceCommand.type === "limits") {
+      try {
+        const limits = await performanceService.getBidLimits();
+        await sendLongMessage(tgBot, chatId, formatPerformanceLimits(limits));
+      } catch (err) {
+        await tgBot.sendMessage(chatId, "Ошибка Performance limits: " + err.message);
+      }
+
+      return;
+    }
+
+    if (performanceCommand && performanceCommand.type === "minbid") {
+      try {
+        const result = await performanceService.getMinBidBySku(performanceCommand.sku);
+        await sendLongMessage(tgBot, chatId, formatMinBidResponse(performanceCommand.sku, result));
+      } catch (err) {
+        await tgBot.sendMessage(chatId, "Ошибка Performance minbid: " + err.message);
       }
 
       return;

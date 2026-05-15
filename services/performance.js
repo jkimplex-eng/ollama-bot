@@ -112,6 +112,10 @@ function parseSemicolonCsv(text) {
 }
 
 function normalizeCampaign(item) {
+  const dailyBudget = toNumber(item.dailyBudget);
+  const budget = toNumber(item.budget);
+  const weeklyBudget = toNumber(item.weeklyBudget);
+
   return {
     campaignId: String(item.id ?? ""),
     campaignName: item.title ?? "",
@@ -120,10 +124,20 @@ function normalizeCampaign(item) {
     paymentType: item.paymentType ?? "",
     fromDate: item.fromDate ?? "",
     toDate: item.toDate ?? "",
-    budget: item.budget ?? "",
-    dailyBudget: item.dailyBudget ?? "",
-    placement: item.placement ?? ""
+    budget: budget === null ? "" : budget / 1_000_000,
+    dailyBudget: dailyBudget === null ? "" : dailyBudget / 1_000_000,
+    weeklyBudget: weeklyBudget === null ? "" : weeklyBudget / 1_000_000,
+    placement: item.placement ?? "",
+    productCampaignMode: item.productCampaignMode ?? item.productAutopilotStrategy ?? "",
+    createdAt: item.createdAt ?? "",
+    updatedAt: item.updatedAt ?? ""
   };
+}
+
+function formatBudgetValue(value) {
+  const number = toNumber(value);
+  if (number === null) return "";
+  return Number(number.toFixed(2));
 }
 
 function extractCampaignMeta(headerText) {
@@ -449,17 +463,86 @@ function createPerformanceService({
     return bodyText;
   }
 
-  async function getCampaigns() {
+  async function getCampaigns({ state, advObjectType, campaignIds, pageSize = 100 } = {}) {
     if (!isConfigured()) return [];
+    const campaigns = [];
+    let page = 1;
 
-    const data = await requestJson("/api/client/campaign");
-    const items = data.list;
+    while (true) {
+      const query = {
+        page,
+        pageSize
+      };
 
-    if (!Array.isArray(items)) {
-      throw new Error("Performance API returned unexpected campaigns shape.");
+      if (Array.isArray(campaignIds) && campaignIds.length) {
+        query.campaignIds = campaignIds.join(",");
+      }
+
+      if (state) {
+        query.state = state;
+      }
+
+      if (advObjectType) {
+        query.advObjectType = advObjectType;
+      }
+
+      const data = await requestJson("/api/client/campaign", {
+        method: "GET",
+        query
+      });
+      const items = data.list;
+
+      if (!Array.isArray(items)) {
+        throw new Error("Performance API returned unexpected campaigns shape.");
+      }
+
+      campaigns.push(...items.map(normalizeCampaign));
+
+      if (!items.length || items.length < pageSize) {
+        break;
+      }
+
+      page += 1;
     }
 
-    return items.map(normalizeCampaign);
+    return campaigns;
+  }
+
+  async function getCampaignObjects(campaignId) {
+    const data = await requestJson("/api/client/campaign/" + campaignId + "/objects", {
+      method: "GET"
+    });
+
+    if (!Array.isArray(data.list) && !Array.isArray(data.items) && !Array.isArray(data.result)) {
+      throw new Error("Performance API returned unexpected campaign objects shape.");
+    }
+
+    return data.list || data.items || data.result;
+  }
+
+  async function getBidLimits() {
+    const data = await requestJson("/api/client/limits/list", {
+      method: "GET"
+    });
+
+    if (!Array.isArray(data.limits) && !Array.isArray(data.list) && !Array.isArray(data.items) && !Array.isArray(data.result)) {
+      throw new Error("Performance API returned unexpected limits shape.");
+    }
+
+    return data.limits || data.list || data.items || data.result;
+  }
+
+  async function getMinBidBySku(sku) {
+    const data = await requestJson("/api/client/min/sku", {
+      method: "POST",
+      body: {
+        marketplaceId: "MARKETPLACE_ID_RU",
+        paymentType: "CPC",
+        sku: [String(sku)]
+      }
+    });
+
+    return data;
   }
 
   async function createStatisticsReportRequest({
@@ -853,7 +936,11 @@ function createPerformanceService({
       campaign.toDate,
       campaign.budget,
       campaign.dailyBudget,
-      campaign.placement
+      campaign.weeklyBudget,
+      campaign.placement,
+      campaign.productCampaignMode,
+      campaign.createdAt,
+      campaign.updatedAt
     ]);
   }
 
@@ -903,17 +990,21 @@ function createPerformanceService({
     };
   }
 
-  async function writeCampaignsToMappedSheet() {
-    const campaigns = await getCampaigns();
-    const result = await sheetsService.clearAndWriteMappedRows(
-      "performance_campaigns",
-      campaignsToRows(campaigns)
-    );
+  async function writeCampaignsToMappedSheet(filters = {}) {
+    const campaigns = await getCampaigns(filters);
+    const result = await writeCampaignRowsToMappedSheet(campaigns);
 
     return {
       campaigns,
       sheetResult: result
     };
+  }
+
+  async function writeCampaignRowsToMappedSheet(campaigns) {
+    return sheetsService.clearAndWriteMappedRows(
+      "performance_campaigns",
+      campaignsToRows(campaigns)
+    );
   }
 
   async function debugSummary() {
@@ -945,8 +1036,12 @@ function createPerformanceService({
     createStatsQueue,
     debugSummary,
     exportGroup,
+    formatBudgetValue,
+    getBidLimits,
     getCampaigns,
+    getCampaignObjects,
     getCurrentPendingQueueItem,
+    getMinBidBySku,
     getPerformanceToken,
     getReportStatus,
     getStatisticsList,
@@ -959,6 +1054,7 @@ function createPerformanceService({
     statsToRows,
     summarizeStats,
     waitForReport,
+    writeCampaignRowsToMappedSheet,
     writeCampaignsToMappedSheet
   };
 }
