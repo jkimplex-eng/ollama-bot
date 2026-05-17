@@ -72,6 +72,30 @@ function run() {
     }
   );
 
+  assert.deepStrictEqual(
+    buildPnlSummaryRows(
+      [
+        {
+          date: "2026-05-13",
+          orders: 1,
+          revenue: 1000,
+          adSpend: 200
+        },
+        {
+          date: "2026-05-14",
+          orders: 2,
+          revenue: 2000,
+          cost: 300
+        }
+      ],
+      {
+        dateFrom: "2026-05-13",
+        dateTo: "2026-05-14"
+      }
+    ).rows.find(row => row[0] === "Реклама"),
+    ["Реклама", 200, 300]
+  );
+
   const skuRows = buildSkuDashboardRows(performanceRows, [
     { name: "Товар 1", sku: "111", price: 999, offerId: "offer-111" },
     { name: "Товар 2", sku: "222", price: 555, offerId: "offer-222" }

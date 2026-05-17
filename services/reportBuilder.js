@@ -44,11 +44,27 @@ function createMetricRow(label, dates, valuesByDate) {
   return [label, ...dates.map(date => round2(valuesByDate.get(date) || 0))];
 }
 
+function getAdvertisingSpend(row) {
+  if (row.spend !== undefined && row.spend !== null && row.spend !== "") {
+    return row.spend;
+  }
+
+  if (row.adSpend !== undefined && row.adSpend !== null && row.adSpend !== "") {
+    return row.adSpend;
+  }
+
+  if (row.cost !== undefined && row.cost !== null && row.cost !== "") {
+    return row.cost;
+  }
+
+  return 0;
+}
+
 function buildPnlSummaryRows(rows, { dateFrom, dateTo }) {
   const dates = listDates(dateFrom, dateTo);
   const ordersByDate = sumByDate(rows, dates, row => row.orders);
   const salesByDate = sumByDate(rows, dates, row => row.revenue);
-  const adsByDate = sumByDate(rows, dates, row => row.spend);
+  const adsByDate = sumByDate(rows, dates, getAdvertisingSpend);
   const ordersModelByDate = sumByDate(rows, dates, row => row.modelOrders);
   const salesModelByDate = sumByDate(rows, dates, row => row.modelRevenue);
   const profitByDate = buildDateMap(dates, () => 0);
