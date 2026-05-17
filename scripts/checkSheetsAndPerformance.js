@@ -12,7 +12,7 @@ const {
   normalizeCampaign,
   parseCsvReadyResponse
 } = require("../services/performance");
-const { normalizeRows } = require("../services/sheets");
+const { createSheetsService, normalizeRows } = require("../services/sheets");
 const { formatPerformanceRows, parsePerformanceCommand } = require("../services/telegram");
 
 async function run() {
@@ -55,6 +55,7 @@ async function run() {
     "Created At",
     "Updated At"
   ]);
+  assert.deepStrictEqual(getSheetMapping("pnl_summary").columns, ["Metric"]);
 
   assert.throws(() => getSheetMapping("missing_mapping"), /Unknown sheet mapping: missing_mapping/);
 
@@ -641,6 +642,53 @@ async function run() {
   assert.strictEqual(capturedWrites[0].rows.length, 2);
   assert.deepStrictEqual(capturedWrites[0].rows[0].slice(0, 2), ["1", "A"]);
   assert.deepStrictEqual(capturedWrites[0].rows[1].slice(0, 2), ["2", "B"]);
+
+  const fetchCalls = [];
+  const originalFetch = global.fetch;
+  global.fetch = async (url, options) => {
+    fetchCalls.push({
+      url,
+      body: JSON.parse(options.body)
+    });
+    return {
+      ok: true,
+      text: async () => JSON.stringify({ ok: true })
+    };
+  };
+
+  try {
+    const sheetsService = createSheetsService({
+      webappUrl: "https://example.invalid/sheets"
+    });
+
+    await sheetsService.clearAndWriteMappedRows("performance_stats", [
+      ["2026-05-13", "1", "Campaign", "111", "Product", 100, 1000, 10, 1, 1, 10, 100, 2, 500, 1, 200, 20, 600, 22, "2026-05-12"]
+    ]);
+
+    await sheetsService.clearAndWriteMappedRows("pnl_summary", [
+      ["Заказы", 1, 2]
+    ], {
+      headers: ["Metric", "2026-05-13", "2026-05-14"]
+    });
+
+    await sheetsService.clearAndWriteMappedRows("sku_dashboard", [
+      ["Товар", "", "", "", "", "offer", 100, 1, 100, 10, 10, 50, 1, 50, 10, 10, "", 1000, 1000, 10, 1, 1, ""]
+    ]);
+  } finally {
+    global.fetch = originalFetch;
+  }
+
+  assert.deepStrictEqual(fetchCalls[0].body.headers, getSheetMapping("performance_stats").columns);
+  assert.strictEqual(fetchCalls[0].body.rows.length, 1);
+  assert.deepStrictEqual(fetchCalls[1].body.headers, ["Metric", "2026-05-13", "2026-05-14"]);
+  assert.strictEqual(fetchCalls[1].body.rows[0][0], "Заказы");
+  assert.strictEqual(fetchCalls[2].body.headers[0], "Название");
+  assert.strictEqual(fetchCalls[2].body.rows[0][0], "Товар");
+  assert.deepStrictEqual(fetchCalls[0].body.formatting, {
+    boldHeader: true,
+    freezeRows: 1,
+    autoResizeColumns: true
+  });
 
   console.log("Sheets/performance checks passed");
 }

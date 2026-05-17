@@ -116,7 +116,7 @@ function buildPnlSummaryRows(rows, { dateFrom, dateTo }) {
   }
 
   return {
-    headers: ["Показатель", ...dates],
+    headers: ["Metric", ...dates],
     rows: [
       createMetricRow("Заказы", dates, ordersByDate),
       createMetricRow("Продажи", dates, salesByDate),

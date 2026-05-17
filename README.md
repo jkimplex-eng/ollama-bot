@@ -341,6 +341,11 @@ Apps Script должен принимать JSON:
   "action": "replaceRows",
   "sheet": "Actual_Tab_Name",
   "headers": ["H1", "H2"],
+  "formatting": {
+    "boldHeader": true,
+    "freezeRows": 1,
+    "autoResizeColumns": true
+  },
   "rows": [["..."], ["..."]]
 }
 ```
@@ -350,6 +355,11 @@ Apps Script должен принимать JSON:
   "action": "clearAndWrite",
   "sheet": "Actual_Tab_Name",
   "headers": ["H1", "H2"],
+  "formatting": {
+    "boldHeader": true,
+    "freezeRows": 1,
+    "autoResizeColumns": true
+  },
   "rows": [["..."], ["..."]]
 }
 ```
@@ -370,6 +380,7 @@ function doPost(e) {
     }
 
     var headers = Array.isArray(payload.headers) ? payload.headers : [];
+    var formatting = payload.formatting || {};
     var rows = Array.isArray(payload.rows) ? payload.rows : [];
     var width = headers.length || rows.reduce(function(max, row) {
       return Math.max(max, Array.isArray(row) ? row.length : 0);
@@ -384,10 +395,20 @@ function doPost(e) {
     if (payload.action === "replaceRows" || payload.action === "clearAndWrite") {
       sheet.clearContents();
       if (headers.length) {
-        sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+        var headerRange = sheet.getRange(1, 1, 1, headers.length);
+        headerRange.setValues([headers]);
+        if (formatting.boldHeader) {
+          headerRange.setFontWeight("bold");
+        }
       }
       if (rows.length) {
         sheet.getRange(headers.length ? 2 : 1, 1, rows.length, width).setValues(rows);
+      }
+      if (formatting.freezeRows) {
+        sheet.setFrozenRows(formatting.freezeRows);
+      }
+      if (formatting.autoResizeColumns && width > 0) {
+        sheet.autoResizeColumns(1, width);
       }
       return jsonResponse({ ok: true, action: payload.action, rowsWritten: rows.length });
     }
@@ -417,6 +438,7 @@ function jsonResponse(data) {
 
 - Apps Script не должен создавать sheets автоматически
 - `clearAndWrite` и `replaceRows` должны очищать sheet, писать headers в строку 1 и данные со строки 2
+- при наличии `formatting` можно делать basic formatting: bold header, freeze first row, auto resize columns
 - если tab отсутствует, он должен вернуть JSON error
 - строки должны быть нормализованы по длине
 - HTML ошибки деплоя лучше исключить через корректный deployment и публичный доступ

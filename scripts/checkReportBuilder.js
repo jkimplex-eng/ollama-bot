@@ -59,7 +59,7 @@ async function run() {
       dateTo: "2026-05-02"
     }),
     {
-      headers: ["Показатель", "2026-05-01", "2026-05-02"],
+      headers: ["Metric", "2026-05-01", "2026-05-02"],
       rows: [
         ["Заказы", 3, 1],
         ["Продажи", 1500, 700],
@@ -122,7 +122,7 @@ async function run() {
       }
     ),
     {
-      headers: ["Показатель", "2026-05-13", "2026-05-14"],
+      headers: ["Metric", "2026-05-13", "2026-05-14"],
       rows: [
         ["Заказы", 3, 4],
         ["Продажи", 4567.89, 5000],
@@ -232,8 +232,10 @@ async function run() {
 
   assert.deepStrictEqual(capturedWrites[0].mappingKey, "pnl_summary");
   assert.deepStrictEqual(capturedWrites[0].headers, ["Metric", "2026-05-13", "2026-05-14"]);
+  assert.strictEqual(capturedWrites[0].headers[0], "Metric");
   assert.deepStrictEqual(capturedWrites[1].mappingKey, "sku_dashboard");
   assert.deepStrictEqual(capturedWrites[1].headers, SKU_DASHBOARD_HEADERS);
+  assert.strictEqual(capturedWrites[1].headers[0], "Название");
   assert.deepStrictEqual(capturedWrites[1].rows[0], [
     "Товар 1",
     "",

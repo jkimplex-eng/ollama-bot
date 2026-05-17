@@ -1,6 +1,11 @@
 const { getSheetMapping } = require("../config/sheetsMap");
 
 const CHUNK_SIZE = 100;
+const DEFAULT_FORMATTING = {
+  boldHeader: true,
+  freezeRows: 1,
+  autoResizeColumns: true
+};
 
 function normalizeRows(rows, columnCount) {
   return rows.map(row => {
@@ -100,7 +105,10 @@ function createSheetsService({ webappUrl }) {
       ? options.headers
       : mapping.columns;
     const normalizedRows = normalizeRows(rows, headers.length);
-    return { mapping, normalizedRows, headers };
+    const formatting = options.formatting === false
+      ? null
+      : options.formatting || mapping.formatting || DEFAULT_FORMATTING;
+    return { mapping, normalizedRows, headers, formatting };
   }
 
   async function appendMappedRows(mappingKey, rows, options = {}) {
@@ -129,7 +137,7 @@ function createSheetsService({ webappUrl }) {
   }
 
   async function replaceMappedRows(mappingKey, rows, options = {}) {
-    const { mapping, normalizedRows, headers } = prepareRows(mappingKey, rows, options);
+    const { mapping, normalizedRows, headers, formatting } = prepareRows(mappingKey, rows, options);
     const chunks = chunkRows(normalizedRows);
 
     if (!chunks.length) {
@@ -138,6 +146,7 @@ function createSheetsService({ webappUrl }) {
           action: "replaceRows",
           sheet: mapping.tabName,
           headers,
+          formatting,
           rows: []
         },
         mapping.tabName
@@ -155,6 +164,7 @@ function createSheetsService({ webappUrl }) {
         action: "replaceRows",
         sheet: mapping.tabName,
         headers,
+        formatting,
         rows: chunks[0]
       },
       mapping.tabName
@@ -179,7 +189,7 @@ function createSheetsService({ webappUrl }) {
   }
 
   async function clearAndWriteMappedRows(mappingKey, rows, options = {}) {
-    const { mapping, normalizedRows, headers } = prepareRows(mappingKey, rows, options);
+    const { mapping, normalizedRows, headers, formatting } = prepareRows(mappingKey, rows, options);
     const chunks = chunkRows(normalizedRows);
 
     await postAction(
@@ -187,6 +197,7 @@ function createSheetsService({ webappUrl }) {
         action: "clearAndWrite",
         sheet: mapping.tabName,
         headers,
+        formatting,
         rows: chunks[0] || []
       },
       mapping.tabName
