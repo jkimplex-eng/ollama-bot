@@ -41,7 +41,23 @@ function createPollThrottleError(uuid, nextAllowedAt, message = "") {
 
 function formatDate(value) {
   if (!value) return new Date().toISOString().slice(0, 10);
-  return String(value).slice(0, 10);
+  const normalized = String(value).trim();
+  const isoMatch = normalized.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) {
+    return isoMatch[1] + "-" + isoMatch[2] + "-" + isoMatch[3];
+  }
+
+  const ruMatch = normalized.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+  if (ruMatch) {
+    return ruMatch[3] + "-" + ruMatch[2] + "-" + ruMatch[1];
+  }
+
+  const parsed = new Date(normalized);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toISOString().slice(0, 10);
+  }
+
+  return normalized.slice(0, 10);
 }
 
 function toNumber(value) {
@@ -1145,10 +1161,15 @@ function createPerformanceService({
     const savedAt = new Date().toISOString();
 
     rows.forEach((row, rowIndex) => {
-      const key = buildStoredRowKey(row, metadata, rowIndex);
+      const normalizedDate = formatDate(row.date);
+      const key = buildStoredRowKey({ ...row, date: normalizedDate }, metadata, rowIndex);
       map.set(key, {
         key,
-        row,
+        row: {
+          ...row,
+          rawDate: row.rawDate || row.date || "",
+          date: normalizedDate
+        },
         metadata: {
           uuid: metadata.uuid || "",
           campaignIds: Array.isArray(metadata.campaignIds) ? metadata.campaignIds : [],
@@ -1671,7 +1692,7 @@ function createPerformanceService({
     return loadStoredRows()
       .map(item => item.row)
       .filter(row => {
-        const date = formatDate(row.date);
+        const date = formatDate(row.date || row.rawDate);
         return date && date >= from && date <= to;
       });
   }

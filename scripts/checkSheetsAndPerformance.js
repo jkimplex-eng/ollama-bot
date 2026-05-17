@@ -461,7 +461,7 @@ function run() {
 
   const rowsToStore = [
     {
-      date: "2026-05-13",
+      date: "13.05.2026",
       campaignId: "123",
       sku: "111",
       revenue: 100,
@@ -506,7 +506,29 @@ function run() {
 
   assert.deepStrictEqual(
     performanceService.getStoredRowsForDateRange("2026-05-13", "2026-05-13"),
-    [rowsToStore[0]]
+    [
+      {
+        ...rowsToStore[0],
+        rawDate: "13.05.2026",
+        date: "2026-05-13"
+      }
+    ]
+  );
+
+  assert.deepStrictEqual(
+    performanceService.getStoredRowsForDateRange("2026-05-13", "2026-05-14"),
+    [
+      {
+        ...rowsToStore[0],
+        rawDate: "13.05.2026",
+        date: "2026-05-13"
+      },
+      {
+        ...rowsToStore[1],
+        rawDate: "2026-05-14",
+        date: "2026-05-14"
+      }
+    ]
   );
 
   assert.deepStrictEqual(
