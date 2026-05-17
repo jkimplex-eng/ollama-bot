@@ -79,13 +79,13 @@ function run() {
           date: "2026-05-13",
           orders: 1,
           revenue: 1000,
-          adSpend: 200
+          adSpend: "200,00"
         },
         {
           date: "2026-05-14",
           orders: 2,
           revenue: 2000,
-          cost: 300
+          cost: "300.00"
         }
       ],
       {
@@ -94,6 +94,45 @@ function run() {
       }
     ).rows.find(row => row[0] === "Реклама"),
     ["Реклама", 200, 300]
+  );
+
+  assert.deepStrictEqual(
+    buildPnlSummaryRows(
+      [
+        {
+          date: "2026-05-13",
+          rawDate: "13.05.2026",
+          spend: "1987,68",
+          revenue: "4567,89",
+          orders: "3"
+        },
+        {
+          date: "2026-05-14",
+          rawDate: "14.05.2026",
+          spend: "2079.48",
+          revenue: "5000.00",
+          orders: "4"
+        }
+      ],
+      {
+        dateFrom: "2026-05-13",
+        dateTo: "2026-05-14"
+      }
+    ),
+    {
+      headers: ["Показатель", "2026-05-13", "2026-05-14"],
+      rows: [
+        ["Заказы", 3, 4],
+        ["Продажи", 4567.89, 5000],
+        ["Реклама", 1987.68, 2079.48],
+        ["от заказов", 0, 0],
+        ["от продаж", 0, 0],
+        ["Прибыль", 2580.21, 2920.52],
+        ["Себес", 0, 0],
+        ["Доставка до МП", 0, 0],
+        ["ВП", 2580.21, 2920.52]
+      ]
+    }
   );
 
   const skuRows = buildSkuDashboardRows(performanceRows, [

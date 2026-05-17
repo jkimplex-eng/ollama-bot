@@ -16,7 +16,15 @@ function listDates(dateFrom, dateTo) {
 }
 
 function toNumber(value) {
-  const number = Number(value || 0);
+  if (value === null || value === undefined || value === "") {
+    return 0;
+  }
+
+  const number = Number(
+    String(value)
+      .replace(/\s/g, "")
+      .replace(",", ".")
+  );
   return Number.isFinite(number) ? number : 0;
 }
 
@@ -45,19 +53,7 @@ function createMetricRow(label, dates, valuesByDate) {
 }
 
 function getAdvertisingSpend(row) {
-  if (row.spend !== undefined && row.spend !== null && row.spend !== "") {
-    return row.spend;
-  }
-
-  if (row.adSpend !== undefined && row.adSpend !== null && row.adSpend !== "") {
-    return row.adSpend;
-  }
-
-  if (row.cost !== undefined && row.cost !== null && row.cost !== "") {
-    return row.cost;
-  }
-
-  return 0;
+  return toNumber(row.spend || row.adSpend || row.cost || 0);
 }
 
 function buildPnlSummaryRows(rows, { dateFrom, dateTo }) {
@@ -225,6 +221,17 @@ function createReportBuilderService({ ozonService, performanceService, sheetsSer
 
   async function buildPnlReport({ dateFrom, dateTo }) {
     const rows = await loadPerformanceRows(dateFrom, dateTo);
+    console.log(
+      "[reportBuilder] pnl source rows",
+      rows.slice(0, 3).map(row => ({
+        date: row.date,
+        spend: row.spend,
+        adSpend: row.adSpend,
+        cost: row.cost,
+        revenue: row.revenue,
+        orders: row.orders
+      }))
+    );
     const report = buildPnlSummaryRows(rows, { dateFrom, dateTo });
 
     return {
