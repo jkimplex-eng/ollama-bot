@@ -1,5 +1,21 @@
 function formatDate(value) {
-  return String(value || "").slice(0, 10);
+  const normalized = String(value || "").trim();
+  const isoMatch = normalized.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) {
+    return isoMatch[1] + "-" + isoMatch[2] + "-" + isoMatch[3];
+  }
+
+  const ruMatch = normalized.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+  if (ruMatch) {
+    return ruMatch[3] + "-" + ruMatch[2] + "-" + ruMatch[1];
+  }
+
+  const parsed = new Date(normalized);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toISOString().slice(0, 10);
+  }
+
+  return normalized.slice(0, 10);
 }
 
 function listDates(dateFrom, dateTo) {
