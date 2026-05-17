@@ -143,6 +143,24 @@ function parseSemicolonCsv(text) {
   return rows;
 }
 
+function normalizeCsvHeader(value) {
+  return String(value || "")
+    .replace(/^\uFEFF/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function logNormalizedCsvHeadersOnce(logger, headers) {
+  if (!logger || logger.__performanceCsvHeadersLogged) {
+    return;
+  }
+
+  logger.__performanceCsvHeadersLogged = true;
+  logger.log("[performance] normalized csv headers", {
+    headers
+  });
+}
+
 function normalizeCampaign(item) {
   const dailyBudget = toNumber(item.dailyBudget);
   const budget = toNumber(item.budget);
@@ -269,7 +287,7 @@ function extractCampaignMeta(headerText) {
 }
 
 function getCell(row, indexMap, key) {
-  const index = indexMap.get(key);
+  const index = indexMap.get(normalizeCsvHeader(key));
   if (index === undefined) return "";
   return row[index] ?? "";
 }
@@ -285,12 +303,12 @@ function getCellByAliases(row, indexMap, keys) {
   return "";
 }
 
-function normalizeStatsFromCsv(csvText) {
+function normalizeStatsFromCsv(csvText, options = {}) {
   const rows = parseSemicolonCsv(csvText);
   const result = [];
 
   for (let index = 0; index < rows.length; index += 1) {
-    const row = rows[index];
+    const row = rows[index].map(normalizeCsvHeader);
     const hasHeader = row.includes("sku") || row.includes("SKU");
 
     if (!hasHeader) {
@@ -298,13 +316,16 @@ function normalizeStatsFromCsv(csvText) {
     }
 
     const meta = extractCampaignMeta((rows[index - 1] || []).join(" "));
-    const headers = row.map(cell => cell.trim());
+    const headers = row.map(normalizeCsvHeader);
     const indexMap = new Map(headers.map((header, headerIndex) => [header, headerIndex]));
     const dateHeader = headers.find(header => header === "День" || header.includes("Дата"));
 
+    logNormalizedCsvHeadersOnce(options.logger, headers);
+
     for (let dataIndex = index + 1; dataIndex < rows.length; dataIndex += 1) {
       const dataRow = rows[dataIndex];
-      const nextHeader = dataRow.includes("sku") || dataRow.includes("SKU");
+      const normalizedDataRow = dataRow.map(normalizeCsvHeader);
+      const nextHeader = normalizedDataRow.includes("sku") || normalizedDataRow.includes("SKU");
 
       if (nextHeader) {
         index = dataIndex - 1;
@@ -327,21 +348,38 @@ function normalizeStatsFromCsv(csvText) {
         ctr: toNumber(getCellByAliases(dataRow, indexMap, ["CTR (%)"])),
         addToCart: toNumber(getCellByAliases(dataRow, indexMap, ["В корзину"])),
         avgCpc: toNumber(
-          getCellByAliases(dataRow, indexMap, ["Средняя стоимость клика, ₽", "Ср. цена клика, г"])
+          getCellByAliases(dataRow, indexMap, [
+            "Средняя стоимость клика, ₽",
+            "Средняя стоимость клика, руб.",
+            "Ср. цена клика, г"
+          ])
         ),
         avgCpm: toNumber(
           getCellByAliases(dataRow, indexMap, ["Средняя стоимость 1000 показов, ₽", "Ср. цена 1000 показов, Р"])
         ),
         spend: toNumber(
-          getCellByAliases(dataRow, indexMap, ["Расход, ₽, с НДС", "Расход, Р, с НДС"])
+          getCellByAliases(dataRow, indexMap, [
+            "Расход, ₽, с НДС",
+            "Расход, ₽ с НДС",
+            "Расход, Р, с НДС"
+          ])
         ),
         orders: toNumber(getCellByAliases(dataRow, indexMap, ["Заказы"])),
         revenue: toNumber(
-          getCellByAliases(dataRow, indexMap, ["Продажи, ₽", "Заказано на сумму, ₽", "Выручка, Р"])
+          getCellByAliases(dataRow, indexMap, [
+            "Продажи, ₽",
+            "Продажи, руб.",
+            "Заказано на сумму, ₽",
+            "Выручка, Р"
+          ])
         ),
         modelOrders: toNumber(getCellByAliases(dataRow, indexMap, ["Заказы модели"])),
         modelRevenue: toNumber(
-          getCellByAliases(dataRow, indexMap, ["Продажи с заказов модели, ₽", "Выручка с заказов модели, Р"])
+          getCellByAliases(dataRow, indexMap, [
+            "Продажи с заказов модели, ₽",
+            "Продажи с заказов модели, руб.",
+            "Выручка с заказов модели, Р"
+          ])
         ),
         drr: toNumber(
           getCellByAliases(dataRow, indexMap, ["ДРР, %", "ДРР, %: Дата добавления"])
@@ -361,7 +399,7 @@ function normalizeStatsFromCsv(csvText) {
 }
 
 function looksLikeCsvReportBody(text) {
-  const normalized = String(text || "").trim();
+  const normalized = normalizeCsvHeader(text);
 
   if (!normalized) {
     return false;
@@ -378,7 +416,7 @@ function looksLikeCsvReportBody(text) {
   );
 }
 
-function parseCsvReadyResponse({ ok, status, contentType, bodyText }) {
+function parseCsvReadyResponse({ ok, status, contentType, bodyText }, options = {}) {
   const type = String(contentType || "").toLowerCase();
   const body = String(bodyText || "");
 
@@ -390,7 +428,7 @@ function parseCsvReadyResponse({ ok, status, contentType, bodyText }) {
     return null;
   }
 
-  const rows = normalizeStatsFromCsv(body);
+  const rows = normalizeStatsFromCsv(body, options);
 
   return {
     rows,
@@ -1195,7 +1233,7 @@ function createPerformanceService({
     }
 
     const endpointResponse = await requestReportEndpoint(uuid);
-    const parsedCsv = parseCsvReadyResponse(endpointResponse);
+    const parsedCsv = parseCsvReadyResponse(endpointResponse, { logger });
 
     if (parsedCsv) {
       markReportPolled(uuid, "CSV_READY");
@@ -1293,7 +1331,7 @@ function createPerformanceService({
     }
 
     const csvText = await requestReportDownload(uuid);
-    const rows = normalizeStatsFromCsv(csvText);
+    const rows = normalizeStatsFromCsv(csvText, { logger });
     upsertReportRecord({
       uuid,
       status: "ready",

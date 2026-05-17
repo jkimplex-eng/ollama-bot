@@ -7,7 +7,7 @@ const {
   parseCsvReadyResponse
 } = require("../services/performance");
 const { normalizeRows } = require("../services/sheets");
-const { parsePerformanceCommand } = require("../services/telegram");
+const { formatPerformanceRows, parsePerformanceCommand } = require("../services/telegram");
 
 function run() {
   assert.strictEqual(getSheetMapping("performance_stats").logicalName, "performance_stats");
@@ -385,6 +385,53 @@ function run() {
       rowsCount: 1
     }
   );
+
+  const exactRussianHeaderFixture = [
+    "\uFEFF;Кампания по продвижению товаров № 789; Real campaign, период 2026-05-03 - 2026-05-14",
+    " День ; sku ; Название товара ; Цена товара, ₽ ; Показы ; Клики ; CTR (%) ; В корзину ; Средняя   стоимость клика, ₽ ; Расход, ₽, с НДС ; Заказы ; Продажи, ₽ ; Заказы модели ; Продажи с заказов модели, ₽ ; ДРР, % ; Заказано на сумму, ₽ ; Общий ДРР ; Дата добавления ",
+    "2026-05-03;333;Товар 3;1987,68;111;9;8,11;2;110,43;1987,68;4;3456,78;1;1234,56;9,87;4567,89;7,65;2026-05-02"
+  ].join("\n");
+
+  const exactRussianReady = parseCsvReadyResponse({
+    ok: true,
+    status: 200,
+    contentType: "text/csv; charset=utf-8",
+    bodyText: exactRussianHeaderFixture
+  });
+
+  assert.deepStrictEqual(exactRussianReady, {
+    rows: [
+      {
+        date: "2026-05-03",
+        campaignId: "789",
+        campaignName: "",
+        sku: "333",
+        productName: "Товар 3",
+        price: 1987.68,
+        impressions: 111,
+        clicks: 9,
+        ctr: 8.11,
+        addToCart: 2,
+        avgCpc: 110.43,
+        avgCpm: null,
+        spend: 1987.68,
+        orders: 4,
+        revenue: 3456.78,
+        modelOrders: 1,
+        modelRevenue: 1234.56,
+        drr: 9.87,
+        orderedAmount: 4567.89,
+        totalDrr: 7.65,
+        addedAt: "2026-05-02"
+      }
+    ],
+    rowsCount: 1
+  });
+
+  const formattedRows = formatPerformanceRows(exactRussianReady.rows);
+  assert.match(formattedRows, /CPC: 110\.43/);
+  assert.match(formattedRows, /Расход: 1987\.68/);
+  assert.match(formattedRows, /Выручка: 3456\.78/);
 
   console.log("Sheets/performance checks passed");
 }
