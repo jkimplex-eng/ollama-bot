@@ -48,6 +48,10 @@ function getHelpText() {
     "/performance report <uuid>",
     "/performance report status <uuid>",
     "/performance watch <uuid>",
+    "/report pnl 2026-05-01 2026-05-14",
+    "/report pnl в таблицу 2026-05-01 2026-05-14",
+    "/report sku 2026-05-01 2026-05-14",
+    "/report sku в таблицу 2026-05-01 2026-05-14",
     "/performance debug",
     "/ai strategy",
     "/ai quick",
@@ -169,6 +173,22 @@ function parseAiCommand(text) {
   };
 
   return modeMap[match[1]] || null;
+}
+
+function parseReportCommand(text) {
+  const normalized = text.trim().replace(/\s+/g, " ").toLowerCase();
+  const match = normalized.match(
+    /^\/report\s+(pnl|sku)(?:\s+в\s+таблицу)?\s+(\d{4}-\d{2}-\d{2})\s+(\d{4}-\d{2}-\d{2})$/
+  );
+
+  if (!match) return null;
+
+  return {
+    type: match[1],
+    toSheet: normalized.includes(" в таблицу "),
+    dateFrom: match[2],
+    dateTo: match[3]
+  };
 }
 
 function parseAlertsCommand(text) {
@@ -493,6 +513,45 @@ function formatHealthInfo() {
   ].join("\n");
 }
 
+function formatPnlReport(report) {
+  const previewRows = report.rows.slice(0, 9);
+  return [
+    "P&L Summary",
+    "Период: " + report.dateFrom + " -> " + report.dateTo,
+    "",
+    ...previewRows.map(row => row.join(" | ")),
+    "",
+    report.missingFieldsNote
+  ].join("\n");
+}
+
+function formatSkuReport(report) {
+  if (!report.rows.length) {
+    return "SKU Dashboard пуст за выбранный период.\n\n" + report.missingFieldsNote;
+  }
+
+  return [
+    "SKU Dashboard",
+    "Период: " + report.dateFrom + " -> " + report.dateTo,
+    "",
+    ...report.rows.slice(0, 10).map(row =>
+      [
+        "Название: " + (row[0] || "-"),
+        "Артикул: " + (row[5] || "-"),
+        "Рубли: " + (row[6] || 0),
+        "Штуки: " + (row[7] || 0),
+        "Реклама: " + (row[9] || 0),
+        "ДРР: " + (row[10] || 0),
+        "Показы: " + (row[17] || 0),
+        "Клики: " + (row[19] || 0),
+        "CTR: " + (row[20] || 0)
+      ].join("\n")
+    ),
+    "",
+    report.missingFieldsNote
+  ].join("\n\n");
+}
+
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -519,6 +578,7 @@ function startTelegramBot({
   dailySummaryService,
   decisionEngine,
   performanceService,
+  reportBuilderService,
   token,
   jobsService,
   ollamaService,
@@ -1225,6 +1285,57 @@ function startTelegramBot({
       }
     }
 
+    const reportCommand = parseReportCommand(text);
+
+    if (reportCommand) {
+      try {
+        if (reportCommand.type === "pnl") {
+          if (reportCommand.toSheet) {
+            const exported = await reportBuilderService.exportPnlReport(reportCommand);
+            await sendLongMessage(
+              tgBot,
+              chatId,
+              "Записал " +
+                exported.writeResult.rowsWritten +
+                " строк в " +
+                exported.writeResult.tabName +
+                "\n" +
+                exported.report.missingFieldsNote
+            );
+            return;
+          }
+
+          const report = await reportBuilderService.buildPnlReport(reportCommand);
+          await sendLongMessage(tgBot, chatId, formatPnlReport(report));
+          return;
+        }
+
+        if (reportCommand.type === "sku") {
+          if (reportCommand.toSheet) {
+            const exported = await reportBuilderService.exportSkuReport(reportCommand);
+            await sendLongMessage(
+              tgBot,
+              chatId,
+              "Записал " +
+                exported.writeResult.rowsWritten +
+                " строк в " +
+                exported.writeResult.tabName +
+                "\n" +
+                exported.report.missingFieldsNote
+            );
+            return;
+          }
+
+          const report = await reportBuilderService.buildSkuReport(reportCommand);
+          await sendLongMessage(tgBot, chatId, formatSkuReport(report));
+          return;
+        }
+      } catch (err) {
+        await tgBot.sendMessage(chatId, "Ошибка report " + reportCommand.type + ": " + err.message);
+        return;
+      }
+    }
+
     const aiCommand = parseAiCommand(text);
 
     if (aiCommand) {
@@ -1325,6 +1436,7 @@ module.exports = {
   parseAnalyticsCommand,
   parseDailyCommand,
   parseOzonProductsCommand,
+  parseReportCommand,
   parsePerformanceCommand,
   productToSheetRow,
   sendLongMessage,

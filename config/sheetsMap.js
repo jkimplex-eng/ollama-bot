@@ -57,6 +57,42 @@ const sheetsMap = {
     ],
     mode: "replace"
   },
+  pnl_summary: {
+    logicalName: "pnl_summary",
+    tabName: "P&L Summary",
+    columns: ["Показатель"],
+    mode: "replace"
+  },
+  sku_dashboard: {
+    logicalName: "sku_dashboard",
+    tabName: "SKU Dashboard",
+    columns: [
+      "Название",
+      "Категория",
+      "ШК",
+      "РРЦ",
+      "Себ",
+      "Артикул",
+      "Рубли",
+      "Штуки",
+      "Цена",
+      "Реклама",
+      "ДРР",
+      "Выручка",
+      "Штуки",
+      "Цена",
+      "Реклама",
+      "ДРР",
+      "ВП",
+      "Показы общие",
+      "Показы реклама",
+      "Клики",
+      "CTR",
+      "Корзины",
+      "Позиция ср."
+    ],
+    mode: "replace"
+  },
   daily_summary: {
     logicalName: "daily_summary",
     tabName: "Daily Summary",

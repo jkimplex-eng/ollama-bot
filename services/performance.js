@@ -1575,6 +1575,18 @@ function createPerformanceService({
     return Array.isArray(record?.rows) ? record.rows : [];
   }
 
+  function getStoredRowsForDateRange(dateFrom, dateTo) {
+    const from = formatDate(dateFrom);
+    const to = formatDate(dateTo);
+
+    return loadReports()
+      .flatMap(record => (Array.isArray(record.rows) ? record.rows : []))
+      .filter(row => {
+        const date = formatDate(row.date);
+        return date && date >= from && date <= to;
+      });
+  }
+
   async function exportGroup(requestGroupId) {
     const items = getGroupItems(requestGroupId);
 
@@ -1757,6 +1769,7 @@ function createPerformanceService({
     getStatisticsListRaw,
     getGroupItems,
     getQueueMeta,
+    getStoredRowsForDateRange,
     isConfigured,
     isActiveLimitCooldown,
     listQueue,

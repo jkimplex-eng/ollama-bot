@@ -94,14 +94,17 @@ function createSheetsService({ webappUrl }) {
     }
   }
 
-  function prepareRows(mappingKey, rows) {
+  function prepareRows(mappingKey, rows, options = {}) {
     const mapping = getSheetMapping(mappingKey);
-    const normalizedRows = normalizeRows(rows, mapping.columns.length);
-    return { mapping, normalizedRows };
+    const headers = Array.isArray(options.headers) && options.headers.length
+      ? options.headers
+      : mapping.columns;
+    const normalizedRows = normalizeRows(rows, headers.length);
+    return { mapping, normalizedRows, headers };
   }
 
-  async function appendMappedRows(mappingKey, rows) {
-    const { mapping, normalizedRows } = prepareRows(mappingKey, rows);
+  async function appendMappedRows(mappingKey, rows, options = {}) {
+    const { mapping, normalizedRows } = prepareRows(mappingKey, rows, options);
 
     for (const chunk of chunkRows(normalizedRows)) {
       const result = await postAction(
@@ -125,8 +128,8 @@ function createSheetsService({ webappUrl }) {
     };
   }
 
-  async function replaceMappedRows(mappingKey, rows) {
-    const { mapping, normalizedRows } = prepareRows(mappingKey, rows);
+  async function replaceMappedRows(mappingKey, rows, options = {}) {
+    const { mapping, normalizedRows, headers } = prepareRows(mappingKey, rows, options);
     const chunks = chunkRows(normalizedRows);
 
     if (!chunks.length) {
@@ -134,7 +137,7 @@ function createSheetsService({ webappUrl }) {
         {
           action: "replaceRows",
           sheet: mapping.tabName,
-          headers: mapping.columns,
+          headers,
           rows: []
         },
         mapping.tabName
@@ -151,7 +154,7 @@ function createSheetsService({ webappUrl }) {
       {
         action: "replaceRows",
         sheet: mapping.tabName,
-        headers: mapping.columns,
+        headers,
         rows: chunks[0]
       },
       mapping.tabName
@@ -175,15 +178,15 @@ function createSheetsService({ webappUrl }) {
     };
   }
 
-  async function clearAndWriteMappedRows(mappingKey, rows) {
-    const { mapping, normalizedRows } = prepareRows(mappingKey, rows);
+  async function clearAndWriteMappedRows(mappingKey, rows, options = {}) {
+    const { mapping, normalizedRows, headers } = prepareRows(mappingKey, rows, options);
     const chunks = chunkRows(normalizedRows);
 
     await postAction(
       {
         action: "clearAndWrite",
         sheet: mapping.tabName,
-        headers: mapping.columns,
+        headers,
         rows: chunks[0] || []
       },
       mapping.tabName

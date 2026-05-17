@@ -10,6 +10,7 @@ const { createJobsService } = require("./services/jobs");
 const { createOllamaService } = require("./services/ollama");
 const { createOzonService } = require("./services/ozon");
 const { createPerformanceService } = require("./services/performance");
+const { createReportBuilderService } = require("./services/reportBuilder");
 const { createSheetsService } = require("./services/sheets");
 const { startTelegramBot } = require("./services/telegram");
 
@@ -42,6 +43,12 @@ const performanceService = createPerformanceService({
   clientSecret: env.ozonPerformanceClientSecret,
   queueFile: env.paths.performanceQueueFile,
   reportsFile: env.paths.performanceReportsFile,
+  sheetsService
+});
+
+const reportBuilderService = createReportBuilderService({
+  ozonService,
+  performanceService,
   sheetsService
 });
 
@@ -118,6 +125,7 @@ const activeTelegramService = startTelegramBot({
   dailySummaryService,
   decisionEngine,
   performanceService,
+  reportBuilderService,
   token: env.telegramBotToken,
   jobsService,
   ollamaService,
