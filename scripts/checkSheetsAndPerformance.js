@@ -1,6 +1,10 @@
 const assert = require("assert");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
 const { getSheetMapping } = require("../config/sheetsMap");
 const {
+  createPerformanceService,
   inferPaymentType,
   looksLikeCsvReportBody,
   normalizeCampaign,
@@ -119,6 +123,14 @@ function run() {
 
   assert.deepStrictEqual(parsePerformanceCommand("/performance queue"), {
     type: "queue"
+  });
+
+  assert.deepStrictEqual(parsePerformanceCommand("/performance rows status"), {
+    type: "rows_status"
+  });
+
+  assert.deepStrictEqual(parsePerformanceCommand("/performance rows clear"), {
+    type: "rows_clear"
   });
 
   assert.deepStrictEqual(parsePerformanceCommand("/performance discover"), {
@@ -432,6 +444,90 @@ function run() {
   assert.match(formattedRows, /CPC: 110\.43/);
   assert.match(formattedRows, /Расход: 1987\.68/);
   assert.match(formattedRows, /Выручка: 3456\.78/);
+
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ollama-bot-performance-"));
+  const performanceService = createPerformanceService({
+    baseUrl: "https://example.invalid",
+    clientId: "",
+    clientSecret: "",
+    queueFile: path.join(tempDir, "performance-queue.json"),
+    reportsFile: path.join(tempDir, "performance-reports.json"),
+    rowsFile: path.join(tempDir, "performance-rows.json"),
+    sheetsService: {
+      clearAndWriteMappedRows: async () => ({ rowsWritten: 0, tabName: "Performance Stats" })
+    },
+    logger: { log() {}, error() {} }
+  });
+
+  const rowsToStore = [
+    {
+      date: "2026-05-13",
+      campaignId: "123",
+      sku: "111",
+      revenue: 100,
+      spend: 10,
+      orders: 1
+    },
+    {
+      date: "2026-05-14",
+      campaignId: "123",
+      sku: "222",
+      revenue: 200,
+      spend: 20,
+      orders: 2
+    }
+  ];
+
+  assert.deepStrictEqual(
+    performanceService.savePerformanceRows(rowsToStore, {
+      uuid: "uuid-1",
+      campaignIds: ["123"],
+      dateFrom: "2026-05-13",
+      dateTo: "2026-05-14"
+    }),
+    {
+      totalStoredRows: 2,
+      rowsSaved: 2
+    }
+  );
+
+  assert.deepStrictEqual(
+    performanceService.savePerformanceRows(rowsToStore, {
+      uuid: "uuid-1",
+      campaignIds: ["123"],
+      dateFrom: "2026-05-13",
+      dateTo: "2026-05-14"
+    }),
+    {
+      totalStoredRows: 2,
+      rowsSaved: 2
+    }
+  );
+
+  assert.deepStrictEqual(
+    performanceService.getStoredRowsForDateRange("2026-05-13", "2026-05-13"),
+    [rowsToStore[0]]
+  );
+
+  assert.deepStrictEqual(
+    performanceService.getStoredRowsStatus(),
+    {
+      totalStoredRows: 2,
+      minDate: "2026-05-13",
+      maxDate: "2026-05-14",
+      uniqueCampaigns: 1,
+      uniqueSkus: 2
+    }
+  );
+
+  assert.deepStrictEqual(performanceService.clearStoredRows(), { ok: true });
+  assert.deepStrictEqual(performanceService.getStoredRowsStatus(), {
+    totalStoredRows: 0,
+    minDate: "",
+    maxDate: "",
+    uniqueCampaigns: 0,
+    uniqueSkus: 0
+  });
 
   console.log("Sheets/performance checks passed");
 }

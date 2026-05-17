@@ -43,6 +43,7 @@ const performanceService = createPerformanceService({
   clientSecret: env.ozonPerformanceClientSecret,
   queueFile: env.paths.performanceQueueFile,
   reportsFile: env.paths.performanceReportsFile,
+  rowsFile: env.paths.performanceRowsFile,
   sheetsService
 });
 

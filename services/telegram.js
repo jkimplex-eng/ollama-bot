@@ -43,6 +43,8 @@ function getHelpText() {
     "/performance discover raw",
     "/performance continue",
     "/performance queue",
+    "/performance rows status",
+    "/performance rows clear",
     "/performance reset",
     "/performance export <requestGroupId>",
     "/performance report <uuid>",
@@ -97,6 +99,8 @@ function parsePerformanceCommand(text) {
     [/^\/performance debug$/, () => ({ type: "debug" })],
     [/^\/performance campaigns debug active$/, () => ({ type: "campaigns_debug", filter: "running" })],
     [/^\/performance(?: queue| pending)$/, () => ({ type: "queue" })],
+    [/^\/performance rows status$/, () => ({ type: "rows_status" })],
+    [/^\/performance rows clear$/, () => ({ type: "rows_clear" })],
     [/^\/performance discover(?: (raw))?$/, match => ({ type: "discover", raw: Boolean(match[1]) })],
     [/^\/performance continue$/, () => ({ type: "continue" })],
     [/^\/performance reset$/, () => ({ type: "reset" })],
@@ -513,6 +517,17 @@ function formatHealthInfo() {
   ].join("\n");
 }
 
+function formatStoredRowsStatus(status) {
+  return [
+    "Performance rows status",
+    "Total stored rows: " + status.totalStoredRows,
+    "Min date: " + (status.minDate || "-"),
+    "Max date: " + (status.maxDate || "-"),
+    "Unique campaigns: " + status.uniqueCampaigns,
+    "Unique SKUs: " + status.uniqueSkus
+  ].join("\n");
+}
+
 function formatPnlReport(report) {
   const previewRows = report.rows.slice(0, 9);
   return [
@@ -915,6 +930,19 @@ function startTelegramBot({
                     result.completed.totalChunks +
                     " готов. В очереди больше нет chunk-ов."
             );
+            return;
+          }
+          case "rows_status": {
+            await sendLongMessage(
+              tgBot,
+              chatId,
+              formatStoredRowsStatus(performanceService.getStoredRowsStatus())
+            );
+            return;
+          }
+          case "rows_clear": {
+            performanceService.clearStoredRows();
+            await tgBot.sendMessage(chatId, "Локальные строки Performance очищены.");
             return;
           }
           case "campaigns": {

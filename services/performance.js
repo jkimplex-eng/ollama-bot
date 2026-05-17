@@ -442,6 +442,7 @@ function createPerformanceService({
   clientSecret,
   queueFile,
   reportsFile,
+  rowsFile,
   sheetsService,
   logger = console
 }) {
@@ -484,6 +485,15 @@ function createPerformanceService({
 
   function saveReports(records) {
     saveJsonData(reportsFile, records);
+  }
+
+  function loadStoredRows() {
+    const data = loadJsonData(rowsFile);
+    return Array.isArray(data) ? data : [];
+  }
+
+  function saveStoredRows(records) {
+    saveJsonData(rowsFile, records);
   }
 
   function upsertReportRecord(record) {
@@ -1119,6 +1129,71 @@ function createPerformanceService({
     return loadReports().find(item => item.uuid === uuid) || null;
   }
 
+  function buildStoredRowKey(row, metadata, rowIndex) {
+    return [
+      formatDate(row.date),
+      String(row.campaignId || ""),
+      String(row.sku || ""),
+      String(metadata.uuid || ""),
+      String(rowIndex)
+    ].join("|");
+  }
+
+  function savePerformanceRows(rows, metadata = {}) {
+    const existing = loadStoredRows();
+    const map = new Map(existing.map(item => [item.key, item]));
+    const savedAt = new Date().toISOString();
+
+    rows.forEach((row, rowIndex) => {
+      const key = buildStoredRowKey(row, metadata, rowIndex);
+      map.set(key, {
+        key,
+        row,
+        metadata: {
+          uuid: metadata.uuid || "",
+          campaignIds: Array.isArray(metadata.campaignIds) ? metadata.campaignIds : [],
+          dateFrom: metadata.dateFrom ? formatDate(metadata.dateFrom) : "",
+          dateTo: metadata.dateTo ? formatDate(metadata.dateTo) : "",
+          savedAt
+        }
+      });
+    });
+
+    const records = Array.from(map.values());
+    saveStoredRows(records);
+    return {
+      totalStoredRows: records.length,
+      rowsSaved: rows.length
+    };
+  }
+
+  function clearStoredRows() {
+    saveStoredRows([]);
+    return { ok: true };
+  }
+
+  function getStoredRowsStatus() {
+    const records = loadStoredRows();
+    const dates = records
+      .map(item => formatDate(item?.row?.date))
+      .filter(Boolean)
+      .sort();
+    const campaignIds = new Set(
+      records.map(item => String(item?.row?.campaignId || "")).filter(Boolean)
+    );
+    const skus = new Set(
+      records.map(item => String(item?.row?.sku || "")).filter(Boolean)
+    );
+
+    return {
+      totalStoredRows: records.length,
+      minDate: dates[0] || "",
+      maxDate: dates[dates.length - 1] || "",
+      uniqueCampaigns: campaignIds.size,
+      uniqueSkus: skus.size
+    };
+  }
+
   function getReportAgeMinutes(record) {
     const createdAt = record?.createdAt;
     if (!createdAt) {
@@ -1169,6 +1244,7 @@ function createPerformanceService({
   function persistReadyCsvReport(uuid, parsed, extra = {}) {
     clearActiveLimitTimestamp();
     const readyAt = new Date().toISOString();
+    const existingRecord = getReportRecord(uuid) || {};
 
     upsertReportRecord({
       uuid,
@@ -1179,6 +1255,12 @@ function createPerformanceService({
       lastKnownStatus: extra.lastKnownStatus || "CSV_READY",
       lastPollAt: readyAt,
       ...extra
+    });
+    savePerformanceRows(parsed.rows, {
+      uuid,
+      campaignIds: extra.campaignIds || existingRecord.campaignIds || [],
+      dateFrom: extra.dateFrom || existingRecord.dateFrom || "",
+      dateTo: extra.dateTo || existingRecord.dateTo || ""
     });
 
     const stored = getReportRecord(uuid);
@@ -1338,6 +1420,13 @@ function createPerformanceService({
       readyAt: new Date().toISOString(),
       rowsCount: rows.length,
       rows
+    });
+    const reportRecord = getReportRecord(uuid) || {};
+    savePerformanceRows(rows, {
+      uuid,
+      campaignIds: reportRecord.campaignIds || [],
+      dateFrom: reportRecord.dateFrom || "",
+      dateTo: reportRecord.dateTo || ""
     });
 
     return {
@@ -1579,8 +1668,8 @@ function createPerformanceService({
     const from = formatDate(dateFrom);
     const to = formatDate(dateTo);
 
-    return loadReports()
-      .flatMap(record => (Array.isArray(record.rows) ? record.rows : []))
+    return loadStoredRows()
+      .map(item => item.row)
       .filter(row => {
         const date = formatDate(row.date);
         return date && date >= from && date <= to;
@@ -1624,6 +1713,13 @@ function createPerformanceService({
 
   async function exportReport(uuid) {
     const resolved = await resolveReport(uuid);
+    const reportRecord = getReportRecord(uuid) || {};
+    savePerformanceRows(resolved.rows, {
+      uuid,
+      campaignIds: reportRecord.campaignIds || [],
+      dateFrom: reportRecord.dateFrom || "",
+      dateTo: reportRecord.dateTo || ""
+    });
     const writeResult = await sheetsService.clearAndWriteMappedRows(
       "performance_stats",
       statsToRows(resolved.rows)
@@ -1761,10 +1857,12 @@ function createPerformanceService({
     getCampaigns,
     getCampaignObjects,
     getCurrentPendingQueueItem,
+    clearStoredRows,
     getMinBidBySku,
     getPerformanceToken,
     getReportStatus,
     getReportDiagnostics,
+    getStoredRowsStatus,
     getStatisticsList,
     getStatisticsListRaw,
     getGroupItems,
@@ -1778,6 +1876,7 @@ function createPerformanceService({
     parseCsvReadyResponse,
     resetQueue,
     resolveReport,
+    savePerformanceRows,
     statsToRows,
     summarizeStats,
     waitForReport,
