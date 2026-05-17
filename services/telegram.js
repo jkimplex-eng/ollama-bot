@@ -1145,7 +1145,9 @@ function startTelegramBot({
               return;
             }
 
-            const status = await performanceService.getReportStatus(performanceCommand.uuid);
+            const status = await performanceService.getReportStatus(performanceCommand.uuid, {
+              bypassThrottle: performanceCommand.toSheet
+            });
 
             if (!status.ready) {
               await sendLongMessage(tgBot, chatId, formatPendingReportStatus(status));

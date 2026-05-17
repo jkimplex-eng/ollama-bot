@@ -1,6 +1,11 @@
 const assert = require("assert");
 const { getSheetMapping } = require("../config/sheetsMap");
-const { inferPaymentType, normalizeCampaign } = require("../services/performance");
+const {
+  inferPaymentType,
+  looksLikeCsvReportBody,
+  normalizeCampaign,
+  parseCsvReadyResponse
+} = require("../services/performance");
 const { normalizeRows } = require("../services/sheets");
 const { parsePerformanceCommand } = require("../services/telegram");
 
@@ -290,6 +295,48 @@ function run() {
       productCampaignMode: "",
       createdAt: "",
       updatedAt: ""
+    }
+  );
+
+  const csvFixture = [
+    ";Кампания по продвижению товаров № 123; Test campaign, период 2026-05-01 - 2026-05-14",
+    "Дата;sku;Название товара;Цена товара, Р;Показы;Клики;CTR (%);В корзину;Ср. цена клика, г;Ср. цена 1000 показов, Р;Расход, Р, с НДС;Заказы;Выручка, Р;Заказы модели;Выручка с заказов модели, Р;ДРР, %",
+    "2026-05-01;111;Товар;9133,00;100;10;10,00;2;5,50;100,00;55,00;1;9133,00;1;9133,00;0,60"
+  ].join("\n");
+
+  assert.strictEqual(looksLikeCsvReportBody(csvFixture), true);
+
+  assert.deepStrictEqual(
+    parseCsvReadyResponse({
+      ok: true,
+      status: 200,
+      contentType: "text/csv; charset=utf-8",
+      bodyText: csvFixture
+    }),
+    {
+      rows: [
+        {
+          date: "2026-05-01",
+          campaignId: "123",
+          campaignName: "",
+          sku: "111",
+          productName: "Товар",
+          price: 9133,
+          impressions: 100,
+          clicks: 10,
+          ctr: 10,
+          addToCart: 2,
+          avgCpc: 5.5,
+          avgCpm: 100,
+          spend: 55,
+          orders: 1,
+          revenue: 9133,
+          modelOrders: 1,
+          modelRevenue: 9133,
+          drr: 0.6
+        }
+      ],
+      rowsCount: 1
     }
   );
 

@@ -336,6 +336,42 @@ function normalizeStatsFromCsv(csvText) {
   return result;
 }
 
+function looksLikeCsvReportBody(text) {
+  const normalized = String(text || "").trim();
+
+  if (!normalized) {
+    return false;
+  }
+
+  return (
+    normalized.startsWith(";") ||
+    normalized.includes(";sku;") ||
+    normalized.includes(";SKU;") ||
+    normalized.includes("Показы") ||
+    normalized.includes("Выручка, Р")
+  );
+}
+
+function parseCsvReadyResponse({ ok, status, contentType, bodyText }) {
+  const type = String(contentType || "").toLowerCase();
+  const body = String(bodyText || "");
+
+  if (!ok || status !== 200) {
+    return null;
+  }
+
+  if (!type.includes("text/csv") && !looksLikeCsvReportBody(body)) {
+    return null;
+  }
+
+  const rows = normalizeStatsFromCsv(body);
+
+  return {
+    rows,
+    rowsCount: rows.length
+  };
+}
+
 function createPerformanceService({
   baseUrl,
   clientId,
@@ -637,40 +673,34 @@ function createPerformanceService({
   }
 
   async function requestReportDownload(uuid) {
-    const token = await getPerformanceToken();
-    const url = new URL(baseUrl + "/api/client/statistics/report");
-    url.searchParams.set("UUID", uuid);
-
-    const response = await fetch(url, {
-      method: "GET",
-      headers: {
-        "Accept": "*/*",
-        "Authorization": "Bearer " + token
-      }
-    });
+    const response = await requestReportEndpoint(uuid);
 
     if (!response.ok) {
-      const text = await response.text();
-      throw new Error(text || "Performance API report download failed: " + response.status);
+      throw new Error(
+        response.bodyText || "Performance API report download failed: " + response.status
+      );
     }
 
-    const contentType = response.headers.get("content-type") || "";
-    const bodyText = await response.text();
-
-    if (contentType.includes("application/zip")) {
+    if (response.contentType.includes("application/zip")) {
       throw new Error(
         "Performance API returned ZIP report. Current implementation expects CSV report."
       );
     }
 
-    if (!contentType.includes("csv") && !contentType.includes("text/plain")) {
-      throw new Error("Performance API returned unexpected report content type: " + contentType);
+    if (
+      !response.contentType.includes("csv") &&
+      !response.contentType.includes("text/plain") &&
+      !looksLikeCsvReportBody(response.bodyText)
+    ) {
+      throw new Error(
+        "Performance API returned unexpected report content type: " + response.contentType
+      );
     }
 
-    return bodyText;
+    return response.bodyText;
   }
 
-  async function requestReportDownloadStatus(uuid) {
+  async function requestReportEndpoint(uuid) {
     const token = await getPerformanceToken();
     const url = new URL(baseUrl + "/api/client/statistics/report");
     url.searchParams.set("UUID", uuid);
@@ -683,7 +713,6 @@ function createPerformanceService({
       }
     });
 
-    const contentType = response.headers.get("content-type") || "";
     let bodyText = "";
 
     try {
@@ -695,8 +724,19 @@ function createPerformanceService({
     return {
       ok: response.ok,
       status: response.status,
-      contentType,
-      bodyPreview: bodyText.slice(0, 500)
+      contentType: response.headers.get("content-type") || "",
+      bodyText
+    };
+  }
+
+  async function requestReportDownloadStatus(uuid) {
+    const response = await requestReportEndpoint(uuid);
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      contentType: response.contentType,
+      bodyPreview: response.bodyText.slice(0, 500)
     };
   }
 
@@ -1062,25 +1102,40 @@ function createPerformanceService({
     });
   }
 
+  function persistReadyCsvReport(uuid, parsed, extra = {}) {
+    clearActiveLimitTimestamp();
+    const readyAt = new Date().toISOString();
+
+    upsertReportRecord({
+      uuid,
+      status: "ready",
+      readyAt,
+      rowsCount: parsed.rowsCount,
+      rows: parsed.rows,
+      lastKnownStatus: extra.lastKnownStatus || "CSV_READY",
+      lastPollAt: readyAt,
+      ...extra
+    });
+
+    const stored = getReportRecord(uuid);
+
+    return {
+      uuid,
+      ready: true,
+      status: "ready",
+      rawStatus: extra.lastKnownStatus || "CSV_READY",
+      ageMinutes: getReportAgeMinutes(stored),
+      retries: Number(stored?.retries || 0),
+      rows: parsed.rows,
+      rowsCount: parsed.rowsCount
+    };
+  }
+
   async function getReportStatus(uuid, options = {}) {
     assertPollInterval(uuid, options);
     const found = await getReportListItem(uuid);
 
-    if (!found) {
-      const stored = loadReports().find(item => item.uuid === uuid);
-      markReportPolled(uuid, stored ? stored.status || "pending" : "not_found");
-      return {
-        uuid,
-        ready: false,
-        status: stored ? stored.status || "pending" : "pending",
-        rawStatus: stored ? stored.status || "pending" : "not_found",
-        ageMinutes: getReportAgeMinutes(stored),
-        retries: Number(stored?.retries || 1),
-        message: "Отчёт ещё готовится."
-      };
-    }
-
-    if (found.meta && found.meta.error) {
+    if (found && found.meta && found.meta.error) {
       markReportPolled(uuid, "error");
       upsertReportRecord({
         uuid,
@@ -1091,12 +1146,13 @@ function createPerformanceService({
       throw new Error("Performance report failed: " + found.meta.error);
     }
 
-    if (found.meta && found.meta.link) {
+    if (found && found.meta && found.meta.link) {
       clearActiveLimitTimestamp();
       markReportPolled(uuid, "ready");
       upsertReportRecord({
         uuid,
         status: "ready",
+        readyAt: new Date().toISOString(),
         lastKnownStatus: "ready",
         link: found.meta.link
       });
@@ -1109,6 +1165,30 @@ function createPerformanceService({
         ageMinutes: getReportAgeMinutes(stored),
         retries: Number(stored?.retries || 1),
         item: found
+      };
+    }
+
+    const endpointResponse = await requestReportEndpoint(uuid);
+    const parsedCsv = parseCsvReadyResponse(endpointResponse);
+
+    if (parsedCsv) {
+      markReportPolled(uuid, "CSV_READY");
+      return persistReadyCsvReport(uuid, parsedCsv, {
+        lastKnownStatus: found?.meta?.status || found?.status || found?.state || "CSV_READY"
+      });
+    }
+
+    if (!found) {
+      const stored = loadReports().find(item => item.uuid === uuid);
+      markReportPolled(uuid, stored ? stored.status || "pending" : "not_found");
+      return {
+        uuid,
+        ready: false,
+        status: stored ? stored.status || "pending" : "pending",
+        rawStatus: stored ? stored.status || "pending" : "not_found",
+        ageMinutes: getReportAgeMinutes(stored),
+        retries: Number(stored?.retries || 1),
+        message: "Отчёт ещё готовится."
       };
     }
 
@@ -1178,11 +1258,20 @@ function createPerformanceService({
       throw createPendingReportError(uuid, "Отчёт ещё готовится.");
     }
 
+    if (Array.isArray(status.rows) && status.rows.length) {
+      return {
+        uuid,
+        rows: status.rows,
+        csvText: ""
+      };
+    }
+
     const csvText = await requestReportDownload(uuid);
     const rows = normalizeStatsFromCsv(csvText);
     upsertReportRecord({
       uuid,
-      status: "downloaded",
+      status: "ready",
+      readyAt: new Date().toISOString(),
       rowsCount: rows.length,
       rows
     });
@@ -1607,7 +1696,9 @@ function createPerformanceService({
     isConfigured,
     isActiveLimitCooldown,
     listQueue,
+    looksLikeCsvReportBody,
     normalizeStatsFromCsv,
+    parseCsvReadyResponse,
     resetQueue,
     resolveReport,
     statsToRows,
@@ -1623,7 +1714,9 @@ module.exports = {
   createPendingReportError,
   createPerformanceService,
   inferPaymentType,
+  looksLikeCsvReportBody,
   normalizeCampaign,
   normalizeStatsFromCsv,
+  parseCsvReadyResponse,
   parseSemicolonCsv
 };
