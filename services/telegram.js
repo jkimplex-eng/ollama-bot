@@ -268,7 +268,7 @@ function formatPerformanceRows(rows) {
         "Показы: " + (row.impressions ?? "-"),
         "Клики: " + (row.clicks ?? "-"),
         "CTR: " + (row.ctr ?? "-"),
-        "CPC: " + (row.cpc ?? "-"),
+        "CPC: " + (row.avgCpc ?? "-"),
         "Расход: " + (row.spend ?? "-"),
         "Заказы: " + (row.orders ?? "-"),
         "Выручка: " + (row.revenue ?? "-"),

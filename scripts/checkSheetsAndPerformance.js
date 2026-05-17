@@ -333,7 +333,53 @@ function run() {
           revenue: 9133,
           modelOrders: 1,
           modelRevenue: 9133,
-          drr: 0.6
+          drr: 0.6,
+          orderedAmount: null,
+          totalDrr: null,
+          addedAt: ""
+        }
+      ],
+      rowsCount: 1
+    }
+  );
+
+  const russianCsvFixture = [
+    ";Кампания по продвижению товаров № 456; Real campaign, период 2026-05-02 - 2026-05-14",
+    "День;sku;Название товара;Цена товара, ₽;Показы;Клики;CTR (%);В корзину;Средняя стоимость клика, ₽;Расход, ₽, с НДС;Заказы;Продажи, ₽;Заказы модели;Продажи с заказов модели, ₽;ДРР, %;Заказано на сумму, ₽;Общий ДРР;Дата добавления",
+    "2026-05-02;222;Товар 2;1987,68;1234;56;4,30;7;12,34;691,04;3;5678,90;2;4321,10;12,15;6789,01;10,05;2026-05-01"
+  ].join("\n");
+
+  assert.deepStrictEqual(
+    parseCsvReadyResponse({
+      ok: true,
+      status: 200,
+      contentType: "text/csv; charset=utf-8",
+      bodyText: russianCsvFixture
+    }),
+    {
+      rows: [
+        {
+          date: "2026-05-02",
+          campaignId: "456",
+          campaignName: "",
+          sku: "222",
+          productName: "Товар 2",
+          price: 1987.68,
+          impressions: 1234,
+          clicks: 56,
+          ctr: 4.3,
+          addToCart: 7,
+          avgCpc: 12.34,
+          avgCpm: null,
+          spend: 691.04,
+          orders: 3,
+          revenue: 5678.9,
+          modelOrders: 2,
+          modelRevenue: 4321.1,
+          drr: 12.15,
+          orderedAmount: 6789.01,
+          totalDrr: 10.05,
+          addedAt: "2026-05-01"
         }
       ],
       rowsCount: 1

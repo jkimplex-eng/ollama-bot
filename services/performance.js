@@ -274,6 +274,17 @@ function getCell(row, indexMap, key) {
   return row[index] ?? "";
 }
 
+function getCellByAliases(row, indexMap, keys) {
+  for (const key of keys) {
+    const value = getCell(row, indexMap, key);
+    if (value !== "") {
+      return value;
+    }
+  }
+
+  return "";
+}
+
 function normalizeStatsFromCsv(csvText) {
   const rows = parseSemicolonCsv(csvText);
   const result = [];
@@ -289,7 +300,7 @@ function normalizeStatsFromCsv(csvText) {
     const meta = extractCampaignMeta((rows[index - 1] || []).join(" "));
     const headers = row.map(cell => cell.trim());
     const indexMap = new Map(headers.map((header, headerIndex) => [header, headerIndex]));
-    const dateHeader = headers.find(header => header.includes("Дата"));
+    const dateHeader = headers.find(header => header === "День" || header.includes("Дата"));
 
     for (let dataIndex = index + 1; dataIndex < rows.length; dataIndex += 1) {
       const dataRow = rows[dataIndex];
@@ -308,23 +319,36 @@ function normalizeStatsFromCsv(csvText) {
         date: dateHeader ? getCell(dataRow, indexMap, dateHeader) : "",
         campaignId: meta.campaignId,
         campaignName: meta.campaignName,
-        sku: getCell(dataRow, indexMap, "sku"),
-        productName: getCell(dataRow, indexMap, "Название товара"),
-        price: toNumber(getCell(dataRow, indexMap, "Цена товара, Р")),
-        impressions: toNumber(getCell(dataRow, indexMap, "Показы")),
-        clicks: toNumber(getCell(dataRow, indexMap, "Клики")),
-        ctr: toNumber(getCell(dataRow, indexMap, "CTR (%)")),
-        addToCart: toNumber(getCell(dataRow, indexMap, "В корзину")),
-        avgCpc: toNumber(getCell(dataRow, indexMap, "Ср. цена клика, г")),
-        avgCpm: toNumber(getCell(dataRow, indexMap, "Ср. цена 1000 показов, Р")),
-        spend: toNumber(getCell(dataRow, indexMap, "Расход, Р, с НДС")),
-        orders: toNumber(getCell(dataRow, indexMap, "Заказы")),
-        revenue: toNumber(getCell(dataRow, indexMap, "Выручка, Р")),
-        modelOrders: toNumber(getCell(dataRow, indexMap, "Заказы модели")),
-        modelRevenue: toNumber(getCell(dataRow, indexMap, "Выручка с заказов модели, Р")),
-        drr:
-          toNumber(getCell(dataRow, indexMap, "ДРР, %: Дата добавления")) ??
-          toNumber(getCell(dataRow, indexMap, "ДРР, %"))
+        sku: getCellByAliases(dataRow, indexMap, ["sku", "SKU"]),
+        productName: getCellByAliases(dataRow, indexMap, ["Название товара"]),
+        price: toNumber(getCellByAliases(dataRow, indexMap, ["Цена товара, ₽", "Цена товара, Р"])),
+        impressions: toNumber(getCellByAliases(dataRow, indexMap, ["Показы"])),
+        clicks: toNumber(getCellByAliases(dataRow, indexMap, ["Клики"])),
+        ctr: toNumber(getCellByAliases(dataRow, indexMap, ["CTR (%)"])),
+        addToCart: toNumber(getCellByAliases(dataRow, indexMap, ["В корзину"])),
+        avgCpc: toNumber(
+          getCellByAliases(dataRow, indexMap, ["Средняя стоимость клика, ₽", "Ср. цена клика, г"])
+        ),
+        avgCpm: toNumber(
+          getCellByAliases(dataRow, indexMap, ["Средняя стоимость 1000 показов, ₽", "Ср. цена 1000 показов, Р"])
+        ),
+        spend: toNumber(
+          getCellByAliases(dataRow, indexMap, ["Расход, ₽, с НДС", "Расход, Р, с НДС"])
+        ),
+        orders: toNumber(getCellByAliases(dataRow, indexMap, ["Заказы"])),
+        revenue: toNumber(
+          getCellByAliases(dataRow, indexMap, ["Продажи, ₽", "Заказано на сумму, ₽", "Выручка, Р"])
+        ),
+        modelOrders: toNumber(getCellByAliases(dataRow, indexMap, ["Заказы модели"])),
+        modelRevenue: toNumber(
+          getCellByAliases(dataRow, indexMap, ["Продажи с заказов модели, ₽", "Выручка с заказов модели, Р"])
+        ),
+        drr: toNumber(
+          getCellByAliases(dataRow, indexMap, ["ДРР, %", "ДРР, %: Дата добавления"])
+        ),
+        orderedAmount: toNumber(getCellByAliases(dataRow, indexMap, ["Заказано на сумму, ₽"])),
+        totalDrr: toNumber(getCellByAliases(dataRow, indexMap, ["Общий ДРР"])),
+        addedAt: getCellByAliases(dataRow, indexMap, ["Дата добавления"])
       });
     }
   }
@@ -348,7 +372,9 @@ function looksLikeCsvReportBody(text) {
     normalized.includes(";sku;") ||
     normalized.includes(";SKU;") ||
     normalized.includes("Показы") ||
-    normalized.includes("Выручка, Р")
+    normalized.includes("Выручка, Р") ||
+    normalized.includes("Продажи, ₽") ||
+    normalized.includes("Расход, ₽, с НДС")
   );
 }
 
