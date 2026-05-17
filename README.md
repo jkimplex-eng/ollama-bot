@@ -311,8 +311,8 @@ Cron:
 
 - `products`: `Название | SKU | Offer ID | Цена | Остаток`
 - `stocks`: `Название | SKU | Offer ID | Остаток`
-- `performance_campaigns`: `Campaign ID | Campaign Name | State | Adv Object Type | Payment Type | From Date | To Date | Budget | Daily Budget | Placement`
-- `performance_stats`: `Date | Campaign ID | Campaign Name | SKU | Product Name | Price | Impressions | Clicks | CTR | Add To Cart | Avg CPC | Avg CPM | Spend | Orders | Revenue | Model Orders | Model Revenue | DRR`
+- `performance_campaigns`: `Campaign ID | Campaign Name | State | Adv Object Type | Payment Type | From Date | To Date | Budget | Daily Budget | Weekly Budget | Placement | Product Campaign Mode | Created At | Updated At`
+- `performance_stats`: `Date | Campaign ID | Campaign Name | SKU | Product Name | Price | Impressions | Clicks | CTR | Add To Cart | Avg CPC | Spend | Orders | Revenue | Model Orders | Model Revenue | DRR | Ordered Amount | Total DRR | Added At`
 - `daily_summary`: `Дата | Выручка | Выплата Ozon | Заказы | Комиссия | Логистика | Реклама | Себестоимость | Прибыль | Маржа | ДРР`
 - `alerts`: `Дата | Уровень | Тип | Сообщение`
 
@@ -416,6 +416,7 @@ function jsonResponse(data) {
 Важно:
 
 - Apps Script не должен создавать sheets автоматически
+- `clearAndWrite` и `replaceRows` должны очищать sheet, писать headers в строку 1 и данные со строки 2
 - если tab отсутствует, он должен вернуть JSON error
 - строки должны быть нормализованы по длине
 - HTML ошибки деплоя лучше исключить через корректный deployment и публичный доступ

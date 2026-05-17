@@ -31,6 +31,32 @@ function listDates(dateFrom, dateTo) {
   return dates;
 }
 
+const SKU_DASHBOARD_HEADERS = [
+  "Название",
+  "Категория",
+  "ШК",
+  "РРЦ",
+  "Себ",
+  "Артикул",
+  "Рубли",
+  "Штуки",
+  "Цена",
+  "Реклама",
+  "ДРР",
+  "Выручка",
+  "Штуки",
+  "Цена",
+  "Реклама",
+  "ДРР",
+  "ВП",
+  "Показы общие",
+  "Показы реклама",
+  "Клики",
+  "CTR",
+  "Корзины",
+  "Позиция ср."
+];
+
 function toNumber(value) {
   if (value === null || value === undefined || value === "") {
     return 0;
@@ -253,7 +279,7 @@ function createReportBuilderService({ ozonService, performanceService, sheetsSer
     return {
       dateFrom,
       dateTo,
-      headers: report.headers,
+      headers: ["Metric", ...listDates(dateFrom, dateTo)],
       rows: report.rows,
       missingFieldsNote:
         "Часть полей пока не заполнена: себестоимость, доставка, позиция, категория."
@@ -285,7 +311,9 @@ function createReportBuilderService({ ozonService, performanceService, sheetsSer
 
   async function exportSkuReport({ dateFrom, dateTo }) {
     const report = await buildSkuReport({ dateFrom, dateTo });
-    const result = await sheetsService.clearAndWriteMappedRows("sku_dashboard", report.rows);
+    const result = await sheetsService.clearAndWriteMappedRows("sku_dashboard", report.rows, {
+      headers: SKU_DASHBOARD_HEADERS
+    });
     return { report, writeResult: result };
   }
 
@@ -303,5 +331,6 @@ module.exports = {
   buildPnlSummaryRows,
   buildSkuDashboardRows,
   createReportBuilderService,
-  listDates
+  listDates,
+  SKU_DASHBOARD_HEADERS
 };

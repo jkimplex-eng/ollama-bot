@@ -1,11 +1,13 @@
 const assert = require("assert");
 const {
   buildPnlSummaryRows,
-  buildSkuDashboardRows
+  buildSkuDashboardRows,
+  createReportBuilderService,
+  SKU_DASHBOARD_HEADERS
 } = require("../services/reportBuilder");
 const { parseReportCommand } = require("../services/telegram");
 
-function run() {
+async function run() {
   const performanceRows = [
     {
       date: "2026-05-01",
@@ -194,7 +196,74 @@ function run() {
     dateTo: "2026-05-14"
   });
 
+  const capturedWrites = [];
+  const reportBuilderService = createReportBuilderService({
+    ozonService: {
+      getProducts: async () => [{ name: "Товар 1", sku: "111", offerId: "offer-111", price: 999 }]
+    },
+    performanceService: {
+      getStoredRowsForDateRange: async () => [
+        {
+          date: "2026-05-13",
+          sku: "111",
+          productName: "Товар 1",
+          revenue: "4567,89",
+          spend: "1987,68",
+          orders: "3"
+        }
+      ]
+    },
+    sheetsService: {
+      clearAndWriteMappedRows: async (mappingKey, rows, options = {}) => {
+        capturedWrites.push({ mappingKey, rows, headers: options.headers || null });
+        return { rowsWritten: rows.length, tabName: mappingKey };
+      }
+    }
+  });
+
+  await reportBuilderService.exportPnlReport({
+    dateFrom: "2026-05-13",
+    dateTo: "2026-05-14"
+  });
+  await reportBuilderService.exportSkuReport({
+    dateFrom: "2026-05-13",
+    dateTo: "2026-05-14"
+  });
+
+  assert.deepStrictEqual(capturedWrites[0].mappingKey, "pnl_summary");
+  assert.deepStrictEqual(capturedWrites[0].headers, ["Metric", "2026-05-13", "2026-05-14"]);
+  assert.deepStrictEqual(capturedWrites[1].mappingKey, "sku_dashboard");
+  assert.deepStrictEqual(capturedWrites[1].headers, SKU_DASHBOARD_HEADERS);
+  assert.deepStrictEqual(capturedWrites[1].rows[0], [
+    "Товар 1",
+    "",
+    "",
+    999,
+    "",
+    "offer-111",
+    4567.89,
+    3,
+    1522.63,
+    1987.68,
+    43.51,
+    0,
+    0,
+    "",
+    1987.68,
+    43.51,
+    "",
+    0,
+    0,
+    0,
+    0,
+    0,
+    ""
+  ]);
+
   console.log("Report builder checks passed");
 }
 
-run();
+run().catch(error => {
+  console.error(error);
+  process.exit(1);
+});

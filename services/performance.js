@@ -159,6 +159,32 @@ function parseSemicolonCsv(text) {
   return rows;
 }
 
+function dedupeCampaigns(campaigns) {
+  const map = new Map();
+
+  for (const campaign of campaigns) {
+    map.set(String(campaign.campaignId || ""), campaign);
+  }
+
+  return Array.from(map.values());
+}
+
+function dedupeStatsRows(rows) {
+  const map = new Map();
+
+  for (const row of rows) {
+    const key = [
+      formatDate(row.date),
+      String(row.campaignId || ""),
+      String(row.sku || ""),
+      String(row.productName || "")
+    ].join("|");
+    map.set(key, row);
+  }
+
+  return Array.from(map.values());
+}
+
 function normalizeCsvHeader(value) {
   return String(value || "")
     .replace(/^\uFEFF/, "")
@@ -1719,7 +1745,7 @@ function createPerformanceService({
       };
     }
 
-    const combinedRows = items.flatMap(item => getReportRows(item.uuid));
+    const combinedRows = dedupeStatsRows(items.flatMap(item => getReportRows(item.uuid)));
     const writeResult = await sheetsService.clearAndWriteMappedRows(
       "performance_stats",
       statsToRows(combinedRows)
@@ -1743,12 +1769,12 @@ function createPerformanceService({
     });
     const writeResult = await sheetsService.clearAndWriteMappedRows(
       "performance_stats",
-      statsToRows(resolved.rows)
+      statsToRows(dedupeStatsRows(resolved.rows))
     );
 
     return {
       uuid,
-      rows: resolved.rows,
+      rows: dedupeStatsRows(resolved.rows),
       writeResult
     };
   }
@@ -1785,13 +1811,15 @@ function createPerformanceService({
       row.ctr ?? "",
       row.addToCart ?? "",
       row.avgCpc ?? "",
-      row.avgCpm ?? "",
       row.spend ?? "",
       row.orders ?? "",
       row.revenue ?? "",
       row.modelOrders ?? "",
       row.modelRevenue ?? "",
-      row.drr ?? ""
+      row.drr ?? "",
+      row.orderedAmount ?? "",
+      row.totalDrr ?? "",
+      row.addedAt ?? ""
     ]);
   }
 
@@ -1829,9 +1857,10 @@ function createPerformanceService({
   }
 
   async function writeCampaignRowsToMappedSheet(campaigns) {
+    const uniqueCampaigns = dedupeCampaigns(campaigns);
     return sheetsService.clearAndWriteMappedRows(
       "performance_campaigns",
-      campaignsToRows(campaigns)
+      campaignsToRows(uniqueCampaigns)
     );
   }
 
@@ -1868,6 +1897,8 @@ function createPerformanceService({
     createSingleCampaignStatsReport,
     createStatsQueue,
     createTestStatsReport,
+    dedupeCampaigns,
+    dedupeStatsRows,
     debugSummary,
     discoverAndRecoverRemoteReport,
     discoverRemoteReports,
@@ -1910,6 +1941,8 @@ module.exports = {
   createActiveLimitError,
   createPendingReportError,
   createPerformanceService,
+  dedupeCampaigns,
+  dedupeStatsRows,
   inferPaymentType,
   looksLikeCsvReportBody,
   normalizeCampaign,

@@ -47,20 +47,22 @@ const sheetsMap = {
       "CTR",
       "Add To Cart",
       "Avg CPC",
-      "Avg CPM",
       "Spend",
       "Orders",
       "Revenue",
       "Model Orders",
       "Model Revenue",
-      "DRR"
+      "DRR",
+      "Ordered Amount",
+      "Total DRR",
+      "Added At"
     ],
     mode: "replace"
   },
   pnl_summary: {
     logicalName: "pnl_summary",
     tabName: "P&L Summary",
-    columns: ["Показатель"],
+    columns: ["Metric"],
     mode: "replace"
   },
   sku_dashboard: {

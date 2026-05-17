@@ -5,6 +5,8 @@ const path = require("path");
 const { getSheetMapping } = require("../config/sheetsMap");
 const {
   createPerformanceService,
+  dedupeCampaigns,
+  dedupeStatsRows,
   inferPaymentType,
   looksLikeCsvReportBody,
   normalizeCampaign,
@@ -13,8 +15,46 @@ const {
 const { normalizeRows } = require("../services/sheets");
 const { formatPerformanceRows, parsePerformanceCommand } = require("../services/telegram");
 
-function run() {
+async function run() {
   assert.strictEqual(getSheetMapping("performance_stats").logicalName, "performance_stats");
+  assert.deepStrictEqual(getSheetMapping("performance_stats").columns, [
+    "Date",
+    "Campaign ID",
+    "Campaign Name",
+    "SKU",
+    "Product Name",
+    "Price",
+    "Impressions",
+    "Clicks",
+    "CTR",
+    "Add To Cart",
+    "Avg CPC",
+    "Spend",
+    "Orders",
+    "Revenue",
+    "Model Orders",
+    "Model Revenue",
+    "DRR",
+    "Ordered Amount",
+    "Total DRR",
+    "Added At"
+  ]);
+  assert.deepStrictEqual(getSheetMapping("performance_campaigns").columns, [
+    "Campaign ID",
+    "Campaign Name",
+    "State",
+    "Adv Object Type",
+    "Payment Type",
+    "From Date",
+    "To Date",
+    "Budget",
+    "Daily Budget",
+    "Weekly Budget",
+    "Placement",
+    "Product Campaign Mode",
+    "Created At",
+    "Updated At"
+  ]);
 
   assert.throws(() => getSheetMapping("missing_mapping"), /Unknown sheet mapping: missing_mapping/);
 
@@ -446,17 +486,24 @@ function run() {
   assert.match(formattedRows, /Выручка: 3456\.78/);
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ollama-bot-performance-"));
-  const performanceService = createPerformanceService({
+  const baseServiceOptions = {
     baseUrl: "https://example.invalid",
     clientId: "",
     clientSecret: "",
+    logger: { log() {}, error() {} }
+  };
+
+  const performanceService = createPerformanceService({
+    ...baseServiceOptions,
     queueFile: path.join(tempDir, "performance-queue.json"),
     reportsFile: path.join(tempDir, "performance-reports.json"),
     rowsFile: path.join(tempDir, "performance-rows.json"),
     sheetsService: {
-      clearAndWriteMappedRows: async () => ({ rowsWritten: 0, tabName: "Performance Stats" })
-    },
-    logger: { log() {}, error() {} }
+      clearAndWriteMappedRows: async () => ({
+        rowsWritten: 0,
+        tabName: "Performance Stats"
+      })
+    }
   });
 
   const rowsToStore = [
@@ -485,10 +532,7 @@ function run() {
       dateFrom: "2026-05-13",
       dateTo: "2026-05-14"
     }),
-    {
-      totalStoredRows: 2,
-      rowsSaved: 2
-    }
+    { totalStoredRows: 2, rowsSaved: 2 }
   );
 
   assert.deepStrictEqual(
@@ -498,49 +542,37 @@ function run() {
       dateFrom: "2026-05-13",
       dateTo: "2026-05-14"
     }),
+    { totalStoredRows: 2, rowsSaved: 2 }
+  );
+
+  assert.deepStrictEqual(performanceService.getStoredRowsForDateRange("2026-05-13", "2026-05-13"), [
     {
-      totalStoredRows: 2,
-      rowsSaved: 2
+      ...rowsToStore[0],
+      rawDate: "13.05.2026",
+      date: "2026-05-13"
     }
-  );
+  ]);
 
-  assert.deepStrictEqual(
-    performanceService.getStoredRowsForDateRange("2026-05-13", "2026-05-13"),
-    [
-      {
-        ...rowsToStore[0],
-        rawDate: "13.05.2026",
-        date: "2026-05-13"
-      }
-    ]
-  );
-
-  assert.deepStrictEqual(
-    performanceService.getStoredRowsForDateRange("2026-05-13", "2026-05-14"),
-    [
-      {
-        ...rowsToStore[0],
-        rawDate: "13.05.2026",
-        date: "2026-05-13"
-      },
-      {
-        ...rowsToStore[1],
-        rawDate: "2026-05-14",
-        date: "2026-05-14"
-      }
-    ]
-  );
-
-  assert.deepStrictEqual(
-    performanceService.getStoredRowsStatus(),
+  assert.deepStrictEqual(performanceService.getStoredRowsForDateRange("2026-05-13", "2026-05-14"), [
     {
-      totalStoredRows: 2,
-      minDate: "2026-05-13",
-      maxDate: "2026-05-14",
-      uniqueCampaigns: 1,
-      uniqueSkus: 2
+      ...rowsToStore[0],
+      rawDate: "13.05.2026",
+      date: "2026-05-13"
+    },
+    {
+      ...rowsToStore[1],
+      rawDate: "2026-05-14",
+      date: "2026-05-14"
     }
-  );
+  ]);
+
+  assert.deepStrictEqual(performanceService.getStoredRowsStatus(), {
+    totalStoredRows: 2,
+    minDate: "2026-05-13",
+    maxDate: "2026-05-14",
+    uniqueCampaigns: 1,
+    uniqueSkus: 2
+  });
 
   assert.deepStrictEqual(performanceService.clearStoredRows(), { ok: true });
   assert.deepStrictEqual(performanceService.getStoredRowsStatus(), {
@@ -551,7 +583,69 @@ function run() {
     uniqueSkus: 0
   });
 
+  assert.deepStrictEqual(
+    dedupeStatsRows([
+      { date: "2026-05-13", campaignId: "1", sku: "111", productName: "A", spend: 10 },
+      { date: "2026-05-13", campaignId: "1", sku: "111", productName: "A", spend: 10 },
+      { date: "2026-05-14", campaignId: "1", sku: "111", productName: "A", spend: 20 }
+    ]),
+    [
+      { date: "2026-05-13", campaignId: "1", sku: "111", productName: "A", spend: 10 },
+      { date: "2026-05-14", campaignId: "1", sku: "111", productName: "A", spend: 20 }
+    ]
+  );
+
+  assert.deepStrictEqual(
+    dedupeCampaigns([
+      { campaignId: "1", campaignName: "A" },
+      { campaignId: "1", campaignName: "A" },
+      { campaignId: "2", campaignName: "B" }
+    ]),
+    [
+      { campaignId: "1", campaignName: "A" },
+      { campaignId: "2", campaignName: "B" }
+    ]
+  );
+
+  const capturedWrites = [];
+  const performanceWriteService = createPerformanceService({
+    ...baseServiceOptions,
+    queueFile: path.join(tempDir, "performance-queue-2.json"),
+    reportsFile: path.join(tempDir, "performance-reports-2.json"),
+    rowsFile: path.join(tempDir, "performance-rows-2.json"),
+    sheetsService: {
+      clearAndWriteMappedRows: async (mappingKey, rows, options = {}) => {
+        capturedWrites.push({
+          mappingKey,
+          rows,
+          headers: options.headers || null
+        });
+        return { rowsWritten: rows.length, tabName: mappingKey };
+      }
+    }
+  });
+
+  const campaignWriteResult = await performanceWriteService.writeCampaignRowsToMappedSheet([
+    { campaignId: "1", campaignName: "A" },
+    { campaignId: "1", campaignName: "A" },
+    { campaignId: "2", campaignName: "B" }
+  ]);
+
+  assert.deepStrictEqual(campaignWriteResult, {
+    rowsWritten: 2,
+    tabName: "performance_campaigns"
+  });
+
+  assert.strictEqual(capturedWrites[0].mappingKey, "performance_campaigns");
+  assert.strictEqual(capturedWrites[0].headers, null);
+  assert.strictEqual(capturedWrites[0].rows.length, 2);
+  assert.deepStrictEqual(capturedWrites[0].rows[0].slice(0, 2), ["1", "A"]);
+  assert.deepStrictEqual(capturedWrites[0].rows[1].slice(0, 2), ["2", "B"]);
+
   console.log("Sheets/performance checks passed");
 }
 
-run();
+run().catch(error => {
+  console.error(error);
+  process.exit(1);
+});
