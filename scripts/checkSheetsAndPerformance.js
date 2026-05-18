@@ -56,6 +56,17 @@ async function run() {
     "Updated At"
   ]);
   assert.deepStrictEqual(getSheetMapping("pnl_summary").columns, ["Metric"]);
+  assert.strictEqual(getSheetMapping("performance_stats").formatting.headerBackground, "#000000");
+  assert.strictEqual(getSheetMapping("performance_stats").formatting.headerFontColor, "#ffffff");
+  assert.strictEqual(getSheetMapping("performance_stats").formatting.freezeRows, 1);
+  assert.strictEqual(getSheetMapping("performance_stats").formatting.autoResizeColumns, true);
+  assert.ok(getSheetMapping("performance_stats").formatting.currencyColumns.length > 0);
+  assert.ok(getSheetMapping("performance_stats").formatting.percentColumns.length > 0);
+  assert.strictEqual(getSheetMapping("performance_campaigns").formatting.headerBackground, "#000000");
+  assert.ok(getSheetMapping("performance_campaigns").formatting.currencyColumns.length > 0);
+  assert.strictEqual(getSheetMapping("sku_dashboard").formatting.headerFontColor, "#ffffff");
+  assert.ok(getSheetMapping("sku_dashboard").formatting.currencyColumns.length > 0);
+  assert.ok(getSheetMapping("sku_dashboard").formatting.percentColumns.length > 0);
 
   assert.throws(() => getSheetMapping("missing_mapping"), /Unknown sheet mapping: missing_mapping/);
 
@@ -674,6 +685,10 @@ async function run() {
     await sheetsService.clearAndWriteMappedRows("sku_dashboard", [
       ["Товар", "", "", "", "", "offer", 100, 1, 100, 10, 10, 50, 1, 50, 10, 10, "", 1000, 1000, 10, 1, 1, ""]
     ]);
+
+    await sheetsService.clearAndWriteMappedRows("performance_campaigns", [
+      ["1", "Campaign", "RUNNING", "SKU", "CPC", "2026-05-13", "2026-05-14", 1000, 100, 700, "PLACEMENT_TOP_PROMOTION", "", "", ""]
+    ]);
   } finally {
     global.fetch = originalFetch;
   }
@@ -682,12 +697,31 @@ async function run() {
   assert.strictEqual(fetchCalls[0].body.rows.length, 1);
   assert.deepStrictEqual(fetchCalls[1].body.headers, ["Metric", "2026-05-13", "2026-05-14"]);
   assert.strictEqual(fetchCalls[1].body.rows[0][0], "Заказы");
+  assert.strictEqual(fetchCalls[1].body.formatting.headerBackground, "#000000");
+  assert.strictEqual(fetchCalls[1].body.formatting.headerFontColor, "#ffffff");
+  assert.strictEqual(fetchCalls[1].body.formatting.freezeRows, 1);
+  assert.strictEqual(fetchCalls[1].body.formatting.autoResizeColumns, true);
+  assert.ok(Array.isArray(fetchCalls[1].body.formatting.currencyColumns));
+  assert.ok(Array.isArray(fetchCalls[1].body.formatting.percentRows));
   assert.strictEqual(fetchCalls[2].body.headers[0], "Название");
   assert.strictEqual(fetchCalls[2].body.rows[0][0], "Товар");
+  assert.deepStrictEqual(fetchCalls[2].body.formatting.currencyColumns, ["РРЦ", "Себ", "Рубли", "Цена", "Реклама", "Выручка", "ВП"]);
+  assert.deepStrictEqual(fetchCalls[2].body.formatting.percentColumns, ["ДРР", "CTR"]);
+  assert.strictEqual(fetchCalls[3].body.headers[0], "Campaign ID");
+  assert.deepStrictEqual(fetchCalls[3].body.formatting.currencyColumns, ["Budget", "Daily Budget", "Weekly Budget"]);
+  assert.strictEqual(fetchCalls[3].body.formatting.headerBackground, "#000000");
   assert.deepStrictEqual(fetchCalls[0].body.formatting, {
     boldHeader: true,
     freezeRows: 1,
-    autoResizeColumns: true
+    autoResizeColumns: true,
+    headerBackground: "#000000",
+    headerFontColor: "#ffffff",
+    currencyColumns: ["Price", "Avg CPC", "Spend", "Revenue", "Model Revenue", "Ordered Amount"],
+    percentColumns: ["CTR", "DRR", "Total DRR"],
+    conditionalColumns: [],
+    currencyRows: [],
+    percentRows: [],
+    conditionalRows: []
   });
 
   console.log("Sheets/performance checks passed");

@@ -344,7 +344,19 @@ Apps Script должен принимать JSON:
   "formatting": {
     "boldHeader": true,
     "freezeRows": 1,
-    "autoResizeColumns": true
+    "autoResizeColumns": true,
+    "headerBackground": "#000000",
+    "headerFontColor": "#ffffff",
+    "currencyColumns": ["Budget"],
+    "percentColumns": ["CTR"],
+    "conditionalColumns": [
+      {
+        "header": "ВП",
+        "positiveBackground": "#d9ead3",
+        "negativeBackground": "#f4cccc",
+        "neutralBackground": ""
+      }
+    ]
   },
   "rows": [["..."], ["..."]]
 }
@@ -358,7 +370,22 @@ Apps Script должен принимать JSON:
   "formatting": {
     "boldHeader": true,
     "freezeRows": 1,
-    "autoResizeColumns": true
+    "autoResizeColumns": true,
+    "headerBackground": "#000000",
+    "headerFontColor": "#ffffff",
+    "currencyColumns": ["Spend", "Revenue"],
+    "percentColumns": ["CTR", "DRR"],
+    "conditionalColumns": [],
+    "currencyRows": ["Продажи", "Реклама", "Прибыль", "ВП"],
+    "percentRows": ["от заказов", "от продаж"],
+    "conditionalRows": [
+      {
+        "rowLabel": "ВП",
+        "positiveBackground": "#d9ead3",
+        "negativeBackground": "#f4cccc",
+        "neutralBackground": ""
+      }
+    ]
   },
   "rows": [["..."], ["..."]]
 }
@@ -392,24 +419,128 @@ function doPost(e) {
       return values.slice(0, width);
     });
 
+    function resolveColumnIndexes(columns) {
+      return (Array.isArray(columns) ? columns : []).map(function(entry) {
+        if (typeof entry === "number") return entry;
+        if (entry && typeof entry === "object" && typeof entry.index === "number") return entry.index;
+        if (typeof entry === "string") {
+          var indexes = [];
+          headers.forEach(function(header, idx) {
+            if (header === entry) indexes.push(idx + 1);
+          });
+          return indexes;
+        }
+        if (entry && typeof entry === "object" && typeof entry.header === "string") {
+          var objectIndexes = [];
+          headers.forEach(function(header, idx) {
+            if (header === entry.header) objectIndexes.push(idx + 1);
+          });
+          return objectIndexes;
+        }
+        return [];
+      }).flat().filter(function(value) {
+        return typeof value === "number" && value > 0;
+      });
+    }
+
+    function findRowIndexByLabel(label) {
+      for (var i = 0; i < rows.length; i += 1) {
+        if (String(rows[i][0] || "") === String(label || "")) {
+          return i + 2;
+        }
+      }
+      return null;
+    }
+
+    function applySheetFormatting() {
+      if (headers.length) {
+        var headerRange = sheet.getRange(1, 1, 1, headers.length);
+        if (formatting.boldHeader) {
+          headerRange.setFontWeight("bold");
+        }
+        if (formatting.headerBackground) {
+          headerRange.setBackground(formatting.headerBackground);
+        }
+        if (formatting.headerFontColor) {
+          headerRange.setFontColor(formatting.headerFontColor);
+        }
+      }
+
+      if (formatting.freezeRows) {
+        sheet.setFrozenRows(formatting.freezeRows);
+      }
+
+      if (formatting.autoResizeColumns && width > 0) {
+        sheet.autoResizeColumns(1, width);
+      }
+
+      if (rows.length && width > 0) {
+        var dataRange = sheet.getRange(headers.length ? 2 : 1, 1, rows.length, width);
+        var currencyIndexes = resolveColumnIndexes(formatting.currencyColumns);
+        var percentIndexes = resolveColumnIndexes(formatting.percentColumns);
+
+        currencyIndexes.forEach(function(columnIndex) {
+          sheet.getRange(headers.length ? 2 : 1, columnIndex, rows.length, 1).setNumberFormat('#,##0.00 "₽"');
+        });
+
+        percentIndexes.forEach(function(columnIndex) {
+          sheet.getRange(headers.length ? 2 : 1, columnIndex, rows.length, 1).setNumberFormat('0.00"%"');
+        });
+
+        (Array.isArray(formatting.currencyRows) ? formatting.currencyRows : []).forEach(function(rowLabel) {
+          var rowIndex = findRowIndexByLabel(rowLabel);
+          if (rowIndex && width > 1) {
+            sheet.getRange(rowIndex, 2, 1, width - 1).setNumberFormat('#,##0.00 "₽"');
+          }
+        });
+
+        (Array.isArray(formatting.percentRows) ? formatting.percentRows : []).forEach(function(rowLabel) {
+          var rowIndex = findRowIndexByLabel(rowLabel);
+          if (rowIndex && width > 1) {
+            sheet.getRange(rowIndex, 2, 1, width - 1).setNumberFormat('0.00"%"');
+          }
+        });
+
+        (Array.isArray(formatting.conditionalColumns) ? formatting.conditionalColumns : []).forEach(function(rule) {
+          var indexes = resolveColumnIndexes([rule]);
+          indexes.forEach(function(columnIndex) {
+            var values = sheet.getRange(headers.length ? 2 : 1, columnIndex, rows.length, 1).getValues();
+            var backgrounds = values.map(function(pair) {
+              var value = Number(String(pair[0] || "").replace(",", "."));
+              if (!value) return [rule.neutralBackground || null];
+              if (value > 0) return [rule.positiveBackground || null];
+              return [rule.negativeBackground || null];
+            });
+            sheet.getRange(headers.length ? 2 : 1, columnIndex, rows.length, 1).setBackgrounds(backgrounds);
+          });
+        });
+
+        (Array.isArray(formatting.conditionalRows) ? formatting.conditionalRows : []).forEach(function(rule) {
+          var rowIndex = findRowIndexByLabel(rule.rowLabel);
+          if (rowIndex && width > 1) {
+            var rowValues = sheet.getRange(rowIndex, 2, 1, width - 1).getValues()[0];
+            var backgrounds = rowValues.map(function(value) {
+              var numericValue = Number(String(value || "").replace(",", "."));
+              if (!numericValue) return rule.neutralBackground || null;
+              if (numericValue > 0) return rule.positiveBackground || null;
+              return rule.negativeBackground || null;
+            });
+            sheet.getRange(rowIndex, 2, 1, width - 1).setBackgrounds([backgrounds]);
+          }
+        });
+      }
+    }
+
     if (payload.action === "replaceRows" || payload.action === "clearAndWrite") {
       sheet.clearContents();
       if (headers.length) {
         var headerRange = sheet.getRange(1, 1, 1, headers.length);
         headerRange.setValues([headers]);
-        if (formatting.boldHeader) {
-          headerRange.setFontWeight("bold");
-        }
       }
       if (rows.length) {
         sheet.getRange(headers.length ? 2 : 1, 1, rows.length, width).setValues(rows);
       }
-      if (formatting.freezeRows) {
-        sheet.setFrozenRows(formatting.freezeRows);
-      }
-      if (formatting.autoResizeColumns && width > 0) {
-        sheet.autoResizeColumns(1, width);
-      }
+      applySheetFormatting();
       return jsonResponse({ ok: true, action: payload.action, rowsWritten: rows.length });
     }
 
@@ -417,6 +548,7 @@ function doPost(e) {
       if (rows.length) {
         var startRow = Math.max(sheet.getLastRow() + 1, 1);
         sheet.getRange(startRow, 1, rows.length, width).setValues(rows);
+        applySheetFormatting();
       }
       return jsonResponse({ ok: true, action: payload.action, rowsWritten: rows.length });
     }
@@ -438,7 +570,12 @@ function jsonResponse(data) {
 
 - Apps Script не должен создавать sheets автоматически
 - `clearAndWrite` и `replaceRows` должны очищать sheet, писать headers в строку 1 и данные со строки 2
-- при наличии `formatting` можно делать basic formatting: bold header, freeze first row, auto resize columns
+- `formatting` поддерживает: `boldHeader`, `freezeRows`, `autoResizeColumns`, `headerBackground`, `headerFontColor`, `currencyColumns`, `percentColumns`, `conditionalColumns`, `currencyRows`, `percentRows`, `conditionalRows`
+- для dashboard sheets рекомендуется:
+  - чёрный header background
+  - белый header font color
+  - freeze first row
+  - auto resize columns
 - если tab отсутствует, он должен вернуть JSON error
 - строки должны быть нормализованы по длине
 - HTML ошибки деплоя лучше исключить через корректный deployment и публичный доступ

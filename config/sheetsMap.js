@@ -30,6 +30,16 @@ const sheetsMap = {
       "Created At",
       "Updated At"
     ],
+    formatting: {
+      boldHeader: true,
+      freezeRows: 1,
+      autoResizeColumns: true,
+      headerBackground: "#000000",
+      headerFontColor: "#ffffff",
+      currencyColumns: ["Budget", "Daily Budget", "Weekly Budget"],
+      percentColumns: [],
+      conditionalColumns: []
+    },
     mode: "replace"
   },
   performance_stats: {
@@ -57,12 +67,32 @@ const sheetsMap = {
       "Total DRR",
       "Added At"
     ],
+    formatting: {
+      boldHeader: true,
+      freezeRows: 1,
+      autoResizeColumns: true,
+      headerBackground: "#000000",
+      headerFontColor: "#ffffff",
+      currencyColumns: ["Price", "Avg CPC", "Spend", "Revenue", "Model Revenue", "Ordered Amount"],
+      percentColumns: ["CTR", "DRR", "Total DRR"],
+      conditionalColumns: []
+    },
     mode: "replace"
   },
   pnl_summary: {
     logicalName: "pnl_summary",
     tabName: "P&L Summary",
     columns: ["Metric"],
+    formatting: {
+      boldHeader: true,
+      freezeRows: 1,
+      autoResizeColumns: true,
+      headerBackground: "#000000",
+      headerFontColor: "#ffffff",
+      currencyColumns: [],
+      percentColumns: [],
+      conditionalColumns: []
+    },
     mode: "replace"
   },
   sku_dashboard: {
@@ -93,6 +123,23 @@ const sheetsMap = {
       "Корзины",
       "Позиция ср."
     ],
+    formatting: {
+      boldHeader: true,
+      freezeRows: 1,
+      autoResizeColumns: true,
+      headerBackground: "#000000",
+      headerFontColor: "#ffffff",
+      currencyColumns: ["РРЦ", "Себ", "Рубли", "Цена", "Реклама", "Выручка", "ВП"],
+      percentColumns: ["ДРР", "CTR"],
+      conditionalColumns: [
+        {
+          header: "ВП",
+          positiveBackground: "#d9ead3",
+          negativeBackground: "#f4cccc",
+          neutralBackground: ""
+        }
+      ]
+    },
     mode: "replace"
   },
   daily_summary: {

@@ -2,6 +2,8 @@ const assert = require("assert");
 const {
   buildPnlSummaryRows,
   buildSkuDashboardRows,
+  buildPnlFormatting,
+  buildSkuDashboardFormatting,
   createReportBuilderService,
   SKU_DASHBOARD_HEADERS
 } = require("../services/reportBuilder");
@@ -215,7 +217,12 @@ async function run() {
     },
     sheetsService: {
       clearAndWriteMappedRows: async (mappingKey, rows, options = {}) => {
-        capturedWrites.push({ mappingKey, rows, headers: options.headers || null });
+        capturedWrites.push({
+          mappingKey,
+          rows,
+          headers: options.headers || null,
+          formatting: options.formatting || null
+        });
         return { rowsWritten: rows.length, tabName: mappingKey };
       }
     }
@@ -233,9 +240,11 @@ async function run() {
   assert.deepStrictEqual(capturedWrites[0].mappingKey, "pnl_summary");
   assert.deepStrictEqual(capturedWrites[0].headers, ["Metric", "2026-05-13", "2026-05-14"]);
   assert.strictEqual(capturedWrites[0].headers[0], "Metric");
+  assert.deepStrictEqual(capturedWrites[0].formatting, buildPnlFormatting(["Metric", "2026-05-13", "2026-05-14"]));
   assert.deepStrictEqual(capturedWrites[1].mappingKey, "sku_dashboard");
   assert.deepStrictEqual(capturedWrites[1].headers, SKU_DASHBOARD_HEADERS);
   assert.strictEqual(capturedWrites[1].headers[0], "Название");
+  assert.deepStrictEqual(capturedWrites[1].formatting, buildSkuDashboardFormatting());
   assert.deepStrictEqual(capturedWrites[1].rows[0], [
     "Товар 1",
     "",

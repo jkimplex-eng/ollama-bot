@@ -57,6 +57,49 @@ const SKU_DASHBOARD_HEADERS = [
   "Позиция ср."
 ];
 
+function buildPnlFormatting(headers) {
+  return {
+    boldHeader: true,
+    freezeRows: 1,
+    autoResizeColumns: true,
+    headerBackground: "#000000",
+    headerFontColor: "#ffffff",
+    currencyColumns: headers.slice(1),
+    percentColumns: [],
+    conditionalColumns: [],
+    currencyRows: ["Продажи", "Реклама", "Прибыль", "Себес", "Доставка до МП", "ВП"],
+    percentRows: ["от заказов", "от продаж"],
+    conditionalRows: [
+      {
+        rowLabel: "ВП",
+        positiveBackground: "#d9ead3",
+        negativeBackground: "#f4cccc",
+        neutralBackground: ""
+      }
+    ]
+  };
+}
+
+function buildSkuDashboardFormatting() {
+  return {
+    boldHeader: true,
+    freezeRows: 1,
+    autoResizeColumns: true,
+    headerBackground: "#000000",
+    headerFontColor: "#ffffff",
+    currencyColumns: ["РРЦ", "Себ", "Рубли", "Цена", "Реклама", "Выручка", "ВП"],
+    percentColumns: ["ДРР", "CTR"],
+    conditionalColumns: [
+      {
+        header: "ВП",
+        positiveBackground: "#d9ead3",
+        negativeBackground: "#f4cccc",
+        neutralBackground: ""
+      }
+    ]
+  };
+}
+
 function toNumber(value) {
   if (value === null || value === undefined || value === "") {
     return 0;
@@ -304,7 +347,8 @@ function createReportBuilderService({ ozonService, performanceService, sheetsSer
   async function exportPnlReport({ dateFrom, dateTo }) {
     const report = await buildPnlReport({ dateFrom, dateTo });
     const result = await sheetsService.clearAndWriteMappedRows("pnl_summary", report.rows, {
-      headers: report.headers
+      headers: report.headers,
+      formatting: buildPnlFormatting(report.headers)
     });
     return { report, writeResult: result };
   }
@@ -312,7 +356,8 @@ function createReportBuilderService({ ozonService, performanceService, sheetsSer
   async function exportSkuReport({ dateFrom, dateTo }) {
     const report = await buildSkuReport({ dateFrom, dateTo });
     const result = await sheetsService.clearAndWriteMappedRows("sku_dashboard", report.rows, {
-      headers: SKU_DASHBOARD_HEADERS
+      headers: SKU_DASHBOARD_HEADERS,
+      formatting: buildSkuDashboardFormatting()
     });
     return { report, writeResult: result };
   }
@@ -330,6 +375,8 @@ function createReportBuilderService({ ozonService, performanceService, sheetsSer
 module.exports = {
   buildPnlSummaryRows,
   buildSkuDashboardRows,
+  buildPnlFormatting,
+  buildSkuDashboardFormatting,
   createReportBuilderService,
   listDates,
   SKU_DASHBOARD_HEADERS

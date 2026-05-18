@@ -4,8 +4,29 @@ const CHUNK_SIZE = 100;
 const DEFAULT_FORMATTING = {
   boldHeader: true,
   freezeRows: 1,
-  autoResizeColumns: true
+  autoResizeColumns: true,
+  headerBackground: "#000000",
+  headerFontColor: "#ffffff",
+  currencyColumns: [],
+  percentColumns: [],
+  conditionalColumns: []
 };
+
+function mergeFormatting(baseFormatting, overrideFormatting) {
+  const base = baseFormatting || {};
+  const override = overrideFormatting || {};
+
+  return {
+    ...base,
+    ...override,
+    currencyColumns: override.currencyColumns ?? base.currencyColumns ?? [],
+    percentColumns: override.percentColumns ?? base.percentColumns ?? [],
+    conditionalColumns: override.conditionalColumns ?? base.conditionalColumns ?? [],
+    currencyRows: override.currencyRows ?? base.currencyRows ?? [],
+    percentRows: override.percentRows ?? base.percentRows ?? [],
+    conditionalRows: override.conditionalRows ?? base.conditionalRows ?? []
+  };
+}
 
 function normalizeRows(rows, columnCount) {
   return rows.map(row => {
@@ -107,7 +128,7 @@ function createSheetsService({ webappUrl }) {
     const normalizedRows = normalizeRows(rows, headers.length);
     const formatting = options.formatting === false
       ? null
-      : options.formatting || mapping.formatting || DEFAULT_FORMATTING;
+      : mergeFormatting(mergeFormatting(DEFAULT_FORMATTING, mapping.formatting), options.formatting);
     return { mapping, normalizedRows, headers, formatting };
   }
 
@@ -241,6 +262,7 @@ function createSheetsService({ webappUrl }) {
 module.exports = {
   chunkRows,
   createSheetsService,
+  mergeFormatting,
   normalizeRows,
   parseAppsScriptError
 };
