@@ -1,3 +1,11 @@
+function clampOzonLimit(value, max = 100) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    return max;
+  }
+  return Math.min(parsed, max);
+}
+
 function createOzonService({ clientId, apiKey }) {
   async function requestOzon(path, body) {
     if (!clientId || !apiKey) {
@@ -31,6 +39,14 @@ function createOzonService({ clientId, apiKey }) {
     }
 
     return Math.min(value, 1000);
+  }
+
+  function normalizeOzonError(error) {
+    const message = String(error?.message || error || "");
+    if (message.includes("Request validation error")) {
+      return "Ozon отклонил запрос из-за параметров выборки. Попробуй ещё раз, мы уже ограничили размер страницы безопасным значением.";
+    }
+    return message;
   }
 
   function getStock(product) {
@@ -234,15 +250,16 @@ function createOzonService({ clientId, apiKey }) {
     return data.result || data;
   }
 
-  async function getFboPostings({ dateFrom, dateTo, lastId = "", limit = 1000 }) {
+  async function getFboPostings({ dateFrom, dateTo, offset = 0, limit = 100 }) {
+    const safeLimit = clampOzonLimit(limit, 100);
     const data = await requestOzon("/v3/posting/fbo/list", {
       dir: "ASC",
       filter: {
         since: dateFrom,
         to: dateTo
       },
-      limit,
-      offset: 0,
+      limit: safeLimit,
+      offset,
       with: {
         analytics_data: true,
         financial_data: true
@@ -250,21 +267,24 @@ function createOzonService({ clientId, apiKey }) {
     });
 
     const result = data.result || data;
+    const postings = result.postings || result.items || [];
     return {
-      postings: result.postings || result.items || [],
+      postings,
       has_next: Boolean(result.has_next),
-      last_id: lastId
+      offset: offset + postings.length,
+      limit: safeLimit
     };
   }
 
-  async function getFbsPostings({ dateFrom, dateTo, lastId = "", limit = 1000 }) {
+  async function getFbsPostings({ dateFrom, dateTo, lastId = "", limit = 100 }) {
+    const safeLimit = clampOzonLimit(limit, 100);
     const data = await requestOzon("/v3/posting/fbs/list", {
       dir: "ASC",
       filter: {
         since: dateFrom,
         to: dateTo
       },
-      limit,
+      limit: safeLimit,
       last_id: lastId,
       with: {
         analytics_data: true,
@@ -276,33 +296,81 @@ function createOzonService({ clientId, apiKey }) {
     return {
       postings: result.postings || result.items || [],
       has_next: Boolean(result.has_next),
-      last_id: result.last_id || ""
+      last_id: result.last_id || "",
+      limit: safeLimit
     };
   }
 
-  async function getSalesFacts({ dateFrom, dateTo }) {
+  async function getSalesFacts({ dateFrom, dateTo, limit = 100 }) {
+    const safeLimit = clampOzonLimit(limit, 100);
     const salesRows = [];
-
-    const fbo = await getFboPostings({ dateFrom, dateTo, limit: 1000 });
-    for (const item of fbo.postings) {
-      salesRows.push(...normalizePostingSalesRows(item, "FBO"));
-    }
-
-    let lastId = "";
-    let hasNext = true;
-    while (hasNext) {
-      const fbs = await getFbsPostings({ dateFrom, dateTo, lastId, limit: 1000 });
-      for (const item of fbs.postings) {
-        salesRows.push(...normalizePostingSalesRows(item, "FBS"));
+    try {
+      let offset = 0;
+      let page = 1;
+      let hasNextFbo = true;
+      while (hasNextFbo) {
+        console.log("[ozon] sales fetch FBO", {
+          dateFrom,
+          dateTo,
+          limit: safeLimit,
+          page,
+          offset
+        });
+        const fbo = await getFboPostings({ dateFrom, dateTo, offset, limit: safeLimit });
+        console.log("[ozon] sales fetch FBO rows", {
+          page,
+          offset,
+          rowsFetched: fbo.postings.length
+        });
+        for (const item of fbo.postings) {
+          salesRows.push(...normalizePostingSalesRows(item, "FBO"));
+        }
+        hasNextFbo = Boolean(fbo.postings.length === safeLimit && fbo.has_next !== false);
+        offset += fbo.postings.length;
+        page += 1;
+        if (!fbo.postings.length) {
+          break;
+        }
       }
-      hasNext = Boolean(fbs.has_next && fbs.last_id && fbs.last_id !== lastId);
-      lastId = fbs.last_id || "";
-      if (!hasNext) {
-        break;
-      }
-    }
 
-    return salesRows;
+      let lastId = "";
+      let hasNextFbs = true;
+      let fbsPage = 1;
+      while (hasNextFbs) {
+        console.log("[ozon] sales fetch FBS", {
+          dateFrom,
+          dateTo,
+          limit: safeLimit,
+          page: fbsPage,
+          cursor: lastId || ""
+        });
+        const fbs = await getFbsPostings({ dateFrom, dateTo, lastId, limit: safeLimit });
+        console.log("[ozon] sales fetch FBS rows", {
+          page: fbsPage,
+          cursor: lastId || "",
+          rowsFetched: fbs.postings.length
+        });
+        for (const item of fbs.postings) {
+          salesRows.push(...normalizePostingSalesRows(item, "FBS"));
+        }
+        hasNextFbs = Boolean(
+          fbs.postings.length === safeLimit &&
+            fbs.has_next &&
+            fbs.last_id &&
+            fbs.last_id !== lastId
+        );
+        lastId = fbs.last_id || "";
+        fbsPage += 1;
+        if (!fbs.postings.length) {
+          break;
+        }
+      }
+
+      return salesRows;
+    } catch (error) {
+      error.userMessage = normalizeOzonError(error);
+      throw error;
+    }
   }
 
   return {
@@ -316,5 +384,6 @@ function createOzonService({ clientId, apiKey }) {
 }
 
 module.exports = {
+  clampOzonLimit,
   createOzonService
 };

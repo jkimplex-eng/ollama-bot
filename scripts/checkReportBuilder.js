@@ -13,6 +13,7 @@ const {
 const { parseCogsCommand, parseReportCommand, parseSalesCommand } = require("../services/telegram");
 const { createCogsService } = require("../services/cogs");
 const { createSalesFactsService } = require("../services/salesFacts");
+const { clampOzonLimit, createOzonService } = require("../services/ozon");
 
 async function run() {
   const performanceRows = [
@@ -251,6 +252,10 @@ async function run() {
     dateFrom: "2026-05-13",
     dateTo: "2026-05-14"
   });
+  assert.strictEqual(clampOzonLimit(150), 100);
+  assert.strictEqual(clampOzonLimit(undefined), 100);
+  assert.strictEqual(clampOzonLimit(0), 100);
+  assert.strictEqual(clampOzonLimit(25), 25);
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ollama-bot-cogs-"));
   const cogsService = createCogsService({
@@ -350,6 +355,59 @@ async function run() {
       { sku: "222", offerId: "offer-222", productName: "Товар 2", quantity: 2, revenue: 2000 }
     ]
   );
+
+  const ozonRequests = [];
+  const originalFetch = global.fetch;
+  global.fetch = async (url, options) => {
+    ozonRequests.push({
+      url,
+      body: JSON.parse(options.body)
+    });
+
+    if (url.endsWith("/v3/posting/fbo/list")) {
+      return {
+        ok: true,
+        json: async () => ({
+          result: {
+            postings: [],
+            has_next: false
+          }
+        })
+      };
+    }
+
+    if (url.endsWith("/v3/posting/fbs/list")) {
+      return {
+        ok: true,
+        json: async () => ({
+          result: {
+            postings: [],
+            has_next: false,
+            last_id: ""
+          }
+        })
+      };
+    }
+
+    throw new Error("Unexpected fetch call: " + url);
+  };
+
+  try {
+    const ozonService = createOzonService({
+      clientId: "test-client",
+      apiKey: "test-key"
+    });
+    const fetchedSalesRows = await ozonService.getSalesFacts({
+      dateFrom: "2026-05-13T00:00:00+03:00",
+      dateTo: "2026-05-14T23:59:59.999+03:00",
+      limit: 1000
+    });
+    assert.deepStrictEqual(fetchedSalesRows, []);
+    assert.strictEqual(ozonRequests[0].body.limit, 100);
+    assert.strictEqual(ozonRequests[1].body.limit, 100);
+  } finally {
+    global.fetch = originalFetch;
+  }
 
   const capturedWrites = [];
   const reportBuilderService = createReportBuilderService({

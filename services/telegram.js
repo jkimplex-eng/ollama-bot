@@ -1504,7 +1504,7 @@ function startTelegramBot({
           return;
         }
       } catch (err) {
-        await tgBot.sendMessage(chatId, "Ошибка sales facts: " + err.message);
+        await tgBot.sendMessage(chatId, "Ошибка sales facts: " + (err.userMessage || err.message));
         return;
       }
     }
