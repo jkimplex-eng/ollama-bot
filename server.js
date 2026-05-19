@@ -4,6 +4,7 @@ const { createApiRouter, createFileState } = require("./routes/api");
 const { createAnalyticsService } = require("./services/analytics");
 const { createAlertsService } = require("./services/alerts");
 const { createCalendarService } = require("./services/calendar");
+const { createCogsService } = require("./services/cogs");
 const { createDecisionEngine } = require("./services/decisionEngine");
 const { createDailySummaryService } = require("./services/dailySummary");
 const { createJobsService } = require("./services/jobs");
@@ -37,6 +38,10 @@ const sheetsService = createSheetsService({
   webappUrl: env.googleSheetsWebappUrl
 });
 
+const cogsService = createCogsService({
+  filePath: env.paths.cogsFile
+});
+
 const performanceService = createPerformanceService({
   baseUrl: env.ozonPerformanceBaseUrl,
   clientId: env.ozonPerformanceClientId,
@@ -48,6 +53,7 @@ const performanceService = createPerformanceService({
 });
 
 const reportBuilderService = createReportBuilderService({
+  cogsService,
   ozonService,
   performanceService,
   sheetsService
@@ -123,6 +129,7 @@ app.use(
 const activeTelegramService = startTelegramBot({
   analyticsService,
   alertsService,
+  cogsService,
   dailySummaryService,
   decisionEngine,
   performanceService,

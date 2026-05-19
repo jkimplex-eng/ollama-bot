@@ -57,6 +57,7 @@ Daily summary / cron:
 Optional local COGS mapping:
 
 - `data/cogs.json`
+- управление через Telegram: `/cogs template`, `/cogs status`, `/cogs set <sku> <cogs>`, `/cogs clear`
 
 Jobs:
 
@@ -138,6 +139,10 @@ Service:
 - `/jobs status`
 - `/jobs run`
 - `/jobs stop`
+- `/cogs template`
+- `/cogs status`
+- `/cogs set <sku> <cogs>`
+- `/cogs clear`
 - `/models`
 
 ## Запуск
@@ -299,6 +304,7 @@ Cron:
 - `Stocks`
 - `Performance Campaigns`
 - `Performance Stats`
+- `COGS Mapping`
 - `Daily Summary`
 - `Alerts`
 - `Daily SKU`
@@ -313,6 +319,7 @@ Cron:
 - `stocks`: `Название | SKU | Offer ID | Остаток`
 - `performance_campaigns`: `Campaign ID | Campaign Name | State | Adv Object Type | Payment Type | From Date | To Date | Budget | Daily Budget | Weekly Budget | Placement | Product Campaign Mode | Created At | Updated At`
 - `performance_stats`: `Date | Campaign ID | Campaign Name | SKU | Product Name | Price | Impressions | Clicks | CTR | Add To Cart | Avg CPC | Spend | Orders | Revenue | Model Orders | Model Revenue | DRR | Ordered Amount | Total DRR | Added At`
+- `cogs_mapping`: `SKU | Offer ID | Product Name | COGS | Logistics To MP | Notes`
 - `daily_summary`: `Дата | Выручка | Выплата Ozon | Заказы | Комиссия | Логистика | Реклама | Себестоимость | Прибыль | Маржа | ДРР`
 - `alerts`: `Дата | Уровень | Тип | Сообщение`
 

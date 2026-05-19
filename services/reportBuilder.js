@@ -149,12 +149,20 @@ function buildPnlSummaryRows(rows, { dateFrom, dateTo }) {
   const ordersModelByDate = sumByDate(rows, dates, row => row.modelOrders);
   const salesModelByDate = sumByDate(rows, dates, row => row.modelRevenue);
   const profitByDate = buildDateMap(dates, () => 0);
-  const cogsByDate = buildDateMap(dates, () => 0);
-  const deliveryByDate = buildDateMap(dates, () => 0);
+  const cogsByDate = sumByDate(rows, dates, row => toNumber(row.cogs) * toNumber(row.orders));
+  const deliveryByDate = sumByDate(rows, dates, row => toNumber(row.logisticsToMp) * toNumber(row.orders));
   const grossProfitByDate = buildDateMap(dates, () => 0);
 
   for (const date of dates) {
-    profitByDate.set(date, round2((salesByDate.get(date) || 0) - (adsByDate.get(date) || 0)));
+    profitByDate.set(
+      date,
+      round2(
+        (salesByDate.get(date) || 0) -
+          (adsByDate.get(date) || 0) -
+          (cogsByDate.get(date) || 0) -
+          (deliveryByDate.get(date) || 0)
+      )
+    );
     grossProfitByDate.set(date, round2(profitByDate.get(date) || 0));
   }
 
@@ -183,6 +191,7 @@ function buildProductsIndex(products) {
       name: product.name ?? "",
       sku: String(product.sku ?? ""),
       price: product.price ?? "",
+      cogs: product.cogs ?? "",
       offerId: String(product.offerId ?? ""),
       stock: product.stock ?? "",
       productId: String(product.productId ?? "")
@@ -260,7 +269,7 @@ function buildSkuDashboardRows(rows, products) {
         "",
         "",
         product.price || item.priceSource || "",
-        "",
+        product.cogs || item.cogs || "",
         product.offerId || "",
         revenue,
         orders,
@@ -283,7 +292,7 @@ function buildSkuDashboardRows(rows, products) {
     });
 }
 
-function createReportBuilderService({ ozonService, performanceService, sheetsService }) {
+function createReportBuilderService({ cogsService, ozonService, performanceService, sheetsService }) {
   async function loadPerformanceRows(dateFrom, dateTo) {
     const rows = await performanceService.getStoredRowsForDateRange(dateFrom, dateTo);
 
@@ -306,24 +315,32 @@ function createReportBuilderService({ ozonService, performanceService, sheetsSer
 
   async function buildPnlReport({ dateFrom, dateTo }) {
     const rows = await loadPerformanceRows(dateFrom, dateTo);
+    const merged = cogsService ? cogsService.mergeCogsIntoPerformanceRows(rows) : { rows, missingSkus: [] };
     console.log(
       "[reportBuilder] pnl source rows",
-      rows.slice(0, 3).map(row => ({
+      merged.rows.slice(0, 3).map(row => ({
         date: row.date,
         spend: row.spend,
         adSpend: row.adSpend,
         cost: row.cost,
+        cogs: row.cogs,
+        logisticsToMp: row.logisticsToMp,
         revenue: row.revenue,
         orders: row.orders
       }))
     );
-    const report = buildPnlSummaryRows(rows, { dateFrom, dateTo });
+    const report = buildPnlSummaryRows(merged.rows, { dateFrom, dateTo });
+    const warnings = [];
+    if (merged.missingSkus.length) {
+      warnings.push("Себестоимость не задана для " + merged.missingSkus.length + " SKU");
+    }
 
     return {
       dateFrom,
       dateTo,
       headers: ["Metric", ...listDates(dateFrom, dateTo)],
       rows: report.rows,
+      warnings,
       missingFieldsNote:
         "Часть полей пока не заполнена: себестоимость, доставка, позиция, категория."
     };
@@ -334,11 +351,26 @@ function createReportBuilderService({ ozonService, performanceService, sheetsSer
       loadPerformanceRows(dateFrom, dateTo),
       loadProducts()
     ]);
+    const merged = cogsService ? cogsService.mergeCogsIntoPerformanceRows(rows) : { rows, missingSkus: [] };
+    const enrichedProducts = products.map(product => {
+      const cogsEntry =
+        (cogsService && (cogsService.getCogsBySku(product.sku) || cogsService.getCogsByOfferId(product.offerId))) ||
+        null;
+      return {
+        ...product,
+        cogs: cogsEntry ? toNumber(cogsEntry.cogs) : 0
+      };
+    });
+    const warnings = [];
+    if (merged.missingSkus.length) {
+      warnings.push("Себестоимость не задана для " + merged.missingSkus.length + " SKU");
+    }
 
     return {
       dateFrom,
       dateTo,
-      rows: buildSkuDashboardRows(rows, products),
+      rows: buildSkuDashboardRows(merged.rows, enrichedProducts),
+      warnings,
       missingFieldsNote:
         "Часть полей пока не заполнена: себестоимость, доставка, позиция, категория."
     };

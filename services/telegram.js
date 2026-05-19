@@ -54,6 +54,10 @@ function getHelpText() {
     "/report pnl в таблицу 2026-05-01 2026-05-14",
     "/report sku 2026-05-01 2026-05-14",
     "/report sku в таблицу 2026-05-01 2026-05-14",
+    "/cogs template",
+    "/cogs status",
+    "/cogs set <sku> <cogs>",
+    "/cogs clear",
     "/performance debug",
     "/ai strategy",
     "/ai quick",
@@ -517,6 +521,25 @@ function formatHealthInfo() {
   ].join("\n");
 }
 
+function parseCogsCommand(text) {
+  const normalized = text.trim().replace(/\s+/g, " ");
+  let match = normalized.match(/^\/cogs\s+(template|status|clear)$/i);
+  if (match) {
+    return { type: match[1].toLowerCase() };
+  }
+
+  match = normalized.match(/^\/cogs\s+set\s+(\S+)\s+([0-9]+(?:[.,][0-9]+)?)$/i);
+  if (match) {
+    return {
+      type: "set",
+      sku: match[1],
+      cogs: match[2]
+    };
+  }
+
+  return null;
+}
+
 function formatStoredRowsStatus(status) {
   return [
     "Performance rows status",
@@ -536,6 +559,8 @@ function formatPnlReport(report) {
     "",
     ...previewRows.map(row => row.join(" | ")),
     "",
+    ...(report.warnings || []),
+    "",
     report.missingFieldsNote
   ].join("\n");
 }
@@ -553,6 +578,7 @@ function formatSkuReport(report) {
       [
         "Название: " + (row[0] || "-"),
         "Артикул: " + (row[5] || "-"),
+        "Себ: " + (row[4] || 0),
         "Рубли: " + (row[6] || 0),
         "Штуки: " + (row[7] || 0),
         "Реклама: " + (row[9] || 0),
@@ -563,8 +589,29 @@ function formatSkuReport(report) {
       ].join("\n")
     ),
     "",
+    ...(report.warnings || []),
     report.missingFieldsNote
   ].join("\n\n");
+}
+
+function formatCogsTemplate() {
+  return [
+    "COGS Mapping columns:",
+    "SKU",
+    "Offer ID",
+    "Product Name",
+    "COGS",
+    "Logistics To MP",
+    "Notes"
+  ].join("\n");
+}
+
+function formatCogsStatus(status) {
+  return [
+    "COGS status",
+    "Configured SKUs: " + status.totalConfiguredSkus,
+    "Total items: " + status.totalItems
+  ].join("\n");
 }
 
 function delay(ms) {
@@ -590,6 +637,7 @@ async function sendLongMessage(bot, chatId, text) {
 function startTelegramBot({
   analyticsService,
   alertsService,
+  cogsService,
   dailySummaryService,
   decisionEngine,
   performanceService,
@@ -1364,6 +1412,34 @@ function startTelegramBot({
       }
     }
 
+    const cogsCommand = parseCogsCommand(text);
+
+    if (cogsCommand) {
+      try {
+        if (cogsCommand.type === "template") {
+          await sendLongMessage(tgBot, chatId, formatCogsTemplate());
+          return;
+        }
+        if (cogsCommand.type === "status") {
+          await sendLongMessage(tgBot, chatId, formatCogsStatus(cogsService.getStatus()));
+          return;
+        }
+        if (cogsCommand.type === "set") {
+          const item = cogsService.setSku(cogsCommand.sku, cogsCommand.cogs);
+          await tgBot.sendMessage(chatId, "COGS сохранен: " + item.sku + " -> " + item.cogs);
+          return;
+        }
+        if (cogsCommand.type === "clear") {
+          cogsService.clear();
+          await tgBot.sendMessage(chatId, "Локальные COGS очищены.");
+          return;
+        }
+      } catch (err) {
+        await tgBot.sendMessage(chatId, "Ошибка COGS: " + err.message);
+        return;
+      }
+    }
+
     const aiCommand = parseAiCommand(text);
 
     if (aiCommand) {
@@ -1462,6 +1538,7 @@ module.exports = {
   parseAiCommand,
   parseAlertsCommand,
   parseAnalyticsCommand,
+  parseCogsCommand,
   parseDailyCommand,
   parseOzonProductsCommand,
   parseReportCommand,

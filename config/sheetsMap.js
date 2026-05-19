@@ -142,6 +142,12 @@ const sheetsMap = {
     },
     mode: "replace"
   },
+  cogs_mapping: {
+    logicalName: "cogs_mapping",
+    tabName: "COGS Mapping",
+    columns: ["SKU", "Offer ID", "Product Name", "COGS", "Logistics To MP", "Notes"],
+    mode: "replace"
+  },
   daily_summary: {
     logicalName: "daily_summary",
     tabName: "Daily Summary",
