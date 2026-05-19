@@ -10,8 +10,9 @@ const {
   createReportBuilderService,
   SKU_DASHBOARD_HEADERS
 } = require("../services/reportBuilder");
-const { parseCogsCommand, parseReportCommand } = require("../services/telegram");
+const { parseCogsCommand, parseReportCommand, parseSalesCommand } = require("../services/telegram");
 const { createCogsService } = require("../services/cogs");
+const { createSalesFactsService } = require("../services/salesFacts");
 
 async function run() {
   const performanceRows = [
@@ -198,7 +199,7 @@ async function run() {
     350,
     170,
     10,
-    "",
+    1530,
     1400,
     1400,
     70,
@@ -243,13 +244,24 @@ async function run() {
     sku: "SKU123",
     cogs: "199.50"
   });
+  assert.deepStrictEqual(parseSalesCommand("/sales status"), { type: "status" });
+  assert.deepStrictEqual(parseSalesCommand("/sales clear"), { type: "clear" });
+  assert.deepStrictEqual(parseSalesCommand("/sales fetch 2026-05-13 2026-05-14"), {
+    type: "fetch",
+    dateFrom: "2026-05-13",
+    dateTo: "2026-05-14"
+  });
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ollama-bot-cogs-"));
   const cogsService = createCogsService({
     filePath: path.join(tempDir, "cogs.json")
   });
+  const salesFactsService = createSalesFactsService({
+    filePath: path.join(tempDir, "sales-rows.json")
+  });
 
   cogsService.setSku("111", 123.45, { logisticsToMp: 10, productName: "Товар 1" });
+  cogsService.setSku("222", 50, { logisticsToMp: 5, productName: "Товар 2" });
   assert.deepStrictEqual(cogsService.getCogsBySku("111"), {
     sku: "111",
     offerId: "",
@@ -259,15 +271,94 @@ async function run() {
     notes: ""
   });
   assert.deepStrictEqual(cogsService.getStatus(), {
-    totalConfiguredSkus: 1,
-    totalItems: 1
+    totalConfiguredSkus: 2,
+    totalItems: 2
   });
+  assert.deepStrictEqual(
+    salesFactsService.saveSalesRows(
+      [
+        {
+          date: "13.05.2026",
+          sku: "111",
+          offerId: "offer-111",
+          productName: "Товар 1",
+          quantity: "3",
+          revenue: "4567,89",
+          price: "1522,63",
+          postingNumber: "posting-1",
+          status: "delivered"
+        },
+        {
+          date: "2026-05-14",
+          sku: "222",
+          offerId: "offer-222",
+          productName: "Товар 2",
+          quantity: 2,
+          revenue: 2000,
+          price: 1000,
+          postingNumber: "posting-2",
+          status: "delivered"
+        },
+        {
+          date: "2026-05-13",
+          sku: "111",
+          offerId: "offer-111",
+          productName: "Товар 1",
+          quantity: 3,
+          revenue: 4567.89,
+          price: 1522.63,
+          postingNumber: "posting-1",
+          status: "delivered"
+        }
+      ],
+      {
+        dateFrom: "2026-05-13",
+        dateTo: "2026-05-14",
+        savedAt: "2026-05-15T00:00:00.000Z"
+      }
+    ),
+    {
+      totalStoredRows: 2,
+      rowsSaved: 3
+    }
+  );
+  assert.deepStrictEqual(salesFactsService.getSalesRowsStatus(), {
+    totalStoredRows: 2,
+    minDate: "2026-05-13",
+    maxDate: "2026-05-14",
+    uniqueSkus: 2
+  });
+  assert.deepStrictEqual(
+    salesFactsService.getSalesRowsForDateRange("2026-05-13", "2026-05-14").map(row => row.sku),
+    ["111", "222"]
+  );
+  assert.deepStrictEqual(
+    salesFactsService.aggregateSalesByDate(
+      salesFactsService.getSalesRowsForDateRange("2026-05-13", "2026-05-14")
+    ),
+    [
+      { date: "2026-05-13", quantity: 3, revenue: 4567.89, orders: 1 },
+      { date: "2026-05-14", quantity: 2, revenue: 2000, orders: 1 }
+    ]
+  );
+  assert.deepStrictEqual(
+    salesFactsService.aggregateSalesBySku(
+      salesFactsService.getSalesRowsForDateRange("2026-05-13", "2026-05-14")
+    ),
+    [
+      { sku: "111", offerId: "offer-111", productName: "Товар 1", quantity: 3, revenue: 4567.89 },
+      { sku: "222", offerId: "offer-222", productName: "Товар 2", quantity: 2, revenue: 2000 }
+    ]
+  );
 
   const capturedWrites = [];
   const reportBuilderService = createReportBuilderService({
     cogsService,
     ozonService: {
-      getProducts: async () => [{ name: "Товар 1", sku: "111", offerId: "offer-111", price: 999 }]
+      getProducts: async () => [
+        { name: "Товар 1", sku: "111", offerId: "offer-111", price: 999 },
+        { name: "Товар 2", sku: "222", offerId: "offer-222", price: 555 }
+      ]
     },
     performanceService: {
       getStoredRowsForDateRange: async () => [
@@ -279,9 +370,19 @@ async function run() {
           revenue: "4567,89",
           spend: "1987,68",
           orders: "3"
+        },
+        {
+          date: "2026-05-14",
+          sku: "222",
+          productName: "Товар 2",
+          offerId: "offer-222",
+          revenue: "0",
+          spend: "100,00",
+          orders: "0"
         }
       ]
     },
+    salesFactsService,
     sheetsService: {
       clearAndWriteMappedRows: async (mappingKey, rows, options = {}) => {
         capturedWrites.push({
@@ -329,7 +430,32 @@ async function run() {
     "",
     1987.68,
     43.51,
+    2179.86,
+    0,
+    0,
+    0,
+    0,
+    0,
+    ""
+  ]);
+  assert.deepStrictEqual(capturedWrites[1].rows[1], [
+    "Товар 2",
     "",
+    "",
+    555,
+    50,
+    "offer-222",
+    2000,
+    2,
+    1000,
+    100,
+    5,
+    0,
+    0,
+    "",
+    100,
+    5,
+    1790,
     0,
     0,
     0,
@@ -339,9 +465,12 @@ async function run() {
   ]);
 
   const pnlRows = capturedWrites[0].rows;
-  assert.deepStrictEqual(pnlRows.find(row => row[0] === "Себес"), ["Себес", 370.35, 0]);
-  assert.deepStrictEqual(pnlRows.find(row => row[0] === "Доставка до МП"), ["Доставка до МП", 30, 0]);
-  assert.deepStrictEqual(pnlRows.find(row => row[0] === "Прибыль"), ["Прибыль", 2179.86, 0]);
+  assert.deepStrictEqual(pnlRows.find(row => row[0] === "Заказы"), ["Заказы", 3, 2]);
+  assert.deepStrictEqual(pnlRows.find(row => row[0] === "Продажи"), ["Продажи", 4567.89, 2000]);
+  assert.deepStrictEqual(pnlRows.find(row => row[0] === "Реклама"), ["Реклама", 1987.68, 100]);
+  assert.deepStrictEqual(pnlRows.find(row => row[0] === "Себес"), ["Себес", 370.35, 100]);
+  assert.deepStrictEqual(pnlRows.find(row => row[0] === "Доставка до МП"), ["Доставка до МП", 30, 10]);
+  assert.deepStrictEqual(pnlRows.find(row => row[0] === "Прибыль"), ["Прибыль", 2179.86, 1790]);
 
   console.log("Report builder checks passed");
 }

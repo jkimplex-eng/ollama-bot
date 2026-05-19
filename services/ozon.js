@@ -80,6 +80,71 @@ function createOzonService({ clientId, apiKey }) {
     });
   }
 
+  function formatDate(value) {
+    const normalized = String(value || "").trim();
+    const isoMatch = normalized.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (isoMatch) {
+      return isoMatch[1] + "-" + isoMatch[2] + "-" + isoMatch[3];
+    }
+    const parsed = new Date(normalized);
+    return Number.isNaN(parsed.getTime()) ? normalized.slice(0, 10) : parsed.toISOString().slice(0, 10);
+  }
+
+  function toNumber(value) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : 0;
+  }
+
+  function normalizePostingProduct(product, fallback = {}) {
+    const quantity = toNumber(product.quantity || product.qty || 1) || 1;
+    const price = toNumber(
+      product.price ||
+        product.price_with_discount ||
+        product.payout ||
+        product.item_price ||
+        0
+    );
+
+    return {
+      sku: String(product.sku || product.item?.sku || fallback.sku || ""),
+      offerId: String(product.offer_id || product.offerId || fallback.offerId || ""),
+      productName: String(product.name || product.product_name || product.item?.name || fallback.name || ""),
+      quantity,
+      price,
+      revenue: Number((price * quantity).toFixed(2))
+    };
+  }
+
+  function normalizePostingSalesRows(item, scheme) {
+    const date = formatDate(
+      item.in_process_at ||
+        item.created_at ||
+        item.shipment_date ||
+        item.delivering_date ||
+        item.analytics_data?.delivery_date_begin
+    );
+    const postingNumber = item.posting_number || item.order_id || "";
+    const status = item.status || "";
+    const products = Array.isArray(item.products) ? item.products : [];
+
+    return products.map(product => {
+      const normalized = normalizePostingProduct(product);
+      return {
+        date,
+        sku: normalized.sku,
+        offerId: normalized.offerId,
+        productName: normalized.productName,
+        quantity: normalized.quantity,
+        revenue: normalized.revenue,
+        price: normalized.price,
+        postingNumber,
+        orderId: String(item.order_id || postingNumber || ""),
+        status,
+        scheme
+      };
+    });
+  }
+
   async function getProductInfo(products) {
     if (!products.length) return [];
 
@@ -215,11 +280,37 @@ function createOzonService({ clientId, apiKey }) {
     };
   }
 
+  async function getSalesFacts({ dateFrom, dateTo }) {
+    const salesRows = [];
+
+    const fbo = await getFboPostings({ dateFrom, dateTo, limit: 1000 });
+    for (const item of fbo.postings) {
+      salesRows.push(...normalizePostingSalesRows(item, "FBO"));
+    }
+
+    let lastId = "";
+    let hasNext = true;
+    while (hasNext) {
+      const fbs = await getFbsPostings({ dateFrom, dateTo, lastId, limit: 1000 });
+      for (const item of fbs.postings) {
+        salesRows.push(...normalizePostingSalesRows(item, "FBS"));
+      }
+      hasNext = Boolean(fbs.has_next && fbs.last_id && fbs.last_id !== lastId);
+      lastId = fbs.last_id || "";
+      if (!hasNext) {
+        break;
+      }
+    }
+
+    return salesRows;
+  }
+
   return {
     getFboPostings,
     getFbsPostings,
     getFinanceTransactions,
     getProducts,
+    getSalesFacts,
     getStocks
   };
 }

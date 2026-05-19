@@ -141,16 +141,17 @@ function getAdvertisingSpend(row) {
   return toNumber(row.spend || row.adSpend || row.cost || 0);
 }
 
-function buildPnlSummaryRows(rows, { dateFrom, dateTo }) {
+function buildPnlSummaryRows(rows, { dateFrom, dateTo, salesRows = [] }) {
   const dates = listDates(dateFrom, dateTo);
-  const ordersByDate = sumByDate(rows, dates, row => row.orders);
-  const salesByDate = sumByDate(rows, dates, row => row.revenue);
+  const sourceRows = salesRows.length ? salesRows : rows;
+  const ordersByDate = sumByDate(sourceRows, dates, row => row.quantity ?? row.orders);
+  const salesByDate = sumByDate(sourceRows, dates, row => row.revenue);
   const adsByDate = sumByDate(rows, dates, getAdvertisingSpend);
   const ordersModelByDate = sumByDate(rows, dates, row => row.modelOrders);
   const salesModelByDate = sumByDate(rows, dates, row => row.modelRevenue);
   const profitByDate = buildDateMap(dates, () => 0);
-  const cogsByDate = sumByDate(rows, dates, row => toNumber(row.cogs) * toNumber(row.orders));
-  const deliveryByDate = sumByDate(rows, dates, row => toNumber(row.logisticsToMp) * toNumber(row.orders));
+  const cogsByDate = sumByDate(sourceRows, dates, row => toNumber(row.cogs) * toNumber(row.quantity ?? row.orders));
+  const deliveryByDate = sumByDate(sourceRows, dates, row => toNumber(row.logisticsToMp) * toNumber(row.quantity ?? row.orders));
   const grossProfitByDate = buildDateMap(dates, () => 0);
 
   for (const date of dates) {
@@ -209,9 +210,10 @@ function buildProductsIndex(products) {
   return { bySku, byOfferId };
 }
 
-function buildSkuDashboardRows(rows, products) {
+function buildSkuDashboardRows(rows, products, salesRows = []) {
   const productIndex = buildProductsIndex(products);
   const bySku = new Map();
+  const hasSalesFacts = salesRows.length > 0;
 
   for (const row of rows) {
     const sku = String(row.sku || "");
@@ -230,20 +232,58 @@ function buildSkuDashboardRows(rows, products) {
       modelRevenue: 0,
       impressions: 0,
       clicks: 0,
-      addToCart: 0
+      addToCart: 0,
+      cogsPerUnit: 0,
+      logisticsToMpPerUnit: 0
     };
 
     current.name = current.name || row.productName || "";
     current.priceSource = current.priceSource || row.price || "";
     current.spend += toNumber(row.spend);
-    current.orders += toNumber(row.orders);
-    current.revenue += toNumber(row.revenue);
+    if (!hasSalesFacts) {
+      current.orders += toNumber(row.orders);
+      current.revenue += toNumber(row.revenue);
+      current.avgOrderPriceTotal += toNumber(row.price) * toNumber(row.orders);
+    }
     current.modelOrders += toNumber(row.modelOrders);
     current.modelRevenue += toNumber(row.modelRevenue);
     current.impressions += toNumber(row.impressions);
     current.clicks += toNumber(row.clicks);
     current.addToCart += toNumber(row.addToCart);
-    current.avgOrderPriceTotal += toNumber(row.price) * toNumber(row.orders);
+
+    bySku.set(sku, current);
+  }
+
+  for (const row of salesRows) {
+    const sku = String(row.sku || row.offerId || "");
+    if (!sku) continue;
+
+    const current = bySku.get(sku) || {
+      sku,
+      name: row.productName || "",
+      offerId: row.offerId || "",
+      priceSource: row.price ?? "",
+      spend: 0,
+      orders: 0,
+      avgOrderPriceTotal: 0,
+      revenue: 0,
+      modelOrders: 0,
+      modelRevenue: 0,
+      impressions: 0,
+      clicks: 0,
+      addToCart: 0,
+      cogsPerUnit: 0,
+      logisticsToMpPerUnit: 0
+    };
+
+    current.name = current.name || row.productName || "";
+    current.offerId = current.offerId || row.offerId || "";
+    current.priceSource = current.priceSource || row.price || "";
+    current.orders += toNumber(row.quantity);
+    current.revenue += toNumber(row.revenue);
+    current.avgOrderPriceTotal += toNumber(row.price) * toNumber(row.quantity);
+    current.cogsPerUnit = current.cogsPerUnit || toNumber(row.cogs);
+    current.logisticsToMpPerUnit = current.logisticsToMpPerUnit || toNumber(row.logisticsToMp);
 
     bySku.set(sku, current);
   }
@@ -263,14 +303,20 @@ function buildSkuDashboardRows(rows, products) {
       const avgModelPrice = modelOrders ? round2(item.modelRevenue / modelOrders) : "";
       const drr = revenue ? round2((spend / revenue) * 100) : 0;
       const ctr = item.impressions ? round2((item.clicks / item.impressions) * 100) : 0;
+      const grossProfit = round2(
+        revenue -
+          spend -
+          toNumber(item.cogsPerUnit) * orders -
+          toNumber(item.logisticsToMpPerUnit) * orders
+      );
 
       return [
         product.name || item.name || "",
         "",
         "",
         product.price || item.priceSource || "",
-        product.cogs || item.cogs || "",
-        product.offerId || "",
+        product.cogs || item.cogsPerUnit || "",
+        product.offerId || item.offerId || "",
         revenue,
         orders,
         avgPrice,
@@ -281,7 +327,7 @@ function buildSkuDashboardRows(rows, products) {
         avgModelPrice,
         spend,
         drr,
-        "",
+        grossProfit,
         item.impressions,
         item.impressions,
         item.clicks,
@@ -292,7 +338,7 @@ function buildSkuDashboardRows(rows, products) {
     });
 }
 
-function createReportBuilderService({ cogsService, ozonService, performanceService, sheetsService }) {
+function createReportBuilderService({ cogsService, ozonService, performanceService, salesFactsService, sheetsService }) {
   async function loadPerformanceRows(dateFrom, dateTo) {
     const rows = await performanceService.getStoredRowsForDateRange(dateFrom, dateTo);
 
@@ -316,9 +362,11 @@ function createReportBuilderService({ cogsService, ozonService, performanceServi
   async function buildPnlReport({ dateFrom, dateTo }) {
     const rows = await loadPerformanceRows(dateFrom, dateTo);
     const merged = cogsService ? cogsService.mergeCogsIntoPerformanceRows(rows) : { rows, missingSkus: [] };
+    const salesRowsRaw = salesFactsService ? salesFactsService.getSalesRowsForDateRange(dateFrom, dateTo) : [];
+    const salesRows = cogsService ? cogsService.mergeCogsIntoPerformanceRows(salesRowsRaw).rows : salesRowsRaw;
     console.log(
       "[reportBuilder] pnl source rows",
-      merged.rows.slice(0, 3).map(row => ({
+      (salesRows.length ? salesRows : merged.rows).slice(0, 3).map(row => ({
         date: row.date,
         spend: row.spend,
         adSpend: row.adSpend,
@@ -326,13 +374,17 @@ function createReportBuilderService({ cogsService, ozonService, performanceServi
         cogs: row.cogs,
         logisticsToMp: row.logisticsToMp,
         revenue: row.revenue,
-        orders: row.orders
+        orders: row.orders,
+        quantity: row.quantity
       }))
     );
-    const report = buildPnlSummaryRows(merged.rows, { dateFrom, dateTo });
+    const report = buildPnlSummaryRows(merged.rows, { dateFrom, dateTo, salesRows });
     const warnings = [];
     if (merged.missingSkus.length) {
       warnings.push("Себестоимость не задана для " + merged.missingSkus.length + " SKU");
+    }
+    if (!salesRows.length) {
+      warnings.push("Нет sales facts за период. Используется только Performance.");
     }
 
     return {
@@ -352,6 +404,8 @@ function createReportBuilderService({ cogsService, ozonService, performanceServi
       loadProducts()
     ]);
     const merged = cogsService ? cogsService.mergeCogsIntoPerformanceRows(rows) : { rows, missingSkus: [] };
+    const salesRowsRaw = salesFactsService ? salesFactsService.getSalesRowsForDateRange(dateFrom, dateTo) : [];
+    const salesRows = cogsService ? cogsService.mergeCogsIntoPerformanceRows(salesRowsRaw).rows : salesRowsRaw;
     const enrichedProducts = products.map(product => {
       const cogsEntry =
         (cogsService && (cogsService.getCogsBySku(product.sku) || cogsService.getCogsByOfferId(product.offerId))) ||
@@ -365,11 +419,14 @@ function createReportBuilderService({ cogsService, ozonService, performanceServi
     if (merged.missingSkus.length) {
       warnings.push("Себестоимость не задана для " + merged.missingSkus.length + " SKU");
     }
+    if (!salesRows.length) {
+      warnings.push("Нет sales facts за период. Используется только Performance.");
+    }
 
     return {
       dateFrom,
       dateTo,
-      rows: buildSkuDashboardRows(merged.rows, enrichedProducts),
+      rows: buildSkuDashboardRows(merged.rows, enrichedProducts, salesRows),
       warnings,
       missingFieldsNote:
         "Часть полей пока не заполнена: себестоимость, доставка, позиция, категория."

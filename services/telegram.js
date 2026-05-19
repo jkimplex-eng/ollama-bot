@@ -58,6 +58,9 @@ function getHelpText() {
     "/cogs status",
     "/cogs set <sku> <cogs>",
     "/cogs clear",
+    "/sales fetch 2026-05-13 2026-05-14",
+    "/sales status",
+    "/sales clear",
     "/performance debug",
     "/ai strategy",
     "/ai quick",
@@ -540,6 +543,25 @@ function parseCogsCommand(text) {
   return null;
 }
 
+function parseSalesCommand(text) {
+  const normalized = text.trim().replace(/\s+/g, " ");
+  let match = normalized.match(/^\/sales\s+(status|clear)$/i);
+  if (match) {
+    return { type: match[1].toLowerCase() };
+  }
+
+  match = normalized.match(/^\/sales\s+fetch\s+(\d{4}-\d{2}-\d{2})\s+(\d{4}-\d{2}-\d{2})$/i);
+  if (match) {
+    return {
+      type: "fetch",
+      dateFrom: match[1],
+      dateTo: match[2]
+    };
+  }
+
+  return null;
+}
+
 function formatStoredRowsStatus(status) {
   return [
     "Performance rows status",
@@ -614,6 +636,16 @@ function formatCogsStatus(status) {
   ].join("\n");
 }
 
+function formatSalesStatus(status) {
+  return [
+    "Sales facts status",
+    "Total stored rows: " + status.totalStoredRows,
+    "Min date: " + (status.minDate || "-"),
+    "Max date: " + (status.maxDate || "-"),
+    "Unique SKUs: " + status.uniqueSkus
+  ].join("\n");
+}
+
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -642,6 +674,7 @@ function startTelegramBot({
   decisionEngine,
   performanceService,
   reportBuilderService,
+  salesFactsService,
   token,
   jobsService,
   ollamaService,
@@ -1440,6 +1473,42 @@ function startTelegramBot({
       }
     }
 
+    const salesCommand = parseSalesCommand(text);
+
+    if (salesCommand) {
+      try {
+        if (salesCommand.type === "status") {
+          await sendLongMessage(tgBot, chatId, formatSalesStatus(salesFactsService.getSalesRowsStatus()));
+          return;
+        }
+        if (salesCommand.type === "clear") {
+          salesFactsService.clearSalesRows();
+          await tgBot.sendMessage(chatId, "Локальные sales facts очищены.");
+          return;
+        }
+        if (salesCommand.type === "fetch") {
+          await tgBot.sendMessage(chatId, "Запрашиваю Ozon sales facts...");
+          const rows = await ozonService.getSalesFacts({
+            dateFrom: salesCommand.dateFrom + "T00:00:00+03:00",
+            dateTo: salesCommand.dateTo + "T23:59:59.999+03:00"
+          });
+          const result = salesFactsService.saveSalesRows(rows, {
+            dateFrom: salesCommand.dateFrom,
+            dateTo: salesCommand.dateTo,
+            savedAt: new Date().toISOString()
+          });
+          await tgBot.sendMessage(
+            chatId,
+            "Сохранил sales facts: " + result.rowsSaved + " строк. Всего: " + result.totalStoredRows
+          );
+          return;
+        }
+      } catch (err) {
+        await tgBot.sendMessage(chatId, "Ошибка sales facts: " + err.message);
+        return;
+      }
+    }
+
     const aiCommand = parseAiCommand(text);
 
     if (aiCommand) {
@@ -1539,6 +1608,7 @@ module.exports = {
   parseAlertsCommand,
   parseAnalyticsCommand,
   parseCogsCommand,
+  parseSalesCommand,
   parseDailyCommand,
   parseOzonProductsCommand,
   parseReportCommand,
