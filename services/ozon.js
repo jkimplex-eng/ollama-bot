@@ -25,6 +25,14 @@ function getPageSignature(postings) {
   });
 }
 
+function normalizeMoney(value) {
+  if (value === null || value === undefined || value === "") {
+    return 0;
+  }
+  const parsed = Number(String(value).replace(/\s/g, "").replace(",", "."));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 function createOzonService({ clientId, apiKey }) {
   async function requestOzon(path, body) {
     if (!clientId || !apiKey) {
@@ -126,31 +134,124 @@ function createOzonService({ clientId, apiKey }) {
   }
 
   function toNumber(value) {
-    const number = Number(value);
+    const number = normalizeMoney(value);
     return Number.isFinite(number) ? number : 0;
   }
 
-  function normalizePostingProduct(product, fallback = {}) {
-    const quantity = toNumber(product.quantity || product.qty || 1) || 1;
-    const price = toNumber(
-      product.price ||
-        product.price_with_discount ||
-        product.payout ||
-        product.item_price ||
-        0
+  function findFinancialProduct(product, posting) {
+    const financialProducts = Array.isArray(posting?.financial_data?.products)
+      ? posting.financial_data.products
+      : [];
+    if (!financialProducts.length) {
+      return null;
+    }
+
+    const productSku = String(product?.sku || product?.item?.sku || "");
+    const offerId = String(product?.offer_id || product?.offerId || "");
+    const productId = String(product?.product_id || product?.productId || "");
+
+    return (
+      financialProducts.find(item => String(item.sku || item?.item?.sku || "") === productSku && productSku) ||
+      financialProducts.find(item => String(item.offer_id || item.offerId || "") === offerId && offerId) ||
+      financialProducts.find(item => String(item.product_id || item.productId || "") === productId && productId) ||
+      null
     );
+  }
+
+  function getRawSalesDebug(product, posting, financialProduct) {
+    return {
+      postingNumber: posting?.posting_number || posting?.order_id || "",
+      offerId: product?.offer_id || product?.offerId || financialProduct?.offer_id || "",
+      sku: product?.sku || product?.item?.sku || financialProduct?.sku || "",
+      productName:
+        product?.name ||
+        product?.product_name ||
+        product?.item?.name ||
+        financialProduct?.name ||
+        "",
+      quantity:
+        product?.quantity ??
+        product?.qty ??
+        financialProduct?.quantity ??
+        financialProduct?.qty ??
+        1,
+      price: product?.price,
+      itemPrice: product?.item?.price,
+      priceWithDiscount: product?.price_with_discount ?? financialProduct?.price_with_discount,
+      finalPrice: product?.final_price ?? financialProduct?.final_price,
+      totalDiscountedPrice: product?.total_discounted_price ?? financialProduct?.total_discounted_price,
+      actionsPrice: product?.actions_price ?? financialProduct?.actions_price,
+      payout: product?.payout ?? financialProduct?.payout,
+      itemFinancialData: product?.financial_data || null,
+      postingFinancialProduct: financialProduct || null,
+      commissionAmount:
+        product?.commission_amount ??
+        financialProduct?.commission_amount ??
+        posting?.financial_data?.commission_amount
+    };
+  }
+
+  function resolveRevenueAndPrice(product, quantity, financialProduct) {
+    const totalCandidates = [
+      product?.total_discounted_price,
+      financialProduct?.total_discounted_price,
+      product?.actions_price,
+      financialProduct?.actions_price,
+      product?.payout,
+      financialProduct?.payout
+    ]
+      .map(normalizeMoney)
+      .filter(value => value > 0);
+
+    if (totalCandidates.length) {
+      const revenue = totalCandidates[0];
+      return {
+        revenue: Number(revenue.toFixed(2)),
+        price: quantity > 0 ? Number((revenue / quantity).toFixed(2)) : 0
+      };
+    }
+
+    const unitCandidates = [
+      product?.price,
+      product?.item?.price,
+      product?.price_with_discount,
+      financialProduct?.price_with_discount,
+      product?.final_price,
+      financialProduct?.final_price,
+      product?.item_price,
+      financialProduct?.item_price,
+      financialProduct?.price
+    ]
+      .map(normalizeMoney)
+      .filter(value => value > 0);
+
+    const unitPrice = unitCandidates[0] || 0;
+    const revenue = unitPrice * quantity;
+    return {
+      revenue: Number(revenue.toFixed(2)),
+      price: Number(unitPrice.toFixed(2))
+    };
+  }
+
+  function normalizePostingProduct(product, posting, fallback = {}, debugLogger = null) {
+    const quantity = toNumber(product.quantity || product.qty || 1) || 1;
+    const financialProduct = findFinancialProduct(product, posting);
+    if (debugLogger) {
+      debugLogger(getRawSalesDebug(product, posting, financialProduct));
+    }
+    const resolved = resolveRevenueAndPrice(product, quantity, financialProduct);
 
     return {
       sku: String(product.sku || product.item?.sku || fallback.sku || ""),
       offerId: String(product.offer_id || product.offerId || fallback.offerId || ""),
       productName: String(product.name || product.product_name || product.item?.name || fallback.name || ""),
       quantity,
-      price,
-      revenue: Number((price * quantity).toFixed(2))
+      price: resolved.price,
+      revenue: resolved.revenue
     };
   }
 
-  function normalizePostingSalesRows(item, scheme) {
+  function normalizePostingSalesRows(item, scheme, debugLogger = null) {
     const date = formatDate(
       item.in_process_at ||
         item.created_at ||
@@ -163,7 +264,7 @@ function createOzonService({ clientId, apiKey }) {
     const products = Array.isArray(item.products) ? item.products : [];
 
     return products.map(product => {
-      const normalized = normalizePostingProduct(product);
+      const normalized = normalizePostingProduct(product, item, {}, debugLogger);
       return {
         date,
         sku: normalized.sku,
@@ -327,6 +428,15 @@ function createOzonService({ clientId, apiKey }) {
     const seenPageSignatures = new Set();
     let safetyStopped = false;
     let stopReason = "";
+    let debugLoggedItems = 0;
+
+    function debugSalesItem(rawItem) {
+      if (debugLoggedItems >= 3) {
+        return;
+      }
+      debugLoggedItems += 1;
+      console.log("[ozon] sales raw item", rawItem);
+    }
 
     function buildResult() {
       const uniqueSkus = new Set(salesRows.map(row => row.sku).filter(Boolean)).size;
@@ -375,7 +485,7 @@ function createOzonService({ clientId, apiKey }) {
           if (postingId) {
             seenPostingIds.add(postingId);
           }
-          const normalizedRows = normalizePostingSalesRows(item, scheme);
+          const normalizedRows = normalizePostingSalesRows(item, scheme, debugSalesItem);
           salesRows.push(...normalizedRows);
           uniqueRowsAdded += normalizedRows.length;
         }

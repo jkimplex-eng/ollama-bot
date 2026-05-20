@@ -424,6 +424,93 @@ async function run() {
     global.fetch = originalFetch;
   }
 
+  const originalFetchWithRevenue = global.fetch;
+  global.fetch = async (url, options) => {
+    if (url.endsWith("/v3/posting/fbo/list")) {
+      return {
+        ok: true,
+        json: async () => ({
+          result: {
+            postings: [
+              {
+                posting_number: "posting-revenue-1",
+                status: "delivered",
+                in_process_at: "2026-05-13T10:00:00Z",
+                financial_data: {
+                  products: [
+                    {
+                      sku: "111",
+                      offer_id: "offer-111",
+                      total_discounted_price: "1987,68"
+                    }
+                  ]
+                },
+                products: [
+                  {
+                    sku: "111",
+                    offer_id: "offer-111",
+                    name: "Товар 1",
+                    quantity: 2,
+                    final_price: "0",
+                    price_with_discount: ""
+                  }
+                ]
+              }
+            ],
+            has_next: false
+          }
+        })
+      };
+    }
+
+    if (url.endsWith("/v3/posting/fbs/list")) {
+      return {
+        ok: true,
+        json: async () => ({
+          result: {
+            postings: [],
+            has_next: false,
+            last_id: ""
+          }
+        })
+      };
+    }
+
+    throw new Error("Unexpected fetch call: " + url);
+  };
+
+  try {
+    const ozonService = createOzonService({
+      clientId: "test-client",
+      apiKey: "test-key"
+    });
+    const revenueResult = await ozonService.getSalesFacts({
+      dateFrom: "2026-05-13T00:00:00+03:00",
+      dateTo: "2026-05-14T23:59:59.999+03:00"
+    });
+    assert.deepStrictEqual(revenueResult.rows[0], {
+      date: "2026-05-13",
+      sku: "111",
+      offerId: "offer-111",
+      productName: "Товар 1",
+      quantity: 2,
+      revenue: 1987.68,
+      price: 993.84,
+      postingNumber: "posting-revenue-1",
+      orderId: "posting-revenue-1",
+      status: "delivered",
+      scheme: "FBO"
+    });
+    assert.deepStrictEqual(revenueResult.summary, {
+      rows: 1,
+      uniqueSkus: 1,
+      totalRevenue: 1987.68,
+      totalQuantity: 2
+    });
+  } finally {
+    global.fetch = originalFetchWithRevenue;
+  }
+
   async function runSafetyCase(responder, options = {}) {
     const calls = [];
     const previousFetch = global.fetch;
@@ -664,9 +751,9 @@ async function run() {
     1522.63,
     1987.68,
     43.51,
-    0,
-    0,
-    "",
+    4567.89,
+    3,
+    1522.63,
     1987.68,
     43.51,
     2179.86,
@@ -689,9 +776,9 @@ async function run() {
     1000,
     100,
     5,
-    0,
-    0,
-    "",
+    2000,
+    2,
+    1000,
     100,
     5,
     1790,
@@ -706,6 +793,7 @@ async function run() {
   const pnlRows = capturedWrites[0].rows;
   assert.deepStrictEqual(pnlRows.find(row => row[0] === "Заказы"), ["Заказы", 3, 2]);
   assert.deepStrictEqual(pnlRows.find(row => row[0] === "Продажи"), ["Продажи", 4567.89, 2000]);
+  assert.deepStrictEqual(pnlRows.find(row => row[0] === "от продаж"), ["от продаж", 4567.89, 2000]);
   assert.deepStrictEqual(pnlRows.find(row => row[0] === "Реклама"), ["Реклама", 1987.68, 100]);
   assert.deepStrictEqual(pnlRows.find(row => row[0] === "Себес"), ["Себес", 370.35, 100]);
   assert.deepStrictEqual(pnlRows.find(row => row[0] === "Доставка до МП"), ["Доставка до МП", 30, 10]);

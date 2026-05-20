@@ -148,7 +148,9 @@ function buildPnlSummaryRows(rows, { dateFrom, dateTo, salesRows = [] }) {
   const salesByDate = sumByDate(sourceRows, dates, row => row.revenue);
   const adsByDate = sumByDate(rows, dates, getAdvertisingSpend);
   const ordersModelByDate = sumByDate(rows, dates, row => row.modelOrders);
-  const salesModelByDate = sumByDate(rows, dates, row => row.modelRevenue);
+  const salesModelByDate = salesRows.length
+    ? sumByDate(sourceRows, dates, row => row.revenue)
+    : sumByDate(rows, dates, row => row.modelRevenue);
   const profitByDate = buildDateMap(dates, () => 0);
   const cogsByDate = sumByDate(sourceRows, dates, row => toNumber(row.cogs) * toNumber(row.quantity ?? row.orders));
   const deliveryByDate = sumByDate(sourceRows, dates, row => toNumber(row.logisticsToMp) * toNumber(row.quantity ?? row.orders));
@@ -301,6 +303,9 @@ function buildSkuDashboardRows(rows, products, salesRows = []) {
       const spend = round2(item.spend);
       const avgPrice = orders ? round2(revenue / orders) : "";
       const avgModelPrice = modelOrders ? round2(item.modelRevenue / modelOrders) : "";
+      const displayedRevenue = salesRows.length ? revenue : round2(item.modelRevenue);
+      const displayedOrders = salesRows.length ? orders : modelOrders;
+      const displayedAvgPrice = salesRows.length ? avgPrice : avgModelPrice;
       const drr = revenue ? round2((spend / revenue) * 100) : 0;
       const ctr = item.impressions ? round2((item.clicks / item.impressions) * 100) : 0;
       const grossProfit = round2(
@@ -322,9 +327,9 @@ function buildSkuDashboardRows(rows, products, salesRows = []) {
         avgPrice,
         spend,
         drr,
-        round2(item.modelRevenue),
-        modelOrders,
-        avgModelPrice,
+        displayedRevenue,
+        displayedOrders,
+        displayedAvgPrice,
         spend,
         drr,
         grossProfit,
