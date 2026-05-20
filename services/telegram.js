@@ -646,6 +646,23 @@ function formatSalesStatus(status) {
   ].join("\n");
 }
 
+function formatSalesFetchResult(saved, summary, warning) {
+  const lines = [
+    "Sales facts saved",
+    "Rows saved: " + saved.rowsSaved,
+    "Total stored rows: " + saved.totalStoredRows,
+    "Unique SKUs: " + summary.uniqueSkus,
+    "Total revenue: " + summary.totalRevenue,
+    "Total quantity: " + summary.totalQuantity
+  ];
+
+  if (warning) {
+    lines.push(warning);
+  }
+
+  return lines.join("\n");
+}
+
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -1488,19 +1505,16 @@ function startTelegramBot({
         }
         if (salesCommand.type === "fetch") {
           await tgBot.sendMessage(chatId, "Запрашиваю Ozon sales facts...");
-          const rows = await ozonService.getSalesFacts({
+          const salesResult = await ozonService.getSalesFacts({
             dateFrom: salesCommand.dateFrom + "T00:00:00+03:00",
             dateTo: salesCommand.dateTo + "T23:59:59.999+03:00"
           });
-          const result = salesFactsService.saveSalesRows(rows, {
+          const result = salesFactsService.saveSalesRows(salesResult.rows, {
             dateFrom: salesCommand.dateFrom,
             dateTo: salesCommand.dateTo,
             savedAt: new Date().toISOString()
           });
-          await tgBot.sendMessage(
-            chatId,
-            "Сохранил sales facts: " + result.rowsSaved + " строк. Всего: " + result.totalStoredRows
-          );
+          await sendLongMessage(tgBot, chatId, formatSalesFetchResult(result, salesResult.summary, salesResult.warning));
           return;
         }
       } catch (err) {

@@ -6,6 +6,25 @@ function clampOzonLimit(value, max = 100) {
   return Math.min(parsed, max);
 }
 
+function getPostingIdentity(item) {
+  return String(
+    item?.posting_number ||
+      item?.order_id ||
+      item?.posting_id ||
+      item?.id ||
+      ""
+  );
+}
+
+function getPageSignature(postings) {
+  const ids = postings.map(getPostingIdentity).filter(Boolean);
+  return JSON.stringify({
+    count: postings.length,
+    firstPostingId: ids[0] || "",
+    lastPostingId: ids[ids.length - 1] || ""
+  });
+}
+
 function createOzonService({ clientId, apiKey }) {
   async function requestOzon(path, body) {
     if (!clientId || !apiKey) {
@@ -301,14 +320,108 @@ function createOzonService({ clientId, apiKey }) {
     };
   }
 
-  async function getSalesFacts({ dateFrom, dateTo, limit = 100 }) {
+  async function getSalesFacts({ dateFrom, dateTo, limit = 100, maxPages = 50, maxRows = 5000 }) {
     const safeLimit = clampOzonLimit(limit, 100);
     const salesRows = [];
+    const seenPostingIds = new Set();
+    const seenPageSignatures = new Set();
+    let safetyStopped = false;
+    let stopReason = "";
+
+    function buildResult() {
+      const uniqueSkus = new Set(salesRows.map(row => row.sku).filter(Boolean)).size;
+      const totalRevenue = Number(
+        salesRows.reduce((sum, row) => sum + toNumber(row.revenue), 0).toFixed(2)
+      );
+      const totalQuantity = Number(
+        salesRows.reduce((sum, row) => sum + toNumber(row.quantity), 0).toFixed(2)
+      );
+
+      return {
+        rows: salesRows,
+        summary: {
+          rows: salesRows.length,
+          uniqueSkus,
+          totalRevenue,
+          totalQuantity
+        },
+        warning: safetyStopped ? "Sales fetch stopped by pagination safety guard." : "",
+        stopReason
+      };
+    }
+
+    function registerPage({ postings, scheme, page, offset = "", cursor = "" }) {
+      const pageSignature = getPageSignature(postings);
+      const ids = postings.map(getPostingIdentity).filter(Boolean);
+      const firstPostingId = ids[0] || "";
+      const lastPostingId = ids[ids.length - 1] || "";
+      let uniqueRowsAdded = 0;
+
+      if (postings.length) {
+        if (seenPageSignatures.has(pageSignature)) {
+          safetyStopped = true;
+          stopReason = "repeated_page_signature";
+        } else {
+          seenPageSignatures.add(pageSignature);
+        }
+      }
+
+      if (!safetyStopped) {
+        for (const item of postings) {
+          const postingId = getPostingIdentity(item);
+          if (postingId && seenPostingIds.has(postingId)) {
+            continue;
+          }
+          if (postingId) {
+            seenPostingIds.add(postingId);
+          }
+          const normalizedRows = normalizePostingSalesRows(item, scheme);
+          salesRows.push(...normalizedRows);
+          uniqueRowsAdded += normalizedRows.length;
+        }
+      }
+
+      if (!safetyStopped && postings.length && uniqueRowsAdded === 0) {
+        safetyStopped = true;
+        stopReason = "duplicate_page";
+      }
+
+      console.log("[ozon] sales fetch page", {
+        scheme,
+        page,
+        offset,
+        cursor,
+        rowsFetched: postings.length,
+        firstPostingId,
+        lastPostingId,
+        uniqueRowsAdded,
+        totalRowsAccumulated: salesRows.length,
+        stopReason: stopReason || ""
+      });
+
+      return {
+        firstPostingId,
+        lastPostingId,
+        uniqueRowsAdded
+      };
+    }
+
     try {
       let offset = 0;
       let page = 1;
       let hasNextFbo = true;
+      let previousFboBoundary = "";
       while (hasNextFbo) {
+        if (salesRows.length >= maxRows) {
+          safetyStopped = true;
+          stopReason = "max_rows";
+          break;
+        }
+        if (page > maxPages) {
+          safetyStopped = true;
+          stopReason = "max_pages";
+          break;
+        }
         console.log("[ozon] sales fetch FBO", {
           dateFrom,
           dateTo,
@@ -317,26 +430,42 @@ function createOzonService({ clientId, apiKey }) {
           offset
         });
         const fbo = await getFboPostings({ dateFrom, dateTo, offset, limit: safeLimit });
-        console.log("[ozon] sales fetch FBO rows", {
+        const details = registerPage({
+          postings: fbo.postings,
+          scheme: "FBO",
           page,
-          offset,
-          rowsFetched: fbo.postings.length
+          offset
         });
-        for (const item of fbo.postings) {
-          salesRows.push(...normalizePostingSalesRows(item, "FBO"));
+        if (safetyStopped || !fbo.postings.length) {
+          break;
         }
+        const boundarySignature = details.firstPostingId + "|" + details.lastPostingId;
+        if (boundarySignature && boundarySignature === previousFboBoundary) {
+          safetyStopped = true;
+          stopReason = "repeated_boundary";
+          break;
+        }
+        previousFboBoundary = boundarySignature;
         hasNextFbo = Boolean(fbo.postings.length === safeLimit && fbo.has_next !== false);
         offset += fbo.postings.length;
         page += 1;
-        if (!fbo.postings.length) {
-          break;
-        }
       }
 
       let lastId = "";
       let hasNextFbs = true;
       let fbsPage = 1;
-      while (hasNextFbs) {
+      let previousFbsBoundary = "";
+      while (hasNextFbs && !safetyStopped) {
+        if (salesRows.length >= maxRows) {
+          safetyStopped = true;
+          stopReason = "max_rows";
+          break;
+        }
+        if (fbsPage > maxPages) {
+          safetyStopped = true;
+          stopReason = "max_pages";
+          break;
+        }
         console.log("[ozon] sales fetch FBS", {
           dateFrom,
           dateTo,
@@ -345,14 +474,22 @@ function createOzonService({ clientId, apiKey }) {
           cursor: lastId || ""
         });
         const fbs = await getFbsPostings({ dateFrom, dateTo, lastId, limit: safeLimit });
-        console.log("[ozon] sales fetch FBS rows", {
+        const details = registerPage({
+          postings: fbs.postings,
+          scheme: "FBS",
           page: fbsPage,
-          cursor: lastId || "",
-          rowsFetched: fbs.postings.length
+          cursor: lastId || ""
         });
-        for (const item of fbs.postings) {
-          salesRows.push(...normalizePostingSalesRows(item, "FBS"));
+        if (safetyStopped || !fbs.postings.length) {
+          break;
         }
+        const boundarySignature = details.firstPostingId + "|" + details.lastPostingId;
+        if (boundarySignature && boundarySignature === previousFbsBoundary) {
+          safetyStopped = true;
+          stopReason = "repeated_boundary";
+          break;
+        }
+        previousFbsBoundary = boundarySignature;
         hasNextFbs = Boolean(
           fbs.postings.length === safeLimit &&
             fbs.has_next &&
@@ -361,12 +498,16 @@ function createOzonService({ clientId, apiKey }) {
         );
         lastId = fbs.last_id || "";
         fbsPage += 1;
-        if (!fbs.postings.length) {
-          break;
-        }
       }
 
-      return salesRows;
+      if (stopReason) {
+        console.log("[ozon] sales fetch stopped", {
+          stopReason,
+          totalRowsAccumulated: salesRows.length
+        });
+      }
+
+      return buildResult();
     } catch (error) {
       error.userMessage = normalizeOzonError(error);
       throw error;
@@ -384,6 +525,8 @@ function createOzonService({ clientId, apiKey }) {
 }
 
 module.exports = {
+  getPageSignature,
+  getPostingIdentity,
   clampOzonLimit,
   createOzonService
 };

@@ -13,7 +13,7 @@ const {
 const { parseCogsCommand, parseReportCommand, parseSalesCommand } = require("../services/telegram");
 const { createCogsService } = require("../services/cogs");
 const { createSalesFactsService } = require("../services/salesFacts");
-const { clampOzonLimit, createOzonService } = require("../services/ozon");
+const { clampOzonLimit, createOzonService, getPageSignature, getPostingIdentity } = require("../services/ozon");
 
 async function run() {
   const performanceRows = [
@@ -256,6 +256,11 @@ async function run() {
   assert.strictEqual(clampOzonLimit(undefined), 100);
   assert.strictEqual(clampOzonLimit(0), 100);
   assert.strictEqual(clampOzonLimit(25), 25);
+  assert.strictEqual(getPostingIdentity({ posting_number: "posting-1" }), "posting-1");
+  assert.strictEqual(
+    getPageSignature([{ posting_number: "posting-1" }, { posting_number: "posting-2" }]),
+    JSON.stringify({ count: 2, firstPostingId: "posting-1", lastPostingId: "posting-2" })
+  );
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ollama-bot-cogs-"));
   const cogsService = createCogsService({
@@ -397,17 +402,193 @@ async function run() {
       clientId: "test-client",
       apiKey: "test-key"
     });
-    const fetchedSalesRows = await ozonService.getSalesFacts({
+    const fetchedSalesResult = await ozonService.getSalesFacts({
       dateFrom: "2026-05-13T00:00:00+03:00",
       dateTo: "2026-05-14T23:59:59.999+03:00",
       limit: 1000
     });
-    assert.deepStrictEqual(fetchedSalesRows, []);
+    assert.deepStrictEqual(fetchedSalesResult, {
+      rows: [],
+      summary: {
+        rows: 0,
+        uniqueSkus: 0,
+        totalRevenue: 0,
+        totalQuantity: 0
+      },
+      warning: "",
+      stopReason: ""
+    });
     assert.strictEqual(ozonRequests[0].body.limit, 100);
     assert.strictEqual(ozonRequests[1].body.limit, 100);
   } finally {
     global.fetch = originalFetch;
   }
+
+  async function runSafetyCase(responder, options = {}) {
+    const calls = [];
+    const previousFetch = global.fetch;
+    global.fetch = async (url, options) => {
+      const body = JSON.parse(options.body);
+      calls.push({ url, body });
+      return responder(url, body, calls.length);
+    };
+
+    try {
+      const service = createOzonService({
+        clientId: "test-client",
+        apiKey: "test-key"
+      });
+      return await service.getSalesFacts({
+        dateFrom: "2026-05-13T00:00:00+03:00",
+        dateTo: "2026-05-14T23:59:59.999+03:00"
+        ,
+        ...options
+      });
+    } finally {
+      global.fetch = previousFetch;
+    }
+  }
+
+  const repeatedPageResult = await runSafetyCase(async (url, body) => {
+    if (url.endsWith("/v3/posting/fbo/list")) {
+      const pageRows = Array.from({ length: 100 }, (_, index) => ({
+        posting_number: "dup-" + index,
+        status: "delivered",
+        products: [{ sku: "111", offer_id: "offer-111", name: "Товар 1", quantity: 1, price: 100 }]
+      }));
+      return {
+        ok: true,
+        json: async () => ({
+          result: {
+            postings: pageRows,
+            has_next: true
+          }
+        })
+      };
+    }
+
+    return {
+      ok: true,
+      json: async () => ({
+        result: {
+          postings: [],
+          has_next: false,
+          last_id: ""
+        }
+      })
+    };
+  });
+  assert.strictEqual(repeatedPageResult.warning, "Sales fetch stopped by pagination safety guard.");
+  assert.strictEqual(repeatedPageResult.stopReason, "repeated_page_signature");
+  assert.strictEqual(repeatedPageResult.summary.rows, 100);
+
+  const duplicatePageResult = await runSafetyCase(async (url, body) => {
+    if (url.endsWith("/v3/posting/fbo/list")) {
+      const firstPageRows = Array.from({ length: 100 }, (_, index) => ({
+        posting_number: "dup-" + index,
+        status: "delivered",
+        products: [{ sku: "111", offer_id: "offer-111", name: "Товар 1", quantity: 1, price: 100 }]
+      }));
+      if (body.offset === 0) {
+        return {
+          ok: true,
+          json: async () => ({
+            result: {
+              postings: firstPageRows,
+              has_next: true
+            }
+          })
+        };
+      }
+      const secondPageRows = firstPageRows.slice().reverse();
+      return {
+        ok: true,
+        json: async () => ({
+          result: {
+            postings: secondPageRows,
+            has_next: true
+          }
+        })
+      };
+    }
+
+    return {
+      ok: true,
+      json: async () => ({
+        result: {
+          postings: [],
+          has_next: false,
+          last_id: ""
+        }
+      })
+    };
+  });
+  assert.strictEqual(duplicatePageResult.warning, "Sales fetch stopped by pagination safety guard.");
+  assert.strictEqual(duplicatePageResult.stopReason, "duplicate_page");
+
+  let maxPagesCall = 0;
+  const maxPagesResult = await runSafetyCase(async url => {
+    if (url.endsWith("/v3/posting/fbo/list")) {
+      maxPagesCall += 1;
+      return {
+        ok: true,
+        json: async () => ({
+          result: {
+            postings: Array.from({ length: 100 }, (_, index) => ({
+              posting_number: "page-" + maxPagesCall + "-" + index,
+              status: "delivered",
+              products: [{ sku: "111", offer_id: "offer-111", name: "Товар 1", quantity: 1, price: 100 }]
+            })),
+            has_next: true
+          }
+        })
+      };
+    }
+
+    return {
+      ok: true,
+      json: async () => ({
+        result: {
+          postings: [],
+          has_next: false,
+          last_id: ""
+        }
+      })
+    };
+  }, { maxPages: 3, maxRows: 10000 });
+  assert.strictEqual(maxPagesResult.warning, "Sales fetch stopped by pagination safety guard.");
+  assert.strictEqual(maxPagesResult.stopReason, "max_pages");
+
+  const maxRowsResult = await runSafetyCase(async (url, body, callNumber) => {
+    if (url.endsWith("/v3/posting/fbo/list")) {
+      return {
+        ok: true,
+        json: async () => ({
+          result: {
+            postings: Array.from({ length: 100 }, (_, index) => ({
+              posting_number: "rows-" + callNumber + "-" + index,
+              status: "delivered",
+              products: [{ sku: "111", offer_id: "offer-111", name: "Товар 1", quantity: 1, price: 100 }]
+            })),
+            has_next: true
+          }
+        })
+      };
+    }
+
+    return {
+      ok: true,
+      json: async () => ({
+        result: {
+          postings: [],
+          has_next: false,
+          last_id: ""
+        }
+      })
+    };
+  }, { maxPages: 100, maxRows: 250 });
+  assert.strictEqual(maxRowsResult.warning, "Sales fetch stopped by pagination safety guard.");
+  assert.strictEqual(maxRowsResult.stopReason, "max_rows");
 
   const capturedWrites = [];
   const reportBuilderService = createReportBuilderService({
