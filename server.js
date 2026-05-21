@@ -7,6 +7,7 @@ const { createCalendarService } = require("./services/calendar");
 const { createCogsService } = require("./services/cogs");
 const { createDecisionEngine } = require("./services/decisionEngine");
 const { createDailySummaryService } = require("./services/dailySummary");
+const { createFinanceFactsService } = require("./services/financeFacts");
 const { createJobsService } = require("./services/jobs");
 const { createOllamaService } = require("./services/ollama");
 const { createOzonService } = require("./services/ozon");
@@ -57,8 +58,13 @@ const salesFactsService = createSalesFactsService({
   filePath: env.paths.salesRowsFile
 });
 
+const financeFactsService = createFinanceFactsService({
+  filePath: env.paths.financeRowsFile
+});
+
 const reportBuilderService = createReportBuilderService({
   cogsService,
+  financeFactsService,
   ozonService,
   performanceService,
   salesFactsService,
@@ -138,6 +144,7 @@ const activeTelegramService = startTelegramBot({
   cogsService,
   dailySummaryService,
   decisionEngine,
+  financeFactsService,
   performanceService,
   reportBuilderService,
   salesFactsService,

@@ -67,11 +67,23 @@ function buildPnlFormatting(headers) {
     currencyColumns: headers.slice(1),
     percentColumns: [],
     conditionalColumns: [],
-    currencyRows: ["Продажи", "Реклама", "Прибыль", "Себес", "Доставка до МП", "ВП"],
-    percentRows: ["от заказов", "от продаж"],
+    currencyRows: [
+      "Заказано",
+      "Продажи",
+      "Возвраты",
+      "Реклама",
+      "Комиссия Ozon",
+      "Логистика",
+      "Услуги партнёров",
+      "Услуги FBO",
+      "Себес",
+      "Прибыль",
+      "Начислено / Выплата"
+    ],
+    percentRows: [],
     conditionalRows: [
       {
-        rowLabel: "ВП",
+        rowLabel: "Прибыль",
         positiveBackground: "#d9ead3",
         negativeBackground: "#f4cccc",
         neutralBackground: ""
@@ -141,46 +153,60 @@ function getAdvertisingSpend(row) {
   return toNumber(row.spend || row.adSpend || row.cost || 0);
 }
 
-function buildPnlSummaryRows(rows, { dateFrom, dateTo, salesRows = [] }) {
+function getExpenseEffect(value) {
+  const amount = toNumber(value);
+  return amount > 0 ? -amount : amount;
+}
+
+function buildPnlSummaryRows(rows, { dateFrom, dateTo, salesRows = [], financeRows = [] }) {
   const dates = listDates(dateFrom, dateTo);
-  const sourceRows = salesRows.length ? salesRows : rows;
-  const ordersByDate = sumByDate(sourceRows, dates, row => row.quantity ?? row.orders);
-  const salesByDate = sumByDate(sourceRows, dates, row => row.revenue);
-  const adsByDate = sumByDate(rows, dates, getAdvertisingSpend);
-  const ordersModelByDate = sumByDate(rows, dates, row => row.modelOrders);
-  const salesModelByDate = salesRows.length
-    ? sumByDate(sourceRows, dates, row => row.revenue)
-    : sumByDate(rows, dates, row => row.modelRevenue);
+  const orderedRevenueByDate = sumByDate(salesRows, dates, row => row.revenue);
+  const orderedQuantityByDate = sumByDate(salesRows, dates, row => row.quantity);
+  const financeSalesByDate = sumByDate(financeRows, dates, row => row.sales);
+  const returnsByDate = sumByDate(financeRows, dates, row => row.returns);
+  const commissionByDate = sumByDate(financeRows, dates, row => row.ozonCommission);
+  const logisticsByDate = sumByDate(financeRows, dates, row => row.logistics);
+  const partnerServicesByDate = sumByDate(financeRows, dates, row => row.partnerServices);
+  const fboServicesByDate = sumByDate(financeRows, dates, row => row.fboServices);
+  const otherServicesByDate = sumByDate(financeRows, dates, row => row.otherServices);
+  const financeAdsByDate = sumByDate(financeRows, dates, row => row.advertising);
+  const adsByDate = financeRows.length ? financeAdsByDate : sumByDate(rows, dates, getAdvertisingSpend);
+  const accruedByDate = sumByDate(financeRows, dates, row => row.accruedTotal);
   const profitByDate = buildDateMap(dates, () => 0);
-  const cogsByDate = sumByDate(sourceRows, dates, row => toNumber(row.cogs) * toNumber(row.quantity ?? row.orders));
-  const deliveryByDate = sumByDate(sourceRows, dates, row => toNumber(row.logisticsToMp) * toNumber(row.quantity ?? row.orders));
-  const grossProfitByDate = buildDateMap(dates, () => 0);
+  const cogsByDate = sumByDate(salesRows, dates, row => toNumber(row.cogs) * toNumber(row.quantity));
 
   for (const date of dates) {
     profitByDate.set(
       date,
       round2(
-        (salesByDate.get(date) || 0) -
-          (adsByDate.get(date) || 0) -
+        (financeSalesByDate.get(date) || 0) +
+          (returnsByDate.get(date) || 0) +
+          getExpenseEffect(commissionByDate.get(date) || 0) +
+          getExpenseEffect(logisticsByDate.get(date) || 0) +
+          getExpenseEffect(partnerServicesByDate.get(date) || 0) +
+          getExpenseEffect(fboServicesByDate.get(date) || 0) +
+          getExpenseEffect(otherServicesByDate.get(date) || 0) +
+          getExpenseEffect(adsByDate.get(date) || 0) -
           (cogsByDate.get(date) || 0) -
-          (deliveryByDate.get(date) || 0)
+          0
       )
     );
-    grossProfitByDate.set(date, round2(profitByDate.get(date) || 0));
   }
 
   return {
     headers: ["Metric", ...dates],
     rows: [
-      createMetricRow("Заказы", dates, ordersByDate),
-      createMetricRow("Продажи", dates, salesByDate),
+      createMetricRow("Заказано", dates, orderedRevenueByDate),
+      createMetricRow("Продажи", dates, financeSalesByDate),
+      createMetricRow("Возвраты", dates, returnsByDate),
       createMetricRow("Реклама", dates, adsByDate),
-      createMetricRow("от заказов", dates, ordersModelByDate),
-      createMetricRow("от продаж", dates, salesModelByDate),
-      createMetricRow("Прибыль", dates, profitByDate),
+      createMetricRow("Комиссия Ozon", dates, commissionByDate),
+      createMetricRow("Логистика", dates, logisticsByDate),
+      createMetricRow("Услуги партнёров", dates, partnerServicesByDate),
+      createMetricRow("Услуги FBO", dates, fboServicesByDate),
       createMetricRow("Себес", dates, cogsByDate),
-      createMetricRow("Доставка до МП", dates, deliveryByDate),
-      createMetricRow("ВП", dates, grossProfitByDate)
+      createMetricRow("Прибыль", dates, profitByDate),
+      createMetricRow("Начислено / Выплата", dates, accruedByDate)
     ]
   };
 }
@@ -343,7 +369,7 @@ function buildSkuDashboardRows(rows, products, salesRows = []) {
     });
 }
 
-function createReportBuilderService({ cogsService, ozonService, performanceService, salesFactsService, sheetsService }) {
+function createReportBuilderService({ cogsService, financeFactsService, ozonService, performanceService, salesFactsService, sheetsService }) {
   async function loadPerformanceRows(dateFrom, dateTo) {
     const rows = await performanceService.getStoredRowsForDateRange(dateFrom, dateTo);
 
@@ -369,6 +395,7 @@ function createReportBuilderService({ cogsService, ozonService, performanceServi
     const merged = cogsService ? cogsService.mergeCogsIntoPerformanceRows(rows) : { rows, missingSkus: [] };
     const salesRowsRaw = salesFactsService ? salesFactsService.getSalesRowsForDateRange(dateFrom, dateTo) : [];
     const salesRows = cogsService ? cogsService.mergeCogsIntoPerformanceRows(salesRowsRaw).rows : salesRowsRaw;
+    const financeRows = financeFactsService ? financeFactsService.getFinanceRowsForDateRange(dateFrom, dateTo) : [];
     console.log(
       "[reportBuilder] pnl source rows",
       (salesRows.length ? salesRows : merged.rows).slice(0, 3).map(row => ({
@@ -383,13 +410,16 @@ function createReportBuilderService({ cogsService, ozonService, performanceServi
         quantity: row.quantity
       }))
     );
-    const report = buildPnlSummaryRows(merged.rows, { dateFrom, dateTo, salesRows });
+    const report = buildPnlSummaryRows(merged.rows, { dateFrom, dateTo, salesRows, financeRows });
     const warnings = [];
     if (merged.missingSkus.length) {
       warnings.push("Себестоимость не задана для " + merged.missingSkus.length + " SKU");
     }
     if (!salesRows.length) {
       warnings.push("Нет sales facts за период. Используется только Performance.");
+    }
+    if (!financeRows.length) {
+      warnings.push("Нет finance facts за период. Заказано берётся из postings, P&L неполный.");
     }
 
     return {

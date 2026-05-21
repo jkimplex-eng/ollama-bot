@@ -10,8 +10,9 @@ const {
   createReportBuilderService,
   SKU_DASHBOARD_HEADERS
 } = require("../services/reportBuilder");
-const { parseCogsCommand, parseReportCommand, parseSalesCommand } = require("../services/telegram");
+const { parseCogsCommand, parseFinanceCommand, parseReportCommand, parseSalesCommand } = require("../services/telegram");
 const { createCogsService } = require("../services/cogs");
+const { createFinanceFactsService } = require("../services/financeFacts");
 const { createSalesFactsService } = require("../services/salesFacts");
 const { clampOzonLimit, createOzonService, getPageSignature, getPostingIdentity } = require("../services/ozon");
 
@@ -64,20 +65,52 @@ async function run() {
   assert.deepStrictEqual(
     buildPnlSummaryRows(performanceRows, {
       dateFrom: "2026-05-01",
-      dateTo: "2026-05-02"
+      dateTo: "2026-05-02",
+      salesRows: [
+        { date: "2026-05-01", quantity: 3, revenue: 1500 },
+        { date: "2026-05-02", quantity: 1, revenue: 700 }
+      ],
+      financeRows: [
+        {
+          date: "2026-05-01",
+          sales: 1500,
+          returns: 0,
+          ozonCommission: -150,
+          logistics: -50,
+          partnerServices: 0,
+          fboServices: 0,
+          advertising: -150,
+          otherServices: 0,
+          accruedTotal: 1150
+        },
+        {
+          date: "2026-05-02",
+          sales: 700,
+          returns: 0,
+          ozonCommission: -70,
+          logistics: -20,
+          partnerServices: 0,
+          fboServices: 0,
+          advertising: -70,
+          otherServices: 0,
+          accruedTotal: 540
+        }
+      ]
     }),
     {
       headers: ["Metric", "2026-05-01", "2026-05-02"],
       rows: [
-        ["Заказы", 3, 1],
+        ["Заказано", 1500, 700],
         ["Продажи", 1500, 700],
-        ["Реклама", 150, 70],
-        ["от заказов", 1, 1],
-        ["от продаж", 400, 300],
-        ["Прибыль", 1350, 630],
+        ["Возвраты", 0, 0],
+        ["Реклама", -150, -70],
+        ["Комиссия Ozon", -150, -70],
+        ["Логистика", -50, -20],
+        ["Услуги партнёров", 0, 0],
+        ["Услуги FBO", 0, 0],
         ["Себес", 0, 0],
-        ["Доставка до МП", 0, 0],
-        ["ВП", 1350, 630]
+        ["Прибыль", 1150, 540],
+        ["Начислено / Выплата", 1150, 540]
       ]
     }
   );
@@ -108,33 +141,41 @@ async function run() {
 
   assert.deepStrictEqual(
     buildPnlSummaryRows(
-      [
-        {
-          date: "2026-05-13",
-          revenue: 1000,
-          spend: 100,
-          orders: 2,
-          cogs: 50,
-          logisticsToMp: 10
-        }
-      ],
+      [{ date: "2026-05-13", spend: 100 }],
       {
         dateFrom: "2026-05-13",
-        dateTo: "2026-05-13"
+        dateTo: "2026-05-13",
+        salesRows: [{ date: "2026-05-13", quantity: 2, revenue: 1000, cogs: 50 }],
+        financeRows: [
+          {
+            date: "2026-05-13",
+            sales: 900,
+            returns: -50,
+            ozonCommission: -100,
+            logistics: -20,
+            partnerServices: -10,
+            fboServices: -5,
+            advertising: -80,
+            otherServices: 0,
+            accruedTotal: 635
+          }
+        ]
       }
     ),
     {
       headers: ["Metric", "2026-05-13"],
       rows: [
-        ["Заказы", 2],
-        ["Продажи", 1000],
-        ["Реклама", 100],
-        ["от заказов", 0],
-        ["от продаж", 0],
-        ["Прибыль", 780],
+        ["Заказано", 1000],
+        ["Продажи", 900],
+        ["Возвраты", -50],
+        ["Реклама", -80],
+        ["Комиссия Ozon", -100],
+        ["Логистика", -20],
+        ["Услуги партнёров", -10],
+        ["Услуги FBO", -5],
         ["Себес", 100],
-        ["Доставка до МП", 20],
-        ["ВП", 780]
+        ["Прибыль", 535],
+        ["Начислено / Выплата", 635]
       ]
     }
   );
@@ -159,21 +200,27 @@ async function run() {
       ],
       {
         dateFrom: "2026-05-13",
-        dateTo: "2026-05-14"
+        dateTo: "2026-05-14",
+        salesRows: [
+          { date: "13.05.2026", quantity: "3", revenue: "4567,89" },
+          { date: "2026-05-14", quantity: "4", revenue: "5000.00" }
+        ]
       }
     ),
     {
       headers: ["Metric", "2026-05-13", "2026-05-14"],
       rows: [
-        ["Заказы", 3, 4],
-        ["Продажи", 4567.89, 5000],
+        ["Заказано", 4567.89, 5000],
+        ["Продажи", 0, 0],
+        ["Возвраты", 0, 0],
         ["Реклама", 1987.68, 2079.48],
-        ["от заказов", 0, 0],
-        ["от продаж", 0, 0],
-        ["Прибыль", 2580.21, 2920.52],
+        ["Комиссия Ozon", 0, 0],
+        ["Логистика", 0, 0],
+        ["Услуги партнёров", 0, 0],
+        ["Услуги FBO", 0, 0],
         ["Себес", 0, 0],
-        ["Доставка до МП", 0, 0],
-        ["ВП", 2580.21, 2920.52]
+        ["Прибыль", -1987.68, -2079.48],
+        ["Начислено / Выплата", 0, 0]
       ]
     }
   );
@@ -252,6 +299,9 @@ async function run() {
     dateFrom: "2026-05-13",
     dateTo: "2026-05-14"
   });
+  assert.deepStrictEqual(parseFinanceCommand("/finance status"), { type: "status" });
+  assert.deepStrictEqual(parseFinanceCommand("/finance clear"), { type: "clear" });
+  assert.deepStrictEqual(parseFinanceCommand("/finance import sample"), { type: "import_sample" });
   assert.strictEqual(clampOzonLimit(150), 100);
   assert.strictEqual(clampOzonLimit(undefined), 100);
   assert.strictEqual(clampOzonLimit(0), 100);
@@ -265,6 +315,9 @@ async function run() {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ollama-bot-cogs-"));
   const cogsService = createCogsService({
     filePath: path.join(tempDir, "cogs.json")
+  });
+  const financeFactsService = createFinanceFactsService({
+    filePath: path.join(tempDir, "finance-rows.json")
   });
   const salesFactsService = createSalesFactsService({
     filePath: path.join(tempDir, "sales-rows.json")
@@ -359,6 +412,33 @@ async function run() {
       { sku: "111", offerId: "offer-111", productName: "Товар 1", quantity: 3, revenue: 4567.89 },
       { sku: "222", offerId: "offer-222", productName: "Товар 2", quantity: 2, revenue: 2000 }
     ]
+  );
+  assert.deepStrictEqual(
+    financeFactsService.importSample(),
+    {
+      totalStoredRows: 1,
+      rowsSaved: 1
+    }
+  );
+  assert.deepStrictEqual(financeFactsService.getFinanceRowsStatus(), {
+    totalStoredRows: 1,
+    minDate: "2026-05-14",
+    maxDate: "2026-05-14"
+  });
+  assert.deepStrictEqual(
+    financeFactsService.getFinanceRowsForDateRange("2026-05-14", "2026-05-14")[0],
+    {
+      date: "2026-05-14",
+      sales: 396053,
+      returns: -10173,
+      ozonCommission: -158211,
+      logistics: -14147,
+      partnerServices: -3742,
+      fboServices: -1625,
+      advertising: -39695,
+      otherServices: 0,
+      accruedTotal: 166855
+    }
   );
 
   const ozonRequests = [];
@@ -755,8 +835,38 @@ async function run() {
   assert.strictEqual(maxRowsResult.stopReason, "max_rows");
 
   const capturedWrites = [];
+  financeFactsService.saveFinanceRows(
+    [
+      {
+        date: "2026-05-13",
+        sales: 4300,
+        returns: -100,
+        ozonCommission: -500,
+        logistics: -40,
+        partnerServices: -20,
+        fboServices: -10,
+        advertising: -1987.68,
+        otherServices: 0,
+        accruedTotal: 1642.32
+      },
+      {
+        date: "2026-05-14",
+        sales: 1900,
+        returns: -50,
+        ozonCommission: -30,
+        logistics: -20,
+        partnerServices: 0,
+        fboServices: 0,
+        advertising: -100,
+        otherServices: 0,
+        accruedTotal: 1700
+      }
+    ],
+    { source: "test" }
+  );
   const reportBuilderService = createReportBuilderService({
     cogsService,
+    financeFactsService,
     ozonService: {
       getProducts: async () => [
         { name: "Товар 1", sku: "111", offerId: "offer-111", price: 999 },
@@ -868,13 +978,15 @@ async function run() {
   ]);
 
   const pnlRows = capturedWrites[0].rows;
-  assert.deepStrictEqual(pnlRows.find(row => row[0] === "Заказы"), ["Заказы", 3, 2]);
-  assert.deepStrictEqual(pnlRows.find(row => row[0] === "Продажи"), ["Продажи", 4567.89, 2000]);
-  assert.deepStrictEqual(pnlRows.find(row => row[0] === "от продаж"), ["от продаж", 4567.89, 2000]);
-  assert.deepStrictEqual(pnlRows.find(row => row[0] === "Реклама"), ["Реклама", 1987.68, 100]);
+  assert.deepStrictEqual(pnlRows.find(row => row[0] === "Заказано"), ["Заказано", 4567.89, 2000]);
+  assert.deepStrictEqual(pnlRows.find(row => row[0] === "Продажи"), ["Продажи", 4300, 1900]);
+  assert.deepStrictEqual(pnlRows.find(row => row[0] === "Возвраты"), ["Возвраты", -100, -50]);
+  assert.deepStrictEqual(pnlRows.find(row => row[0] === "Реклама"), ["Реклама", -1987.68, -100]);
+  assert.deepStrictEqual(pnlRows.find(row => row[0] === "Комиссия Ozon"), ["Комиссия Ozon", -500, -30]);
+  assert.deepStrictEqual(pnlRows.find(row => row[0] === "Логистика"), ["Логистика", -40, -20]);
   assert.deepStrictEqual(pnlRows.find(row => row[0] === "Себес"), ["Себес", 370.35, 100]);
-  assert.deepStrictEqual(pnlRows.find(row => row[0] === "Доставка до МП"), ["Доставка до МП", 30, 10]);
-  assert.deepStrictEqual(pnlRows.find(row => row[0] === "Прибыль"), ["Прибыль", 2179.86, 1790]);
+  assert.deepStrictEqual(pnlRows.find(row => row[0] === "Прибыль"), ["Прибыль", 1271.97, 1600]);
+  assert.deepStrictEqual(pnlRows.find(row => row[0] === "Начислено / Выплата"), ["Начислено / Выплата", 1642.32, 1700]);
 
   console.log("Report builder checks passed");
 }

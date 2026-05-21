@@ -61,6 +61,9 @@ function getHelpText() {
     "/sales fetch 2026-05-13 2026-05-14",
     "/sales status",
     "/sales clear",
+    "/finance status",
+    "/finance clear",
+    "/finance import sample",
     "/performance debug",
     "/ai strategy",
     "/ai quick",
@@ -562,6 +565,20 @@ function parseSalesCommand(text) {
   return null;
 }
 
+function parseFinanceCommand(text) {
+  const normalized = text.trim().replace(/\s+/g, " ");
+  const match = normalized.match(/^\/finance\s+(status|clear|import sample)$/i);
+  if (!match) {
+    return null;
+  }
+
+  if (match[1].toLowerCase() === "import sample") {
+    return { type: "import_sample" };
+  }
+
+  return { type: match[1].toLowerCase() };
+}
+
 function formatStoredRowsStatus(status) {
   return [
     "Performance rows status",
@@ -646,6 +663,15 @@ function formatSalesStatus(status) {
   ].join("\n");
 }
 
+function formatFinanceStatus(status) {
+  return [
+    "Finance facts status",
+    "Total stored rows: " + status.totalStoredRows,
+    "Min date: " + (status.minDate || "-"),
+    "Max date: " + (status.maxDate || "-")
+  ].join("\n");
+}
+
 function formatSalesFetchResult(saved, summary, warning) {
   const lines = [
     "Sales facts saved",
@@ -689,6 +715,7 @@ function startTelegramBot({
   cogsService,
   dailySummaryService,
   decisionEngine,
+  financeFactsService,
   performanceService,
   reportBuilderService,
   salesFactsService,
@@ -1523,6 +1550,36 @@ function startTelegramBot({
       }
     }
 
+    const financeCommand = parseFinanceCommand(text);
+
+    if (financeCommand) {
+      try {
+        if (financeCommand.type === "status") {
+          await sendLongMessage(tgBot, chatId, formatFinanceStatus(financeFactsService.getFinanceRowsStatus()));
+          return;
+        }
+        if (financeCommand.type === "clear") {
+          financeFactsService.clearFinanceRows();
+          await tgBot.sendMessage(chatId, "Локальные finance facts очищены.");
+          return;
+        }
+        if (financeCommand.type === "import_sample") {
+          const result = financeFactsService.importSample();
+          await tgBot.sendMessage(
+            chatId,
+            "Finance sample импортирован. Rows saved: " +
+              result.rowsSaved +
+              ", total stored rows: " +
+              result.totalStoredRows
+          );
+          return;
+        }
+      } catch (err) {
+        await tgBot.sendMessage(chatId, "Ошибка finance facts: " + err.message);
+        return;
+      }
+    }
+
     const aiCommand = parseAiCommand(text);
 
     if (aiCommand) {
@@ -1622,6 +1679,7 @@ module.exports = {
   parseAlertsCommand,
   parseAnalyticsCommand,
   parseCogsCommand,
+  parseFinanceCommand,
   parseSalesCommand,
   parseDailyCommand,
   parseOzonProductsCommand,
