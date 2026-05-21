@@ -29,6 +29,12 @@ function normalizeMoney(value) {
   if (value === null || value === undefined || value === "") {
     return 0;
   }
+  if (typeof value === "object") {
+    if (value && "amount" in value) {
+      return normalizeMoney(value.amount);
+    }
+    return 0;
+  }
   const parsed = Number(String(value).replace(/\s/g, "").replace(",", "."));
   return Number.isFinite(parsed) ? parsed : 0;
 }
@@ -191,6 +197,17 @@ function createOzonService({ clientId, apiKey }) {
     };
   }
 
+  function getNormalizedSalesDebug(product, normalized) {
+    return {
+      sku: normalized.sku,
+      offerId: normalized.offerId,
+      quantity: normalized.quantity,
+      rawPrice: product?.price ?? product?.item?.price ?? null,
+      normalizedRevenue: normalized.revenue,
+      normalizedPrice: normalized.price
+    };
+  }
+
   function resolveRevenueAndPrice(product, quantity, financialProduct) {
     const totalCandidates = [
       product?.total_discounted_price,
@@ -240,8 +257,7 @@ function createOzonService({ clientId, apiKey }) {
       debugLogger(getRawSalesDebug(product, posting, financialProduct));
     }
     const resolved = resolveRevenueAndPrice(product, quantity, financialProduct);
-
-    return {
+    const normalized = {
       sku: String(product.sku || product.item?.sku || fallback.sku || ""),
       offerId: String(product.offer_id || product.offerId || fallback.offerId || ""),
       productName: String(product.name || product.product_name || product.item?.name || fallback.name || ""),
@@ -249,6 +265,10 @@ function createOzonService({ clientId, apiKey }) {
       price: resolved.price,
       revenue: resolved.revenue
     };
+    if (debugLogger) {
+      debugLogger(getNormalizedSalesDebug(product, normalized));
+    }
+    return normalized;
   }
 
   function normalizePostingSalesRows(item, scheme, debugLogger = null) {

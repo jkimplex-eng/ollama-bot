@@ -511,6 +511,83 @@ async function run() {
     global.fetch = originalFetchWithRevenue;
   }
 
+  const originalFetchWithPriceAmount = global.fetch;
+  global.fetch = async (url, options) => {
+    if (url.endsWith("/v3/posting/fbo/list")) {
+      return {
+        ok: true,
+        json: async () => ({
+          result: {
+            postings: [
+              {
+                posting_number: "28345787-2367-1",
+                status: "delivered",
+                in_process_at: "2026-05-13T10:00:00Z",
+                products: [
+                  {
+                    offer_id: "SJ59",
+                    sku: 3715298591,
+                    name: "Успокаивающая сыворотка для лица",
+                    quantity: 1,
+                    price: { amount: "7322", currency: "RUB" }
+                  }
+                ]
+              }
+            ],
+            has_next: false
+          }
+        })
+      };
+    }
+
+    if (url.endsWith("/v3/posting/fbs/list")) {
+      return {
+        ok: true,
+        json: async () => ({
+          result: {
+            postings: [],
+            has_next: false,
+            last_id: ""
+          }
+        })
+      };
+    }
+
+    throw new Error("Unexpected fetch call: " + url);
+  };
+
+  try {
+    const ozonService = createOzonService({
+      clientId: "test-client",
+      apiKey: "test-key"
+    });
+    const priceAmountResult = await ozonService.getSalesFacts({
+      dateFrom: "2026-05-13T00:00:00+03:00",
+      dateTo: "2026-05-14T23:59:59.999+03:00"
+    });
+    assert.deepStrictEqual(priceAmountResult.rows[0], {
+      date: "2026-05-13",
+      sku: "3715298591",
+      offerId: "SJ59",
+      productName: "Успокаивающая сыворотка для лица",
+      quantity: 1,
+      revenue: 7322,
+      price: 7322,
+      postingNumber: "28345787-2367-1",
+      orderId: "28345787-2367-1",
+      status: "delivered",
+      scheme: "FBO"
+    });
+    assert.deepStrictEqual(priceAmountResult.summary, {
+      rows: 1,
+      uniqueSkus: 1,
+      totalRevenue: 7322,
+      totalQuantity: 1
+    });
+  } finally {
+    global.fetch = originalFetchWithPriceAmount;
+  }
+
   async function runSafetyCase(responder, options = {}) {
     const calls = [];
     const previousFetch = global.fetch;
