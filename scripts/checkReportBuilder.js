@@ -302,6 +302,16 @@ async function run() {
   assert.deepStrictEqual(parseFinanceCommand("/finance status"), { type: "status" });
   assert.deepStrictEqual(parseFinanceCommand("/finance clear"), { type: "clear" });
   assert.deepStrictEqual(parseFinanceCommand("/finance import sample"), { type: "import_sample" });
+  assert.deepStrictEqual(parseFinanceCommand("/finance fetch 2026-05-13 2026-05-14"), {
+    type: "fetch",
+    dateFrom: "2026-05-13",
+    dateTo: "2026-05-14"
+  });
+  assert.deepStrictEqual(parseFinanceCommand("/finance debug 2026-05-13 2026-05-14"), {
+    type: "debug",
+    dateFrom: "2026-05-13",
+    dateTo: "2026-05-14"
+  });
   assert.strictEqual(clampOzonLimit(150), 100);
   assert.strictEqual(clampOzonLimit(undefined), 100);
   assert.strictEqual(clampOzonLimit(0), 100);
@@ -440,6 +450,84 @@ async function run() {
       accruedTotal: 166855
     }
   );
+
+  const originalFinanceFetch = global.fetch;
+  let financeCallCount = 0;
+  global.fetch = async url => {
+    if (!url.endsWith("/v3/finance/transaction/list")) {
+      throw new Error("Unexpected finance fetch call: " + url);
+    }
+    financeCallCount += 1;
+    return {
+      ok: true,
+      json: async () => ({
+        result: {
+          operations:
+            financeCallCount === 1
+              ? [
+                  {
+                    operation_date: "2026-05-14T12:00:00Z",
+                    operation_type: "orders",
+                    operation_type_name: "Продажи",
+                    accruals_for_sale: "396053",
+                    sale_commission: "158211",
+                    amount: "166855",
+                    delivery_charge: "14147",
+                    return_delivery_charge: "0",
+                    services: [
+                      { name: "Продвижение и реклама", amount: "-39695" },
+                      { name: "Услуги партнёров", amount: "-3742" },
+                      { name: "Услуги FBO", amount: "-1625" }
+                    ]
+                  },
+                  {
+                    operation_date: "2026-05-14T14:00:00Z",
+                    operation_type: "returns",
+                    operation_type_name: "Возвраты",
+                    accruals_for_sale: "-10173",
+                    sale_commission: "0",
+                    amount: "-10173",
+                    delivery_charge: "0",
+                    return_delivery_charge: "0",
+                    services: []
+                  }
+                ]
+              : [],
+          has_next_page: false
+        }
+      })
+    };
+  };
+
+  try {
+    const ozonFinanceService = createOzonService({
+      clientId: "test-client",
+      apiKey: "test-key"
+    });
+    const financeResult = await ozonFinanceService.getFinanceFacts({
+      dateFrom: "2026-05-14T00:00:00+03:00",
+      dateTo: "2026-05-14T23:59:59.999+03:00"
+    });
+    assert.deepStrictEqual(financeResult.rows, [
+      {
+        date: "2026-05-14",
+        sales: 396053,
+        returns: -10173,
+        ozonCommission: -158211,
+        logistics: -14147,
+        partnerServices: -3742,
+        fboServices: -1625,
+        advertising: -39695,
+        otherServices: -11778,
+        accruedTotal: 156682
+      }
+    ]);
+    assert.strictEqual(financeResult.summary.transactionCount, 2);
+    assert.strictEqual(financeResult.summary.rows, 1);
+    assert.strictEqual(financeResult.diagnostics.groupedOperations.length, 2);
+  } finally {
+    global.fetch = originalFinanceFetch;
+  }
 
   const ozonRequests = [];
   const originalFetch = global.fetch;

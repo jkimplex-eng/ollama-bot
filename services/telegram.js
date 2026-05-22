@@ -63,6 +63,8 @@ function getHelpText() {
     "/sales clear",
     "/finance status",
     "/finance clear",
+    "/finance fetch 2026-05-13 2026-05-14",
+    "/finance debug 2026-05-13 2026-05-14",
     "/finance import sample",
     "/performance debug",
     "/ai strategy",
@@ -567,16 +569,24 @@ function parseSalesCommand(text) {
 
 function parseFinanceCommand(text) {
   const normalized = text.trim().replace(/\s+/g, " ");
-  const match = normalized.match(/^\/finance\s+(status|clear|import sample)$/i);
-  if (!match) {
-    return null;
+  let match = normalized.match(/^\/finance\s+(status|clear|import sample)$/i);
+  if (match) {
+    if (match[1].toLowerCase() === "import sample") {
+      return { type: "import_sample" };
+    }
+    return { type: match[1].toLowerCase() };
   }
 
-  if (match[1].toLowerCase() === "import sample") {
-    return { type: "import_sample" };
+  match = normalized.match(/^\/finance\s+(fetch|debug)\s+(\d{4}-\d{2}-\d{2})\s+(\d{4}-\d{2}-\d{2})$/i);
+  if (match) {
+    return {
+      type: match[1].toLowerCase(),
+      dateFrom: match[2],
+      dateTo: match[3]
+    };
   }
 
-  return { type: match[1].toLowerCase() };
+  return null;
 }
 
 function formatStoredRowsStatus(status) {
@@ -670,6 +680,38 @@ function formatFinanceStatus(status) {
     "Min date: " + (status.minDate || "-"),
     "Max date: " + (status.maxDate || "-")
   ].join("\n");
+}
+
+function formatFinanceFetchResult(saved, summary) {
+  return [
+    "Finance facts saved",
+    "Rows saved: " + saved.rowsSaved,
+    "Total stored rows: " + saved.totalStoredRows,
+    "Transaction count: " + summary.transactionCount,
+    "Accrued total: " + summary.accruedTotal
+  ].join("\n");
+}
+
+function formatFinanceDiagnostics(result) {
+  const lines = [
+    "Finance diagnostics",
+    "Период: " + result.dateFrom + " -> " + result.dateTo,
+    "Транзакций: " + result.diagnostics.transactionCount,
+    ""
+  ];
+
+  if (!result.diagnostics.groupedOperations.length) {
+    lines.push("Нет finance операций за период.");
+    return lines.join("\n");
+  }
+
+  lines.push("Grouped operation types:");
+  lines.push(
+    ...result.diagnostics.groupedOperations.slice(0, 20).map(item =>
+      item.key + " | count=" + item.count + " | total=" + item.totalAmount
+    )
+  );
+  return lines.join("\n");
 }
 
 function formatSalesFetchResult(saved, summary, warning) {
@@ -1574,8 +1616,39 @@ function startTelegramBot({
           );
           return;
         }
+        if (financeCommand.type === "fetch") {
+          await tgBot.sendMessage(chatId, "Запрашиваю Ozon finance facts...");
+          const financeResult = await ozonService.getFinanceFacts({
+            dateFrom: financeCommand.dateFrom + "T00:00:00+03:00",
+            dateTo: financeCommand.dateTo + "T23:59:59.999+03:00"
+          });
+          const saved = financeFactsService.saveFinanceRows(financeResult.rows, {
+            dateFrom: financeCommand.dateFrom,
+            dateTo: financeCommand.dateTo,
+            savedAt: new Date().toISOString(),
+            source: "ozon-api"
+          });
+          await sendLongMessage(tgBot, chatId, formatFinanceFetchResult(saved, financeResult.summary));
+          return;
+        }
+        if (financeCommand.type === "debug") {
+          const financeResult = await ozonService.getFinanceFacts({
+            dateFrom: financeCommand.dateFrom + "T00:00:00+03:00",
+            dateTo: financeCommand.dateTo + "T23:59:59.999+03:00"
+          });
+          await sendLongMessage(
+            tgBot,
+            chatId,
+            formatFinanceDiagnostics({
+              ...financeResult,
+              dateFrom: financeCommand.dateFrom,
+              dateTo: financeCommand.dateTo
+            })
+          );
+          return;
+        }
       } catch (err) {
-        await tgBot.sendMessage(chatId, "Ошибка finance facts: " + err.message);
+        await tgBot.sendMessage(chatId, "Ошибка finance facts: " + (err.userMessage || err.message));
         return;
       }
     }

@@ -82,6 +82,13 @@ function createOzonService({ clientId, apiKey }) {
     return message;
   }
 
+  function buildTextHaystack(...parts) {
+    return parts
+      .filter(Boolean)
+      .map(value => String(value).toLowerCase())
+      .join(" ");
+  }
+
   function getStock(product) {
     const stocks = product.stocks;
 
@@ -390,6 +397,231 @@ function createOzonService({ clientId, apiKey }) {
     return data.result || data;
   }
 
+  function normalizeFinanceTransaction(item) {
+    return {
+      date: formatDate(
+        item.operation_date ||
+          item.transaction_date ||
+          item.posting?.posting_date ||
+          item.date ||
+          new Date()
+      ),
+      operationType: String(item.operation_type || item.type || item.name || "").trim(),
+      operationTypeName: String(item.operation_type_name || item.type_name || "").trim(),
+      accrualsForSale: toNumber(item.accruals_for_sale),
+      saleCommission: toNumber(item.sale_commission),
+      amount: toNumber(item.amount),
+      deliveryCharge: toNumber(item.delivery_charge),
+      returnDeliveryCharge: toNumber(item.return_delivery_charge),
+      services: Array.isArray(item.services) ? item.services : item.services ? [item.services] : [],
+      raw: item
+    };
+  }
+
+  function normalizeServiceEntry(service) {
+    return {
+      name: String(service?.name || service?.service_name || service?.title || service?.type || "").trim(),
+      amount: toNumber(service?.price ?? service?.amount ?? service?.sum ?? service?.value ?? 0)
+    };
+  }
+
+  function classifyServiceBucket(name) {
+    const haystack = buildTextHaystack(name);
+    if (haystack.includes("реклам") || haystack.includes("advert") || haystack.includes("promo")) {
+      return "advertising";
+    }
+    if (haystack.includes("партнер") || haystack.includes("партн") || haystack.includes("partner")) {
+      return "partnerServices";
+    }
+    if (haystack.includes("fbo")) {
+      return "fboServices";
+    }
+    if (haystack.includes("достав") || haystack.includes("логист") || haystack.includes("delivery") || haystack.includes("logistic")) {
+      return "logistics";
+    }
+    if (haystack.includes("комисс") || haystack.includes("вознагражд") || haystack.includes("commission")) {
+      return "ozonCommission";
+    }
+    return "otherServices";
+  }
+
+  function classifyTransactionAmount(transaction) {
+    const haystack = buildTextHaystack(transaction.operationType, transaction.operationTypeName);
+    if (haystack.includes("реклам") || haystack.includes("advert") || haystack.includes("promo")) {
+      return "advertising";
+    }
+    if (haystack.includes("партнер") || haystack.includes("партн") || haystack.includes("partner")) {
+      return "partnerServices";
+    }
+    if (haystack.includes("fbo")) {
+      return "fboServices";
+    }
+    if (haystack.includes("достав") || haystack.includes("логист") || haystack.includes("delivery") || haystack.includes("logistic")) {
+      return "logistics";
+    }
+    if (haystack.includes("комисс") || haystack.includes("вознагражд") || haystack.includes("commission")) {
+      return "ozonCommission";
+    }
+    return "otherServices";
+  }
+
+  function createEmptyFinanceRow(date) {
+    return {
+      date,
+      sales: 0,
+      returns: 0,
+      ozonCommission: 0,
+      logistics: 0,
+      partnerServices: 0,
+      fboServices: 0,
+      advertising: 0,
+      otherServices: 0,
+      accruedTotal: 0
+    };
+  }
+
+  function aggregateFinanceFacts(transactions) {
+    const byDate = new Map();
+    const groupedTypes = new Map();
+    let uncategorizedLogged = 0;
+
+    for (const transaction of transactions.map(normalizeFinanceTransaction)) {
+      const row = byDate.get(transaction.date) || createEmptyFinanceRow(transaction.date);
+      row.accruedTotal += transaction.amount;
+
+      if (transaction.accrualsForSale > 0) {
+        row.sales += transaction.accrualsForSale;
+      } else if (transaction.accrualsForSale < 0) {
+        row.returns += transaction.accrualsForSale;
+      }
+
+      if (transaction.saleCommission !== 0) {
+        row.ozonCommission += -Math.abs(transaction.saleCommission);
+      }
+
+      if (transaction.deliveryCharge !== 0) {
+        row.logistics += -Math.abs(transaction.deliveryCharge);
+      }
+
+      if (transaction.returnDeliveryCharge !== 0) {
+        row.logistics += -Math.abs(transaction.returnDeliveryCharge);
+      }
+
+      let serviceAmountTotal = 0;
+      for (const service of transaction.services.map(normalizeServiceEntry)) {
+        if (!service.amount) {
+          continue;
+        }
+        serviceAmountTotal += service.amount;
+        const bucket = classifyServiceBucket(service.name);
+        row[bucket] += service.amount > 0 ? -Math.abs(service.amount) : service.amount;
+      }
+
+      const remainderAmount =
+        transaction.amount -
+        transaction.accrualsForSale -
+        (transaction.saleCommission !== 0 ? -Math.abs(transaction.saleCommission) : 0) -
+        (transaction.deliveryCharge !== 0 ? -Math.abs(transaction.deliveryCharge) : 0) -
+        (transaction.returnDeliveryCharge !== 0 ? -Math.abs(transaction.returnDeliveryCharge) : 0) -
+        serviceAmountTotal;
+
+      if (Math.abs(remainderAmount) > 0.0001) {
+        const bucket = classifyTransactionAmount(transaction);
+        row[bucket] += remainderAmount;
+        if (bucket === "otherServices" && uncategorizedLogged < 5) {
+          uncategorizedLogged += 1;
+          console.log("[ozon] finance uncategorized", {
+            date: transaction.date,
+            operationType: transaction.operationType,
+            operationTypeName: transaction.operationTypeName,
+            amount: transaction.amount,
+            remainderAmount,
+            services: transaction.services.map(service => service?.name || service?.service_name || service?.type || "")
+          });
+        }
+      }
+
+      const groupKey = [
+        transaction.operationType || "-",
+        transaction.operationTypeName || "-"
+      ].join(" | ");
+      const currentGroup = groupedTypes.get(groupKey) || { key: groupKey, count: 0, totalAmount: 0 };
+      currentGroup.count += 1;
+      currentGroup.totalAmount = Number((currentGroup.totalAmount + transaction.amount).toFixed(2));
+      groupedTypes.set(groupKey, currentGroup);
+      byDate.set(transaction.date, row);
+    }
+
+    return {
+      rows: Array.from(byDate.values())
+        .sort((left, right) => left.date.localeCompare(right.date))
+        .map(item => ({
+          ...item,
+          sales: Number(item.sales.toFixed(2)),
+          returns: Number(item.returns.toFixed(2)),
+          ozonCommission: Number(item.ozonCommission.toFixed(2)),
+          logistics: Number(item.logistics.toFixed(2)),
+          partnerServices: Number(item.partnerServices.toFixed(2)),
+          fboServices: Number(item.fboServices.toFixed(2)),
+          advertising: Number(item.advertising.toFixed(2)),
+          otherServices: Number(item.otherServices.toFixed(2)),
+          accruedTotal: Number(item.accruedTotal.toFixed(2))
+        })),
+      groupedOperations: Array.from(groupedTypes.values()).sort((left, right) => Math.abs(right.totalAmount) - Math.abs(left.totalAmount))
+    };
+  }
+
+  async function getFinanceFacts({ dateFrom, dateTo, pageSize = 1000, maxPages = 20 }) {
+    const transactions = [];
+    const safePageSize = Math.min(Math.max(Number(pageSize) || 1000, 1), 1000);
+
+    try {
+      for (let page = 1; page <= maxPages; page += 1) {
+        const result = await getFinanceTransactions({
+          dateFrom,
+          dateTo,
+          page,
+          pageSize: safePageSize
+        });
+        const operations = result.operations || result.items || [];
+        console.log("[ozon] finance fetch page", {
+          dateFrom,
+          dateTo,
+          page,
+          pageSize: safePageSize,
+          rowsFetched: operations.length
+        });
+        transactions.push(...operations);
+        const hasMore =
+          Boolean(result.has_next_page) ||
+          Boolean(result.hasNextPage) ||
+          operations.length === safePageSize;
+        if (!hasMore || !operations.length) {
+          break;
+        }
+      }
+
+      const aggregated = aggregateFinanceFacts(transactions);
+      return {
+        rows: aggregated.rows,
+        diagnostics: {
+          groupedOperations: aggregated.groupedOperations,
+          transactionCount: transactions.length
+        },
+        summary: {
+          rows: aggregated.rows.length,
+          transactionCount: transactions.length,
+          accruedTotal: Number(
+            aggregated.rows.reduce((sum, row) => sum + row.accruedTotal, 0).toFixed(2)
+          )
+        }
+      };
+    } catch (error) {
+      error.userMessage = normalizeOzonError(error);
+      throw error;
+    }
+  }
+
   async function getFboPostings({ dateFrom, dateTo, offset = 0, limit = 100 }) {
     const safeLimit = clampOzonLimit(limit, 100);
     const data = await requestOzon("/v3/posting/fbo/list", {
@@ -647,6 +879,7 @@ function createOzonService({ clientId, apiKey }) {
   return {
     getFboPostings,
     getFbsPostings,
+    getFinanceFacts,
     getFinanceTransactions,
     getProducts,
     getSalesFacts,
