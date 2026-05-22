@@ -529,6 +529,86 @@ async function run() {
     global.fetch = originalFinanceFetch;
   }
 
+  const originalAdvertisingFinanceFetch = global.fetch;
+  global.fetch = async url => {
+    if (!url.endsWith("/v3/finance/transaction/list")) {
+      throw new Error("Unexpected finance fetch call: " + url);
+    }
+    return {
+      ok: true,
+      json: async () => ({
+        result: {
+          operations: [
+            {
+              operation_date: "2026-05-14T10:00:00Z",
+              operation_type: "brand_promotion",
+              operation_type_name: "Продвижение бренда",
+              accruals_for_sale: "0",
+              sale_commission: "0",
+              amount: "-3773",
+              delivery_charge: "0",
+              return_delivery_charge: "0",
+              services: []
+            },
+            {
+              operation_date: "2026-05-14T11:00:00Z",
+              operation_type: "promotion_cpo",
+              operation_type_name: "Продвижение с оплатой за заказ",
+              accruals_for_sale: "0",
+              sale_commission: "0",
+              amount: "-11494",
+              delivery_charge: "0",
+              return_delivery_charge: "0",
+              services: []
+            },
+            {
+              operation_date: "2026-05-14T12:00:00Z",
+              operation_type: "click_ads",
+              operation_type_name: "Оплата за клик",
+              accruals_for_sale: "0",
+              sale_commission: "0",
+              amount: "-23257",
+              delivery_charge: "0",
+              return_delivery_charge: "0",
+              services: []
+            },
+            {
+              operation_date: "2026-05-14T13:00:00Z",
+              operation_type: "review_boost",
+              operation_type_name: "Ускоренный сбор отзывов",
+              accruals_for_sale: "0",
+              sale_commission: "0",
+              amount: "-1171",
+              delivery_charge: "0",
+              return_delivery_charge: "0",
+              services: []
+            }
+          ],
+          has_next_page: false
+        }
+      })
+    };
+  };
+
+  try {
+    const ozonFinanceService = createOzonService({
+      clientId: "test-client",
+      apiKey: "test-key"
+    });
+    const financeResult = await ozonFinanceService.getFinanceFacts({
+      dateFrom: "2026-05-14T00:00:00+03:00",
+      dateTo: "2026-05-14T23:59:59.999+03:00"
+    });
+    assert.strictEqual(financeResult.rows[0].advertising, -39695);
+    assert.strictEqual(financeResult.rows[0].otherServices, 0);
+    assert.deepStrictEqual(
+      financeResult.diagnostics.advertisingGroups.map(item => item.totalAmount).sort((a, b) => a - b),
+      [-23257, -11494, -3773, -1171]
+    );
+  } finally {
+    global.fetch = originalAdvertisingFinanceFetch;
+  }
+
   const ozonRequests = [];
   const originalFetch = global.fetch;
   global.fetch = async (url, options) => {

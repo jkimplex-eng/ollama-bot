@@ -427,7 +427,19 @@ function createOzonService({ clientId, apiKey }) {
 
   function classifyServiceBucket(name) {
     const haystack = buildTextHaystack(name);
-    if (haystack.includes("реклам") || haystack.includes("advert") || haystack.includes("promo")) {
+    if (
+      haystack.includes("продвиж") ||
+      haystack.includes("реклам") ||
+      haystack.includes("оплата за клик") ||
+      haystack.includes("ускоренный сбор отзывов") ||
+      haystack.includes("отзыв") ||
+      haystack.includes("бренд") ||
+      haystack.includes("brand") ||
+      haystack.includes("click") ||
+      haystack.includes("advert") ||
+      haystack.includes("promotion") ||
+      haystack.includes("promo")
+    ) {
       return "advertising";
     }
     if (haystack.includes("партнер") || haystack.includes("партн") || haystack.includes("partner")) {
@@ -447,7 +459,19 @@ function createOzonService({ clientId, apiKey }) {
 
   function classifyTransactionAmount(transaction) {
     const haystack = buildTextHaystack(transaction.operationType, transaction.operationTypeName);
-    if (haystack.includes("реклам") || haystack.includes("advert") || haystack.includes("promo")) {
+    if (
+      haystack.includes("продвиж") ||
+      haystack.includes("реклам") ||
+      haystack.includes("оплата за клик") ||
+      haystack.includes("ускоренный сбор отзывов") ||
+      haystack.includes("отзыв") ||
+      haystack.includes("бренд") ||
+      haystack.includes("brand") ||
+      haystack.includes("click") ||
+      haystack.includes("advert") ||
+      haystack.includes("promotion") ||
+      haystack.includes("promo")
+    ) {
       return "advertising";
     }
     if (haystack.includes("партнер") || haystack.includes("партн") || haystack.includes("partner")) {
@@ -483,6 +507,7 @@ function createOzonService({ clientId, apiKey }) {
   function aggregateFinanceFacts(transactions) {
     const byDate = new Map();
     const groupedTypes = new Map();
+    const advertisingGroups = new Map();
     let uncategorizedLogged = 0;
 
     for (const transaction of transactions.map(normalizeFinanceTransaction)) {
@@ -515,6 +540,16 @@ function createOzonService({ clientId, apiKey }) {
         serviceAmountTotal += service.amount;
         const bucket = classifyServiceBucket(service.name);
         row[bucket] += service.amount > 0 ? -Math.abs(service.amount) : service.amount;
+        if (bucket === "advertising") {
+          const adKey = [
+            transaction.operationType || "-",
+            transaction.operationTypeName || "-",
+            service.name || "-"
+          ].join(" | ");
+          const currentAd = advertisingGroups.get(adKey) || { key: adKey, totalAmount: 0 };
+          currentAd.totalAmount = Number((currentAd.totalAmount + service.amount).toFixed(2));
+          advertisingGroups.set(adKey, currentAd);
+        }
       }
 
       const remainderAmount =
@@ -528,6 +563,16 @@ function createOzonService({ clientId, apiKey }) {
       if (Math.abs(remainderAmount) > 0.0001) {
         const bucket = classifyTransactionAmount(transaction);
         row[bucket] += remainderAmount;
+        if (bucket === "advertising") {
+          const adKey = [
+            transaction.operationType || "-",
+            transaction.operationTypeName || "-",
+            "(transaction)"
+          ].join(" | ");
+          const currentAd = advertisingGroups.get(adKey) || { key: adKey, totalAmount: 0 };
+          currentAd.totalAmount = Number((currentAd.totalAmount + remainderAmount).toFixed(2));
+          advertisingGroups.set(adKey, currentAd);
+        }
         if (bucket === "otherServices" && uncategorizedLogged < 5) {
           uncategorizedLogged += 1;
           console.log("[ozon] finance uncategorized", {
@@ -567,7 +612,8 @@ function createOzonService({ clientId, apiKey }) {
           otherServices: Number(item.otherServices.toFixed(2)),
           accruedTotal: Number(item.accruedTotal.toFixed(2))
         })),
-      groupedOperations: Array.from(groupedTypes.values()).sort((left, right) => Math.abs(right.totalAmount) - Math.abs(left.totalAmount))
+      groupedOperations: Array.from(groupedTypes.values()).sort((left, right) => Math.abs(right.totalAmount) - Math.abs(left.totalAmount)),
+      advertisingGroups: Array.from(advertisingGroups.values()).sort((left, right) => Math.abs(right.totalAmount) - Math.abs(left.totalAmount))
     };
   }
 
@@ -605,6 +651,7 @@ function createOzonService({ clientId, apiKey }) {
       return {
         rows: aggregated.rows,
         diagnostics: {
+          advertisingGroups: aggregated.advertisingGroups,
           groupedOperations: aggregated.groupedOperations,
           transactionCount: transactions.length
         },

@@ -711,6 +711,17 @@ function formatFinanceDiagnostics(result) {
       item.key + " | count=" + item.count + " | total=" + item.totalAmount
     )
   );
+
+  if (result.diagnostics.advertisingGroups?.length) {
+    lines.push("");
+    lines.push("Advertising classification:");
+    lines.push(
+      ...result.diagnostics.advertisingGroups.slice(0, 20).map(item =>
+        item.key + " | total=" + item.totalAmount
+      )
+    );
+  }
+
   return lines.join("\n");
 }
 
