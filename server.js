@@ -10,6 +10,7 @@ const { createDailySummaryService } = require("./services/dailySummary");
 const { createDailyControlService } = require("./services/dailyControl");
 const { createFinanceFactsService } = require("./services/financeFacts");
 const { createJobsService } = require("./services/jobs");
+const { createManagementWorkbookService } = require("./services/managementWorkbook");
 const { createOllamaService } = require("./services/ollama");
 const { createOzonService } = require("./services/ozon");
 const { createPerformanceService } = require("./services/performance");
@@ -73,6 +74,15 @@ const reportBuilderService = createReportBuilderService({
 });
 
 const dailyControlService = createDailyControlService({
+  cogsService,
+  financeFactsService,
+  performanceService,
+  salesFactsService,
+  sheetsService,
+  planVpPerDay: env.dailyControlPlanVp
+});
+
+const managementWorkbookService = createManagementWorkbookService({
   cogsService,
   financeFactsService,
   performanceService,
@@ -156,6 +166,7 @@ const activeTelegramService = startTelegramBot({
   dailySummaryService,
   decisionEngine,
   financeFactsService,
+  managementWorkbookService,
   performanceService,
   reportBuilderService,
   salesFactsService,

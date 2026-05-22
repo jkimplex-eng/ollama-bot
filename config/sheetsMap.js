@@ -216,6 +216,149 @@ const sheetsMap = {
     },
     mode: "replace"
   },
+  daily_input: {
+    logicalName: "daily_input",
+    tabName: "Daily Input",
+    columns: [
+      "Дата",
+      "День",
+      "Заказы ₽",
+      "Продажи ₽",
+      "Реклама ₽",
+      "Себестоимость ₽",
+      "Доставка до МП ₽",
+      "ВП ₽",
+      "Маржа ВП %",
+      "План ВП/день",
+      "Отклонение ₽",
+      "Накоп. ВП ₽",
+      "Run-rate прогноз ₽",
+      "Статус",
+      "Комментарий"
+    ],
+    formatting: {
+      boldHeader: true,
+      freezeRows: 1,
+      autoResizeColumns: true,
+      headerBackground: "#000000",
+      headerFontColor: "#ffffff",
+      currencyColumns: [
+        "Заказы ₽",
+        "Продажи ₽",
+        "Реклама ₽",
+        "Себестоимость ₽",
+        "Доставка до МП ₽",
+        "ВП ₽",
+        "План ВП/день",
+        "Отклонение ₽",
+        "Накоп. ВП ₽",
+        "Run-rate прогноз ₽"
+      ],
+      percentColumns: ["Маржа ВП %"],
+      conditionalColumns: [
+        {
+          header: "ВП ₽",
+          positiveBackground: "#d9ead3",
+          negativeBackground: "#f4cccc",
+          neutralBackground: ""
+        }
+      ]
+    },
+    mode: "replace"
+  },
+  unit_economics: {
+    logicalName: "unit_economics",
+    tabName: "Unit Economics",
+    columns: [
+      "Дата",
+      "Продажи ₽",
+      "Реклама ₽",
+      "Реклама %",
+      "Себестоимость ₽",
+      "Доставка ₽",
+      "ВП ₽",
+      "Маржа ВП %"
+    ],
+    formatting: {
+      boldHeader: true,
+      freezeRows: 1,
+      autoResizeColumns: true,
+      headerBackground: "#000000",
+      headerFontColor: "#ffffff",
+      currencyColumns: [
+        "Продажи ₽",
+        "Реклама ₽",
+        "Себестоимость ₽",
+        "Доставка ₽",
+        "ВП ₽"
+      ],
+      percentColumns: ["Реклама %", "Маржа ВП %"],
+      conditionalColumns: [
+        {
+          header: "ВП ₽",
+          positiveBackground: "#d9ead3",
+          negativeBackground: "#f4cccc",
+          neutralBackground: ""
+        }
+      ]
+    },
+    mode: "replace"
+  },
+  month_review: {
+    logicalName: "month_review",
+    tabName: "Month Review",
+    columns: ["Неделя", "Заказы ₽", "Продажи ₽", "ВП ₽", "ВП % от заказов", "Комментарий"],
+    formatting: {
+      boldHeader: true,
+      freezeRows: 1,
+      autoResizeColumns: true,
+      headerBackground: "#000000",
+      headerFontColor: "#ffffff",
+      currencyColumns: ["Заказы ₽", "Продажи ₽", "ВП ₽"],
+      percentColumns: ["ВП % от заказов"],
+      conditionalColumns: [
+        {
+          header: "ВП ₽",
+          positiveBackground: "#d9ead3",
+          negativeBackground: "#f4cccc",
+          neutralBackground: ""
+        }
+      ]
+    },
+    mode: "replace"
+  },
+  management_dashboard: {
+    logicalName: "management_dashboard",
+    tabName: "Dashboard",
+    columns: ["Колонка 1", "Колонка 2", "Колонка 3", "Колонка 4", "Колонка 5", "Колонка 6"],
+    formatting: {
+      boldHeader: true,
+      freezeRows: 1,
+      autoResizeColumns: true,
+      headerBackground: "#000000",
+      headerFontColor: "#ffffff",
+      currencyColumns: [],
+      percentColumns: [],
+      conditionalColumns: []
+    },
+    mode: "replace"
+  },
+  management_settings: {
+    logicalName: "management_settings",
+    tabName: "Settings",
+    columns: ["Setting", "Value", "Notes"],
+    formatting: {
+      boldHeader: true,
+      freezeRows: 1,
+      autoResizeColumns: true,
+      headerBackground: "#000000",
+      headerFontColor: "#ffffff",
+      currencyColumns: [],
+      percentColumns: [],
+      conditionalColumns: []
+    },
+    mode: "replace"
+  },
   alerts: {
     logicalName: "alerts",
     tabName: "Alerts",

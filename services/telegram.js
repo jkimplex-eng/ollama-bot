@@ -21,6 +21,12 @@ function getHelpText() {
     "/daily control today",
     "/daily control yesterday",
     "/daily control в таблицу 2026-05-14",
+    "/management daily 2026-05-14",
+    "/management daily в таблицу 2026-05-14",
+    "/management month 2026-05",
+    "/management month в таблицу 2026-05",
+    "/management dashboard 2026-05",
+    "/management dashboard в таблицу 2026-05",
     "/analytics",
     "/analytics продажи",
     "/analytics реклама",
@@ -225,6 +231,24 @@ function parseDailyControlCommand(text) {
   return {
     toSheet: lower.includes(" в таблицу "),
     dateInput: match[1]
+  };
+}
+
+function parseManagementCommand(text) {
+  const normalized = text.trim().replace(/\s+/g, " ");
+  const lower = normalized.toLowerCase();
+  const match = lower.match(
+    /^\/management\s+(daily|month|dashboard)(?:\s+в\s+таблицу)?\s+(today|yesterday|сегодня|вчера|\d{4}-\d{2}-\d{2}|\d{4}-\d{2})$/
+  );
+
+  if (!match) {
+    return null;
+  }
+
+  return {
+    type: match[1],
+    toSheet: lower.includes(" в таблицу "),
+    value: match[2]
   };
 }
 
@@ -639,6 +663,28 @@ function formatDailyControlResult(result) {
   return result.summaryText;
 }
 
+function formatManagementDailyResult(result) {
+  return result.summaryText;
+}
+
+function formatManagementMonthResult(result, type) {
+  return [
+    "Management " + type + " " + result.month,
+    "Rows: " + result.rows.length,
+    ...(result.warnings || [])
+  ].join("\n");
+}
+
+function formatManagementDashboardResult(result) {
+  return [
+    "Management dashboard " + result.month,
+    ...result.rows
+      .filter(row => Array.isArray(row) && row[0] && row[1] !== undefined && !String(row[0]).includes("Date"))
+      .slice(0, 8)
+      .map(row => row[0] + ": " + row[1])
+  ].join("\n");
+}
+
 function formatSkuReport(report) {
   if (!report.rows.length) {
     return "SKU Dashboard пуст за выбранный период.\n\n" + report.missingFieldsNote;
@@ -795,6 +841,7 @@ function startTelegramBot({
   dailySummaryService,
   decisionEngine,
   financeFactsService,
+  managementWorkbookService,
   performanceService,
   reportBuilderService,
   salesFactsService,
@@ -977,6 +1024,80 @@ function startTelegramBot({
         return;
       } catch (err) {
         await tgBot.sendMessage(chatId, "Ошибка daily control: " + err.message);
+        return;
+      }
+    }
+
+    const managementCommand = parseManagementCommand(text);
+
+    if (managementCommand) {
+      try {
+        if (managementCommand.type === "daily") {
+          if (managementCommand.toSheet) {
+            const exported = await managementWorkbookService.exportDaily(managementCommand.value);
+            await sendLongMessage(
+              tgBot,
+              chatId,
+              formatManagementDailyResult(exported.dailyInput) +
+                "\n\nЗаписал 1 строку в " +
+                exported.dailyWrite.tabName +
+                "\nЗаписал 1 строку в " +
+                exported.unitWrite.tabName
+            );
+            return;
+          }
+
+          const result = await managementWorkbookService.buildDailyInputRow(managementCommand.value);
+          result.summaryText = managementWorkbookService.formatDailySummary(result);
+          await sendLongMessage(tgBot, chatId, formatManagementDailyResult(result));
+          return;
+        }
+
+        if (managementCommand.type === "month") {
+          if (managementCommand.toSheet) {
+            const exported = await managementWorkbookService.exportMonth(managementCommand.value);
+            await sendLongMessage(
+              tgBot,
+              chatId,
+              formatManagementMonthResult(exported.monthReview, "month") +
+                "\n\nЗаписал " +
+                exported.monthWrite.rowsWritten +
+                " строк в " +
+                exported.monthWrite.tabName +
+                "\nЗаписал " +
+                exported.dashboardWrite.rowsWritten +
+                " строк в " +
+                exported.dashboardWrite.tabName
+            );
+            return;
+          }
+
+          const result = await managementWorkbookService.buildMonthReviewRows(managementCommand.value);
+          await sendLongMessage(tgBot, chatId, formatManagementMonthResult(result, "month"));
+          return;
+        }
+
+        if (managementCommand.type === "dashboard") {
+          if (managementCommand.toSheet) {
+            const exported = await managementWorkbookService.exportDashboard(managementCommand.value);
+            await sendLongMessage(
+              tgBot,
+              chatId,
+              formatManagementDashboardResult(exported.dashboard) +
+                "\n\nЗаписал " +
+                exported.dashboardWrite.rowsWritten +
+                " строк в " +
+                exported.dashboardWrite.tabName
+            );
+            return;
+          }
+
+          const result = await managementWorkbookService.buildDashboardRows(managementCommand.value);
+          await sendLongMessage(tgBot, chatId, formatManagementDashboardResult(result));
+          return;
+        }
+      } catch (err) {
+        await tgBot.sendMessage(chatId, "Ошибка management " + managementCommand.type + ": " + err.message);
         return;
       }
     }
@@ -1816,6 +1937,7 @@ module.exports = {
   parseCogsCommand,
   parseFinanceCommand,
   parseDailyControlCommand,
+  parseManagementCommand,
   parseSalesCommand,
   parseDailyCommand,
   parseOzonProductsCommand,

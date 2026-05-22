@@ -11,7 +11,8 @@ const {
   SKU_DASHBOARD_HEADERS
 } = require("../services/reportBuilder");
 const { createDailyControlService } = require("../services/dailyControl");
-const { parseCogsCommand, parseDailyControlCommand, parseFinanceCommand, parseReportCommand, parseSalesCommand } = require("../services/telegram");
+const { createManagementWorkbookService } = require("../services/managementWorkbook");
+const { parseCogsCommand, parseDailyControlCommand, parseFinanceCommand, parseManagementCommand, parseReportCommand, parseSalesCommand } = require("../services/telegram");
 const { createCogsService } = require("../services/cogs");
 const { createFinanceFactsService } = require("../services/financeFacts");
 const { createSalesFactsService } = require("../services/salesFacts");
@@ -296,6 +297,21 @@ async function run() {
     toSheet: true,
     dateInput: "yesterday"
   });
+  assert.deepStrictEqual(parseManagementCommand("/management daily 2026-05-14"), {
+    type: "daily",
+    toSheet: false,
+    value: "2026-05-14"
+  });
+  assert.deepStrictEqual(parseManagementCommand("/management month в таблицу 2026-05"), {
+    type: "month",
+    toSheet: true,
+    value: "2026-05"
+  });
+  assert.deepStrictEqual(parseManagementCommand("/management dashboard 2026-05"), {
+    type: "dashboard",
+    toSheet: false,
+    value: "2026-05"
+  });
 
   assert.deepStrictEqual(parseCogsCommand("/cogs template"), { type: "template" });
   assert.deepStrictEqual(parseCogsCommand("/cogs status"), { type: "status" });
@@ -569,6 +585,89 @@ async function run() {
   assert.strictEqual(dailyControlWrites[0].mappingKey, "daily_control");
   assert.strictEqual(dailyControlWrites[0].date, "2026-05-14");
   assert.strictEqual(dailyControlWrites[0].headers[0], "Дата");
+
+  const managementWrites = [];
+  const managementWorkbookService = createManagementWorkbookService({
+    cogsService,
+    financeFactsService,
+    performanceService: {
+      getStoredRowsForDateRange: async (dateFrom, dateTo) => {
+        if (dateFrom === "2026-05-01") {
+          return [
+            { date: "2026-05-13", sku: "111", productName: "Товар 1", spend: 320, impressions: 1000, clicks: 40, addToCart: 5 },
+            { date: "2026-05-14", sku: "222", productName: "Товар 2", spend: 410, impressions: 1500, clicks: 55, addToCart: 8 }
+          ];
+        }
+        return [];
+      }
+    },
+    salesFactsService,
+    sheetsService: {
+      updateMappedRowByDate: async (mappingKey, date, row, options = {}) => {
+        managementWrites.push({ kind: "update", mappingKey, date, row, headers: options.headers });
+        return { rowsWritten: 1, tabName: mappingKey === "daily_input" ? "Daily Input" : "Unit Economics" };
+      },
+      clearAndWriteMappedRows: async (mappingKey, rows, options = {}) => {
+        managementWrites.push({ kind: "clear", mappingKey, rows, headers: options.headers });
+        return { rowsWritten: rows.length, tabName: mappingKey === "month_review" ? "Month Review" : "Dashboard" };
+      }
+    },
+    planVpPerDay: 180645
+  });
+
+  const managementDaily = await managementWorkbookService.buildDailyInputRow("2026-05-14");
+  assert.deepStrictEqual(managementDaily.row.slice(0, 10), [
+    "2026-05-14",
+    managementDaily.row[1],
+    3000,
+    2600,
+    -400,
+    150,
+    15,
+    1430,
+    55,
+    180645
+  ]);
+  assert.strictEqual(managementDaily.row[12], 5203.57);
+
+  const unitEconomics = await managementWorkbookService.buildUnitEconomicsRow("2026-05-14");
+  assert.deepStrictEqual(unitEconomics.row, [
+    "2026-05-14",
+    2600,
+    -400,
+    -15.38,
+    150,
+    15,
+    1430,
+    55
+  ]);
+
+  const monthReview = await managementWorkbookService.buildMonthReviewRows("2026-05");
+  assert.deepStrictEqual(monthReview.rows, [
+    ["2026-05 W2", 5000, 4400, 2350, 47, "Неделя собрана."]
+  ]);
+
+  const dashboard = await managementWorkbookService.buildDashboardRows("2026-05");
+  assert.deepStrictEqual(dashboard.rows.slice(0, 8), [
+    ["Plan VP", 5599995, "", "", "", ""],
+    ["Fact VP", 2350, "", "", "", ""],
+    ["Completion", 0.04, "", "", "", ""],
+    ["Month forecast", 5203.57, "", "", "", ""],
+    ["Needed per day", 329273.24, "", "", "", ""],
+    ["Days with fact", 2, "", "", "", ""],
+    ["Average VP/day", 1175, "", "", "", ""],
+    ["Status", "BELOW PLAN", "", "", "", ""]
+  ]);
+
+  const managementExportDaily = await managementWorkbookService.exportDaily("2026-05-14");
+  assert.strictEqual(managementExportDaily.dailyWrite.tabName, "Daily Input");
+  assert.strictEqual(managementExportDaily.unitWrite.tabName, "Unit Economics");
+  assert.strictEqual(managementWrites[0].mappingKey, "daily_input");
+  assert.strictEqual(managementWrites[1].mappingKey, "unit_economics");
+
+  const managementExportMonth = await managementWorkbookService.exportMonth("2026-05");
+  assert.strictEqual(managementExportMonth.monthWrite.tabName, "Month Review");
+  assert.strictEqual(managementExportMonth.dashboardWrite.tabName, "Dashboard");
 
   const originalFinanceFetch = global.fetch;
   let financeCallCount = 0;
