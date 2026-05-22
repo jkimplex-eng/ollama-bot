@@ -10,7 +10,8 @@ const {
   createReportBuilderService,
   SKU_DASHBOARD_HEADERS
 } = require("../services/reportBuilder");
-const { parseCogsCommand, parseFinanceCommand, parseReportCommand, parseSalesCommand } = require("../services/telegram");
+const { createDailyControlService } = require("../services/dailyControl");
+const { parseCogsCommand, parseDailyControlCommand, parseFinanceCommand, parseReportCommand, parseSalesCommand } = require("../services/telegram");
 const { createCogsService } = require("../services/cogs");
 const { createFinanceFactsService } = require("../services/financeFacts");
 const { createSalesFactsService } = require("../services/salesFacts");
@@ -283,6 +284,18 @@ async function run() {
     dateFrom: "2026-05-01",
     dateTo: "2026-05-14"
   });
+  assert.deepStrictEqual(parseDailyControlCommand("/daily control 2026-05-14"), {
+    toSheet: false,
+    dateInput: "2026-05-14"
+  });
+  assert.deepStrictEqual(parseDailyControlCommand("/daily control today"), {
+    toSheet: false,
+    dateInput: "today"
+  });
+  assert.deepStrictEqual(parseDailyControlCommand("/daily control в таблицу yesterday"), {
+    toSheet: true,
+    dateInput: "yesterday"
+  });
 
   assert.deepStrictEqual(parseCogsCommand("/cogs template"), { type: "template" });
   assert.deepStrictEqual(parseCogsCommand("/cogs status"), { type: "status" });
@@ -450,6 +463,112 @@ async function run() {
       accruedTotal: 166855
     }
   );
+
+  salesFactsService.clearSalesRows();
+  financeFactsService.clearFinanceRows();
+  cogsService.clear();
+  cogsService.setSku("111", 100, { logisticsToMp: 10 });
+  cogsService.setSku("222", 50, { logisticsToMp: 5 });
+  salesFactsService.saveSalesRows(
+    [
+      {
+        date: "2026-05-13",
+        sku: "111",
+        offerId: "offer-111",
+        productName: "Товар 1",
+        quantity: 2,
+        revenue: 2000,
+        price: 1000,
+        postingNumber: "posting-a"
+      },
+      {
+        date: "2026-05-14",
+        sku: "222",
+        offerId: "offer-222",
+        productName: "Товар 2",
+        quantity: 3,
+        revenue: 3000,
+        price: 1000,
+        postingNumber: "posting-b"
+      }
+    ],
+    { source: "test" }
+  );
+  financeFactsService.saveFinanceRows(
+    [
+      {
+        date: "2026-05-13",
+        sales: 1800,
+        returns: -100,
+        ozonCommission: -200,
+        logistics: -50,
+        partnerServices: -20,
+        fboServices: -10,
+        advertising: -300,
+        otherServices: 0,
+        accruedTotal: 1120
+      },
+      {
+        date: "2026-05-14",
+        sales: 2600,
+        returns: -200,
+        ozonCommission: -300,
+        logistics: -70,
+        partnerServices: -30,
+        fboServices: -20,
+        advertising: -400,
+        otherServices: 0,
+        accruedTotal: 1580
+      }
+    ],
+    { source: "test" }
+  );
+
+  const dailyControlWrites = [];
+  const dailyControlService = createDailyControlService({
+    cogsService,
+    financeFactsService,
+    performanceService: {
+      getStoredRowsForDateRange: async () => [
+        { date: "2026-05-13", spend: 320 },
+        { date: "2026-05-14", spend: 410 }
+      ]
+    },
+    salesFactsService,
+    sheetsService: {
+      updateMappedRowByDate: async (mappingKey, date, row, options = {}) => {
+        dailyControlWrites.push({ mappingKey, date, row, headers: options.headers });
+        return { rowsWritten: 1, tabName: "Daily Control" };
+      }
+    },
+    planVpPerDay: 180645
+  });
+
+  const dailyControlResult = await dailyControlService.buildDailyControl("2026-05-14");
+  assert.strictEqual(dailyControlResult.date, "2026-05-14");
+  assert.deepStrictEqual(dailyControlResult.headers[0], "Дата");
+  assert.deepStrictEqual(dailyControlResult.row.slice(0, 10), [
+    "2026-05-14",
+    dailyControlResult.row[1],
+    3000,
+    2600,
+    -400,
+    150,
+    15,
+    1430,
+    55,
+    180645
+  ]);
+  assert.strictEqual(dailyControlResult.row[10], -179215);
+  assert.strictEqual(dailyControlResult.row[11], 2350);
+  assert.strictEqual(dailyControlResult.row[12], 5203.57);
+  assert.strictEqual(dailyControlResult.row[13], "BELOW PLAN");
+
+  const dailyControlExport = await dailyControlService.exportDailyControl("2026-05-14");
+  assert.strictEqual(dailyControlExport.writeResult.tabName, "Daily Control");
+  assert.strictEqual(dailyControlWrites[0].mappingKey, "daily_control");
+  assert.strictEqual(dailyControlWrites[0].date, "2026-05-14");
+  assert.strictEqual(dailyControlWrites[0].headers[0], "Дата");
 
   const originalFinanceFetch = global.fetch;
   let financeCallCount = 0;
@@ -1003,6 +1122,38 @@ async function run() {
   assert.strictEqual(maxRowsResult.stopReason, "max_rows");
 
   const capturedWrites = [];
+  salesFactsService.clearSalesRows();
+  financeFactsService.clearFinanceRows();
+  cogsService.clear();
+  cogsService.setSku("111", 123.45, { logisticsToMp: 10, productName: "Товар 1" });
+  cogsService.setSku("222", 50, { logisticsToMp: 5, productName: "Товар 2" });
+  salesFactsService.saveSalesRows(
+    [
+      {
+        date: "13.05.2026",
+        sku: "111",
+        offerId: "offer-111",
+        productName: "Товар 1",
+        quantity: "3",
+        revenue: "4567,89",
+        price: "1522,63",
+        postingNumber: "posting-1",
+        status: "delivered"
+      },
+      {
+        date: "2026-05-14",
+        sku: "222",
+        offerId: "offer-222",
+        productName: "Товар 2",
+        quantity: 2,
+        revenue: 2000,
+        price: 1000,
+        postingNumber: "posting-2",
+        status: "delivered"
+      }
+    ],
+    { source: "test" }
+  );
   financeFactsService.saveFinanceRows(
     [
       {

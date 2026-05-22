@@ -166,6 +166,56 @@ const sheetsMap = {
     ],
     mode: "append"
   },
+  daily_control: {
+    logicalName: "daily_control",
+    tabName: "Daily Control",
+    columns: [
+      "Дата",
+      "День",
+      "Заказы ₽",
+      "Продажи ₽",
+      "Реклама ₽",
+      "Себестоимость ₽",
+      "Доставка до МП ₽",
+      "ВП ₽",
+      "Маржа ВП %",
+      "План ВП/день",
+      "Отклонение ₽",
+      "Накоп. ВП ₽",
+      "Run-rate прогноз ₽",
+      "Статус",
+      "Комментарий"
+    ],
+    formatting: {
+      boldHeader: true,
+      freezeRows: 1,
+      autoResizeColumns: true,
+      headerBackground: "#000000",
+      headerFontColor: "#ffffff",
+      currencyColumns: [
+        "Заказы ₽",
+        "Продажи ₽",
+        "Реклама ₽",
+        "Себестоимость ₽",
+        "Доставка до МП ₽",
+        "ВП ₽",
+        "План ВП/день",
+        "Отклонение ₽",
+        "Накоп. ВП ₽",
+        "Run-rate прогноз ₽"
+      ],
+      percentColumns: ["Маржа ВП %"],
+      conditionalColumns: [
+        {
+          header: "ВП ₽",
+          positiveBackground: "#d9ead3",
+          negativeBackground: "#f4cccc",
+          neutralBackground: ""
+        }
+      ]
+    },
+    mode: "replace"
+  },
   alerts: {
     logicalName: "alerts",
     tabName: "Alerts",

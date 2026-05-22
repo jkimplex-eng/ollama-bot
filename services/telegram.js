@@ -17,6 +17,10 @@ function getHelpText() {
     "/daily 2026-05-13 2026-05-14",
     "/daily debug 2026-05-13",
     "/daily raw 2026-05-13",
+    "/daily control 2026-05-14",
+    "/daily control today",
+    "/daily control yesterday",
+    "/daily control в таблицу 2026-05-14",
     "/analytics",
     "/analytics продажи",
     "/analytics реклама",
@@ -204,6 +208,23 @@ function parseReportCommand(text) {
     toSheet: normalized.includes(" в таблицу "),
     dateFrom: match[2],
     dateTo: match[3]
+  };
+}
+
+function parseDailyControlCommand(text) {
+  const normalized = text.trim().replace(/\s+/g, " ");
+  const lower = normalized.toLowerCase();
+  const match = lower.match(
+    /^\/daily\s+control(?:\s+в\s+таблицу)?\s+(today|yesterday|сегодня|вчера|\d{4}-\d{2}-\d{2})$/
+  );
+
+  if (!match) {
+    return null;
+  }
+
+  return {
+    toSheet: lower.includes(" в таблицу "),
+    dateInput: match[1]
   };
 }
 
@@ -614,6 +635,10 @@ function formatPnlReport(report) {
   ].join("\n");
 }
 
+function formatDailyControlResult(result) {
+  return result.summaryText;
+}
+
 function formatSkuReport(report) {
   if (!report.rows.length) {
     return "SKU Dashboard пуст за выбранный период.\n\n" + report.missingFieldsNote;
@@ -766,6 +791,7 @@ function startTelegramBot({
   analyticsService,
   alertsService,
   cogsService,
+  dailyControlService,
   dailySummaryService,
   decisionEngine,
   financeFactsService,
@@ -928,6 +954,31 @@ function startTelegramBot({
       const ollamaStatus = await ollamaService.getStatus();
       await sendLongMessage(tgBot, chatId, formatModelsInfo(ollamaModels, ollamaStatus));
       return;
+    }
+
+    const dailyControlCommand = parseDailyControlCommand(text);
+
+    if (dailyControlCommand) {
+      try {
+        if (dailyControlCommand.toSheet) {
+          const exported = await dailyControlService.exportDailyControl(dailyControlCommand.dateInput);
+          await sendLongMessage(
+            tgBot,
+            chatId,
+            formatDailyControlResult(exported) +
+              "\n\nЗаписал 1 строку в " +
+              exported.writeResult.tabName
+          );
+          return;
+        }
+
+        const result = await dailyControlService.buildDailyControl(dailyControlCommand.dateInput);
+        await sendLongMessage(tgBot, chatId, formatDailyControlResult(result));
+        return;
+      } catch (err) {
+        await tgBot.sendMessage(chatId, "Ошибка daily control: " + err.message);
+        return;
+      }
     }
 
     const dailyCommand = parseDailyCommand(text);
@@ -1764,6 +1815,7 @@ module.exports = {
   parseAnalyticsCommand,
   parseCogsCommand,
   parseFinanceCommand,
+  parseDailyControlCommand,
   parseSalesCommand,
   parseDailyCommand,
   parseOzonProductsCommand,

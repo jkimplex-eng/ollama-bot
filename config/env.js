@@ -30,6 +30,7 @@ module.exports = {
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || "",
   cronSecret: process.env.CRON_SECRET || "",
   dailySummaryChatId: process.env.DAILY_SUMMARY_CHAT_ID || "",
+  dailyControlPlanVp: Number(process.env.DAILY_CONTROL_PLAN_VP || 0),
   googleSheetsWebappUrl: process.env.GOOGLE_SHEETS_WEBAPP_URL || "",
   ozonClientId: process.env.OZON_CLIENT_ID || "",
   ozonApiKey: process.env.OZON_API_KEY || "",

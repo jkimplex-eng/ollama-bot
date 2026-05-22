@@ -53,6 +53,7 @@ Daily summary / cron:
 
 - `CRON_SECRET`
 - `DAILY_SUMMARY_CHAT_ID`
+- `DAILY_CONTROL_PLAN_VP=180645`
 
 Optional local COGS mapping:
 
@@ -98,6 +99,10 @@ Alerts:
 - `/daily 2026-05-13 2026-05-14`
 - `/daily debug 2026-05-13`
 - `/daily raw 2026-05-13`
+- `/daily control today`
+- `/daily control yesterday`
+- `/daily control 2026-05-14`
+- `/daily control в таблицу today`
 - `/analytics`
 - `/analytics продажи`
 - `/analytics реклама`
@@ -321,6 +326,7 @@ Cron:
 - `performance_stats`: `Date | Campaign ID | Campaign Name | SKU | Product Name | Price | Impressions | Clicks | CTR | Add To Cart | Avg CPC | Spend | Orders | Revenue | Model Orders | Model Revenue | DRR | Ordered Amount | Total DRR | Added At`
 - `cogs_mapping`: `SKU | Offer ID | Product Name | COGS | Logistics To MP | Notes`
 - `daily_summary`: `Дата | Выручка | Выплата Ozon | Заказы | Комиссия | Логистика | Реклама | Себестоимость | Прибыль | Маржа | ДРР`
+- `daily_control`: `Дата | День | Заказы ₽ | Продажи ₽ | Реклама ₽ | Себестоимость ₽ | Доставка до МП ₽ | ВП ₽ | Маржа ВП % | План ВП/день | Отклонение ₽ | Накоп. ВП ₽ | Run-rate прогноз ₽ | Статус | Комментарий`
 - `alerts`: `Дата | Уровень | Тип | Сообщение`
 
 Дополнительные daily diagnostics tabs:
@@ -395,6 +401,24 @@ Apps Script должен принимать JSON:
     ]
   },
   "rows": [["..."], ["..."]]
+}
+```
+
+```json
+{
+  "action": "updateByDate",
+  "sheet": "Actual_Tab_Name",
+  "dateColumn": "Дата",
+  "date": "2026-05-14",
+  "headers": ["Дата", "День"],
+  "formatting": {
+    "boldHeader": true,
+    "freezeRows": 1,
+    "autoResizeColumns": true,
+    "headerBackground": "#000000",
+    "headerFontColor": "#ffffff"
+  },
+  "row": ["2026-05-14", "ср"]
 }
 ```
 
@@ -560,6 +584,55 @@ function doPost(e) {
       return jsonResponse({ ok: true, action: payload.action, rowsWritten: rows.length });
     }
 
+    if (payload.action === "updateByDate") {
+      var updateHeaders = headers;
+      var dateColumnName = String(payload.dateColumn || "Дата");
+      var updateRow = Array.isArray(payload.row) ? payload.row.slice() : [];
+      while (updateRow.length < width) updateRow.push("");
+      updateRow = updateRow.slice(0, width);
+
+      if (updateHeaders.length) {
+        sheet.getRange(1, 1, 1, updateHeaders.length).setValues([updateHeaders]);
+      }
+
+      var dateColumnIndex = updateHeaders.indexOf(dateColumnName);
+      if (dateColumnIndex === -1) {
+        return jsonResponse({ ok: false, error: "Date column not found in headers: " + dateColumnName });
+      }
+
+      var lastRow = Math.max(sheet.getLastRow(), 1);
+      var existingValues = lastRow > 1
+        ? sheet.getRange(2, dateColumnIndex + 1, lastRow - 1, 1).getValues()
+        : [];
+
+      function normalizeDateKey(value) {
+        var text = String(value || "").trim();
+        if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+        var ru = text.match(/^(\d{2})\.(\d{2})(?:\.(\d{4}))?$/);
+        if (ru) {
+          return (ru[3] || "0000") + "-" + ru[2] + "-" + ru[1];
+        }
+        return text;
+      }
+
+      var targetDate = normalizeDateKey(payload.date);
+      var rowIndex = null;
+      for (var r = 0; r < existingValues.length; r += 1) {
+        if (normalizeDateKey(existingValues[r][0]) === targetDate) {
+          rowIndex = r + 2;
+          break;
+        }
+      }
+
+      if (rowIndex === null) {
+        rowIndex = Math.max(sheet.getLastRow() + 1, 2);
+      }
+
+      sheet.getRange(rowIndex, 1, 1, width).setValues([updateRow]);
+      applySheetFormatting();
+      return jsonResponse({ ok: true, action: payload.action, rowIndex: rowIndex, rowsWritten: 1 });
+    }
+
     return jsonResponse({ ok: false, error: "Unknown action: " + payload.action });
   } catch (error) {
     return jsonResponse({ ok: false, error: error.message });
@@ -577,6 +650,7 @@ function jsonResponse(data) {
 
 - Apps Script не должен создавать sheets автоматически
 - `clearAndWrite` и `replaceRows` должны очищать sheet, писать headers в строку 1 и данные со строки 2
+- `updateByDate` должен сохранять headers, искать строку по колонке `Дата`, обновлять найденную строку и добавлять новую только если дата не найдена
 - `formatting` поддерживает: `boldHeader`, `freezeRows`, `autoResizeColumns`, `headerBackground`, `headerFontColor`, `currencyColumns`, `percentColumns`, `conditionalColumns`, `currencyRows`, `percentRows`, `conditionalRows`
 - для dashboard sheets рекомендуется:
   - чёрный header background
@@ -596,6 +670,8 @@ function jsonResponse(data) {
 - `/performance stats в таблицу 2026-05-01 2026-05-14`
 - `/performance debug`
 - `/ozon товары 10 в таблицу`
+- `/daily control today`
+- `/daily control в таблицу today`
 
 ## How to work with Codex safely
 

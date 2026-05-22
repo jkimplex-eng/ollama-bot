@@ -689,6 +689,12 @@ async function run() {
     await sheetsService.clearAndWriteMappedRows("performance_campaigns", [
       ["1", "Campaign", "RUNNING", "SKU", "CPC", "2026-05-13", "2026-05-14", 1000, 100, 700, "PLACEMENT_TOP_PROMOTION", "", "", ""]
     ]);
+
+    await sheetsService.updateMappedRowByDate(
+      "daily_control",
+      "2026-05-14",
+      ["2026-05-14", "ср", 100, 90, -10, 20, 5, 55, 61.11, 50, 5, 55, 85.25, "OK", "test"]
+    );
   } finally {
     global.fetch = originalFetch;
   }
@@ -710,6 +716,18 @@ async function run() {
   assert.strictEqual(fetchCalls[3].body.headers[0], "Campaign ID");
   assert.deepStrictEqual(fetchCalls[3].body.formatting.currencyColumns, ["Budget", "Daily Budget", "Weekly Budget"]);
   assert.strictEqual(fetchCalls[3].body.formatting.headerBackground, "#000000");
+  assert.strictEqual(fetchCalls[4].body.action, "updateByDate");
+  assert.strictEqual(fetchCalls[4].body.sheet, "Daily Control");
+  assert.strictEqual(fetchCalls[4].body.dateColumn, "Дата");
+  assert.strictEqual(fetchCalls[4].body.date, "2026-05-14");
+  assert.strictEqual(fetchCalls[4].body.row[0], "2026-05-14");
+  assert.strictEqual(fetchCalls[4].body.headers[0], "Дата");
+  assert.strictEqual(fetchCalls[4].body.formatting.headerBackground, "#000000");
+  assert.strictEqual(fetchCalls[4].body.formatting.headerFontColor, "#ffffff");
+  assert.strictEqual(fetchCalls[4].body.formatting.freezeRows, 1);
+  assert.strictEqual(fetchCalls[4].body.formatting.autoResizeColumns, true);
+  assert.ok(Array.isArray(fetchCalls[4].body.formatting.currencyColumns));
+  assert.ok(Array.isArray(fetchCalls[4].body.formatting.percentColumns));
   assert.deepStrictEqual(fetchCalls[0].body.formatting, {
     boldHeader: true,
     freezeRows: 1,

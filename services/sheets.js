@@ -242,6 +242,29 @@ function createSheetsService({ webappUrl }) {
     };
   }
 
+  async function updateMappedRowByDate(mappingKey, date, row, options = {}) {
+    const { mapping, normalizedRows, headers, formatting } = prepareRows(mappingKey, [row], options);
+    const normalizedDate = String(date || "").trim();
+    await postAction(
+      {
+        action: "updateByDate",
+        sheet: mapping.tabName,
+        headers,
+        formatting,
+        dateColumn: options.dateColumn || "Дата",
+        date: normalizedDate,
+        row: normalizedRows[0]
+      },
+      mapping.tabName
+    );
+
+    return {
+      mappingKey,
+      tabName: mapping.tabName,
+      rowsWritten: 1
+    };
+  }
+
   async function addRow(mappingKey, row) {
     return appendMappedRows(mappingKey, [row]);
   }
@@ -255,7 +278,8 @@ function createSheetsService({ webappUrl }) {
     addRows,
     appendMappedRows,
     clearAndWriteMappedRows,
-    replaceMappedRows
+    replaceMappedRows,
+    updateMappedRowByDate
   };
 }
 
