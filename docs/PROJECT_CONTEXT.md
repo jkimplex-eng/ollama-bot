@@ -151,6 +151,16 @@ Working:
 - stored row dates support both `DD.MM.YYYY` and `YYYY-MM-DD`
 - `/performance rows status` shows normalized ISO min/max dates
 
+## Management workbook mode
+
+Current rule:
+
+- the bot writes only to `Daily Input`
+- `Dashboard`, `Unit Economics`, `Month Review`, and `Settings` are treated as formula-driven template sheets
+- `/management daily YYYY-MM-DD` builds the daily row preview
+- `/management daily в таблицу YYYY-MM-DD` updates the matching date row in `Daily Input`
+- `/management month ...` and `/management dashboard ...` may exist as read/help flows, but the bot must not overwrite template formula sheets
+
 Known current dashboard issue:
 
 - `/report sku` correctly shows advertising spend, e.g. `Реклама: 4067.16`

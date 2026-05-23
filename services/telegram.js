@@ -24,9 +24,7 @@ function getHelpText() {
     "/management daily 2026-05-14",
     "/management daily в таблицу 2026-05-14",
     "/management month 2026-05",
-    "/management month в таблицу 2026-05",
     "/management dashboard 2026-05",
-    "/management dashboard в таблицу 2026-05",
     "/analytics",
     "/analytics продажи",
     "/analytics реклама",
@@ -685,6 +683,10 @@ function formatManagementDashboardResult(result) {
   ].join("\n");
 }
 
+function formatManagementTemplateOnlyMessage() {
+  return "Этот лист считается формулами в шаблоне. Бот заполняет только Daily Input.";
+}
+
 function formatSkuReport(report) {
   if (!report.rows.length) {
     return "SKU Dashboard пуст за выбранный период.\n\n" + report.missingFieldsNote;
@@ -1040,9 +1042,7 @@ function startTelegramBot({
               chatId,
               formatManagementDailyResult(exported.dailyInput) +
                 "\n\nЗаписал 1 строку в " +
-                exported.dailyWrite.tabName +
-                "\nЗаписал 1 строку в " +
-                exported.unitWrite.tabName
+                exported.dailyWrite.tabName
             );
             return;
           }
@@ -1055,45 +1055,21 @@ function startTelegramBot({
 
         if (managementCommand.type === "month") {
           if (managementCommand.toSheet) {
-            const exported = await managementWorkbookService.exportMonth(managementCommand.value);
-            await sendLongMessage(
-              tgBot,
-              chatId,
-              formatManagementMonthResult(exported.monthReview, "month") +
-                "\n\nЗаписал " +
-                exported.monthWrite.rowsWritten +
-                " строк в " +
-                exported.monthWrite.tabName +
-                "\nЗаписал " +
-                exported.dashboardWrite.rowsWritten +
-                " строк в " +
-                exported.dashboardWrite.tabName
-            );
+            await sendLongMessage(tgBot, chatId, formatManagementTemplateOnlyMessage());
             return;
           }
 
-          const result = await managementWorkbookService.buildMonthReviewRows(managementCommand.value);
-          await sendLongMessage(tgBot, chatId, formatManagementMonthResult(result, "month"));
+          await sendLongMessage(tgBot, chatId, formatManagementTemplateOnlyMessage());
           return;
         }
 
         if (managementCommand.type === "dashboard") {
           if (managementCommand.toSheet) {
-            const exported = await managementWorkbookService.exportDashboard(managementCommand.value);
-            await sendLongMessage(
-              tgBot,
-              chatId,
-              formatManagementDashboardResult(exported.dashboard) +
-                "\n\nЗаписал " +
-                exported.dashboardWrite.rowsWritten +
-                " строк в " +
-                exported.dashboardWrite.tabName
-            );
+            await sendLongMessage(tgBot, chatId, formatManagementTemplateOnlyMessage());
             return;
           }
 
-          const result = await managementWorkbookService.buildDashboardRows(managementCommand.value);
-          await sendLongMessage(tgBot, chatId, formatManagementDashboardResult(result));
+          await sendLongMessage(tgBot, chatId, formatManagementTemplateOnlyMessage());
           return;
         }
       } catch (err) {

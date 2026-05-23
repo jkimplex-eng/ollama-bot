@@ -103,6 +103,10 @@ Alerts:
 - `/daily control yesterday`
 - `/daily control 2026-05-14`
 - `/daily control в таблицу today`
+- `/management daily 2026-05-14`
+- `/management daily в таблицу 2026-05-14`
+- `/management month 2026-05`
+- `/management dashboard 2026-05`
 - `/analytics`
 - `/analytics продажи`
 - `/analytics реклама`
@@ -238,6 +242,25 @@ Daily P&L:
 - postings и finance за один день могут не совпадать по времени появления
 - без `data/cogs.json` бот не рассчитывает прибыль, а пишет, что COGS не настроен
 - если в finance есть только списания или корректировки без продаж, бот показывает предупреждение вместо фейкового P&L
+
+## Management workbook mode
+
+Если у пользователя уже есть шаблон workbook с листами:
+
+- `Dashboard`
+- `Daily Input`
+- `Unit Economics`
+- `Month Review`
+- `Settings`
+
+бот заполняет только `Daily Input`.
+
+Важно:
+
+- `Dashboard`, `Unit Economics`, `Month Review` и `Settings` считаются формулами внутри шаблона
+- бот не делает `clearAndWrite` в эти листы
+- `/management daily в таблицу ...` обновляет только строку нужной даты в `Daily Input`
+- остальные `/management ... в таблицу` команды возвращают подсказку, что этот лист считается формулами в шаблоне
 
 ## External cron
 

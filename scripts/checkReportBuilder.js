@@ -605,11 +605,7 @@ async function run() {
     sheetsService: {
       updateMappedRowByDate: async (mappingKey, date, row, options = {}) => {
         managementWrites.push({ kind: "update", mappingKey, date, row, headers: options.headers });
-        return { rowsWritten: 1, tabName: mappingKey === "daily_input" ? "Daily Input" : "Unit Economics" };
-      },
-      clearAndWriteMappedRows: async (mappingKey, rows, options = {}) => {
-        managementWrites.push({ kind: "clear", mappingKey, rows, headers: options.headers });
-        return { rowsWritten: rows.length, tabName: mappingKey === "month_review" ? "Month Review" : "Dashboard" };
+        return { rowsWritten: 1, tabName: "Daily Input" };
       }
     },
     planVpPerDay: 180645
@@ -630,44 +626,11 @@ async function run() {
   ]);
   assert.strictEqual(managementDaily.row[12], 5203.57);
 
-  const unitEconomics = await managementWorkbookService.buildUnitEconomicsRow("2026-05-14");
-  assert.deepStrictEqual(unitEconomics.row, [
-    "2026-05-14",
-    2600,
-    -400,
-    -15.38,
-    150,
-    15,
-    1430,
-    55
-  ]);
-
-  const monthReview = await managementWorkbookService.buildMonthReviewRows("2026-05");
-  assert.deepStrictEqual(monthReview.rows, [
-    ["2026-05 W2", 5000, 4400, 2350, 47, "Неделя собрана."]
-  ]);
-
-  const dashboard = await managementWorkbookService.buildDashboardRows("2026-05");
-  assert.deepStrictEqual(dashboard.rows.slice(0, 8), [
-    ["Plan VP", 5599995, "", "", "", ""],
-    ["Fact VP", 2350, "", "", "", ""],
-    ["Completion", 0.04, "", "", "", ""],
-    ["Month forecast", 5203.57, "", "", "", ""],
-    ["Needed per day", 329273.24, "", "", "", ""],
-    ["Days with fact", 2, "", "", "", ""],
-    ["Average VP/day", 1175, "", "", "", ""],
-    ["Status", "BELOW PLAN", "", "", "", ""]
-  ]);
-
   const managementExportDaily = await managementWorkbookService.exportDaily("2026-05-14");
   assert.strictEqual(managementExportDaily.dailyWrite.tabName, "Daily Input");
-  assert.strictEqual(managementExportDaily.unitWrite.tabName, "Unit Economics");
   assert.strictEqual(managementWrites[0].mappingKey, "daily_input");
-  assert.strictEqual(managementWrites[1].mappingKey, "unit_economics");
-
-  const managementExportMonth = await managementWorkbookService.exportMonth("2026-05");
-  assert.strictEqual(managementExportMonth.monthWrite.tabName, "Month Review");
-  assert.strictEqual(managementExportMonth.dashboardWrite.tabName, "Dashboard");
+  assert.strictEqual(managementWrites.length, 1);
+  assert.strictEqual(managementWorkbookService.templateOnlyMessage, "Этот лист считается формулами в шаблоне. Бот заполняет только Daily Input.");
 
   const originalFinanceFetch = global.fetch;
   let financeCallCount = 0;

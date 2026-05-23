@@ -701,21 +701,6 @@ async function run() {
       "2026-05-14",
       ["2026-05-14", "ср", 100, 90, -10, 20, 5, 55, 61.11, 50, 5, 55, 85.25, "OK", "test"]
     );
-
-    await sheetsService.updateMappedRowByDate(
-      "unit_economics",
-      "2026-05-14",
-      ["2026-05-14", 90, -10, -11.11, 20, 5, 55, 61.11]
-    );
-
-    await sheetsService.clearAndWriteMappedRows("month_review", [
-      ["2026-05 W2", 1000, 900, 200, 20, "ok"]
-    ]);
-
-    await sheetsService.clearAndWriteMappedRows("management_dashboard", [
-      ["Plan VP", 1000],
-      ["Fact VP", 900]
-    ]);
   } finally {
     global.fetch = originalFetch;
   }
@@ -754,16 +739,6 @@ async function run() {
   assert.strictEqual(fetchCalls[5].body.headers[0], "Дата");
   assert.strictEqual(fetchCalls[5].body.formatting.headerBackground, "#000000");
   assert.ok(fetchCalls[5].body.formatting.currencyColumns.includes("ВП ₽"));
-  assert.strictEqual(fetchCalls[6].body.action, "updateByDate");
-  assert.strictEqual(fetchCalls[6].body.sheet, "Unit Economics");
-  assert.deepStrictEqual(fetchCalls[6].body.headers, getSheetMapping("unit_economics").columns);
-  assert.ok(fetchCalls[6].body.formatting.percentColumns.includes("Реклама %"));
-  assert.strictEqual(fetchCalls[7].body.sheet, "Month Review");
-  assert.deepStrictEqual(fetchCalls[7].body.headers, getSheetMapping("month_review").columns);
-  assert.strictEqual(fetchCalls[7].body.formatting.freezeRows, 1);
-  assert.strictEqual(fetchCalls[8].body.sheet, "Dashboard");
-  assert.deepStrictEqual(fetchCalls[8].body.headers, getSheetMapping("management_dashboard").columns);
-  assert.strictEqual(fetchCalls[8].body.formatting.autoResizeColumns, true);
   assert.deepStrictEqual(fetchCalls[0].body.formatting, {
     boldHeader: true,
     freezeRows: 1,
