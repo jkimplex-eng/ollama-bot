@@ -605,7 +605,7 @@ async function run() {
     sheetsService: {
       updateMappedRowByDate: async (mappingKey, date, row, options = {}) => {
         managementWrites.push({ kind: "update", mappingKey, date, row, headers: options.headers });
-        return { rowsWritten: 1, tabName: "Daily Input" };
+        return { rowsWritten: 1, tabName: "Daily Input", matchedRow: 14, dateMatchedAs: "05-14", appended: false };
       }
     },
     planVpPerDay: 180645
@@ -630,6 +630,9 @@ async function run() {
   assert.strictEqual(managementExportDaily.dailyWrite.tabName, "Daily Input");
   assert.strictEqual(managementWrites[0].mappingKey, "daily_input");
   assert.strictEqual(managementWrites.length, 1);
+  assert.strictEqual(managementExportDaily.dailyWrite.matchedRow, 14);
+  assert.strictEqual(managementExportDaily.dailyWrite.dateMatchedAs, "05-14");
+  assert.strictEqual(managementExportDaily.dailyWrite.appended, false);
   assert.strictEqual(managementWorkbookService.templateOnlyMessage, "Этот лист считается формулами в шаблоне. Бот заполняет только Daily Input.");
 
   const originalFinanceFetch = global.fetch;

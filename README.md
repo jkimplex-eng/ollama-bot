@@ -629,31 +629,47 @@ function doPost(e) {
         : [];
 
       function normalizeDateKey(value) {
+        if (Object.prototype.toString.call(value) === "[object Date]" && !isNaN(value)) {
+          return Utilities.formatDate(value, Session.getScriptTimeZone(), "MM-dd");
+        }
         var text = String(value || "").trim();
-        if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+        if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text.slice(5);
         var ru = text.match(/^(\d{2})\.(\d{2})(?:\.(\d{4}))?$/);
         if (ru) {
-          return (ru[3] || "0000") + "-" + ru[2] + "-" + ru[1];
+          return ru[2] + "-" + ru[1];
         }
         return text;
       }
 
       var targetDate = normalizeDateKey(payload.date);
+      var matchedAs = "";
       var rowIndex = null;
       for (var r = 0; r < existingValues.length; r += 1) {
-        if (normalizeDateKey(existingValues[r][0]) === targetDate) {
+        var normalizedExistingDate = normalizeDateKey(existingValues[r][0]);
+        if (normalizedExistingDate === targetDate) {
           rowIndex = r + 2;
+          matchedAs = normalizedExistingDate;
           break;
         }
       }
 
+      var appended = false;
       if (rowIndex === null) {
         rowIndex = Math.max(sheet.getLastRow() + 1, 2);
+        appended = true;
       }
 
       sheet.getRange(rowIndex, 1, 1, width).setValues([updateRow]);
       applySheetFormatting();
-      return jsonResponse({ ok: true, action: payload.action, rowIndex: rowIndex, rowsWritten: 1 });
+      return jsonResponse({
+        ok: true,
+        action: payload.action,
+        rowIndex: rowIndex,
+        matchedRow: rowIndex,
+        dateMatchedAs: matchedAs || targetDate,
+        appended: appended,
+        rowsWritten: 1
+      });
     }
 
     return jsonResponse({ ok: false, error: "Unknown action: " + payload.action });
@@ -674,6 +690,8 @@ function jsonResponse(data) {
 - Apps Script не должен создавать sheets автоматически
 - `clearAndWrite` и `replaceRows` должны очищать sheet, писать headers в строку 1 и данные со строки 2
 - `updateByDate` должен сохранять headers, искать строку по колонке `Дата`, обновлять найденную строку и добавлять новую только если дата не найдена
+- для `Daily Input` допустимо матчить даты как `DD.MM`, `DD.MM.YYYY`, `YYYY-MM-DD` и Google Sheets Date object
+- рекомендуется helper `normalizeDateKey(value)`, который приводит все форматы к `MM-DD` для monthly-шаблона
 - `formatting` поддерживает: `boldHeader`, `freezeRows`, `autoResizeColumns`, `headerBackground`, `headerFontColor`, `currencyColumns`, `percentColumns`, `conditionalColumns`, `currencyRows`, `percentRows`, `conditionalRows`
 - для dashboard sheets рекомендуется:
   - чёрный header background

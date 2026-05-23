@@ -657,13 +657,22 @@ async function run() {
   const fetchCalls = [];
   const originalFetch = global.fetch;
   global.fetch = async (url, options) => {
+    const body = JSON.parse(options.body);
     fetchCalls.push({
       url,
-      body: JSON.parse(options.body)
+      body
     });
     return {
       ok: true,
-      text: async () => JSON.stringify({ ok: true })
+      text: async () => {
+        if (body.action === "updateByDate" && body.sheet === "Daily Input") {
+          return JSON.stringify({ ok: true, matchedRow: 7, dateMatchedAs: "05-14", appended: false });
+        }
+        if (body.action === "updateByDate" && body.sheet === "Daily Control") {
+          return JSON.stringify({ ok: true, matchedRow: 12, dateMatchedAs: "2026-05-14", appended: false });
+        }
+        return JSON.stringify({ ok: true });
+      }
     };
   };
 
@@ -690,17 +699,23 @@ async function run() {
       ["1", "Campaign", "RUNNING", "SKU", "CPC", "2026-05-13", "2026-05-14", 1000, 100, 700, "PLACEMENT_TOP_PROMOTION", "", "", ""]
     ]);
 
-    await sheetsService.updateMappedRowByDate(
+    const dailyControlWrite = await sheetsService.updateMappedRowByDate(
       "daily_control",
       "2026-05-14",
       ["2026-05-14", "ср", 100, 90, -10, 20, 5, 55, 61.11, 50, 5, 55, 85.25, "OK", "test"]
     );
 
-    await sheetsService.updateMappedRowByDate(
+    const dailyInputWrite = await sheetsService.updateMappedRowByDate(
       "daily_input",
       "2026-05-14",
       ["2026-05-14", "ср", 100, 90, -10, 20, 5, 55, 61.11, 50, 5, 55, 85.25, "OK", "test"]
     );
+    assert.strictEqual(dailyControlWrite.matchedRow, 12);
+    assert.strictEqual(dailyControlWrite.dateMatchedAs, "2026-05-14");
+    assert.strictEqual(dailyControlWrite.appended, false);
+    assert.strictEqual(dailyInputWrite.matchedRow, 7);
+    assert.strictEqual(dailyInputWrite.dateMatchedAs, "05-14");
+    assert.strictEqual(dailyInputWrite.appended, false);
   } finally {
     global.fetch = originalFetch;
   }

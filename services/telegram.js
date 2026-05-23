@@ -1037,12 +1037,15 @@ function startTelegramBot({
         if (managementCommand.type === "daily") {
           if (managementCommand.toSheet) {
             const exported = await managementWorkbookService.exportDaily(managementCommand.value);
+            const writeMessage = exported.dailyWrite.appended
+              ? "Добавил новую строку Daily Input"
+              : "Обновил Daily Input, строка " + exported.dailyWrite.matchedRow;
             await sendLongMessage(
               tgBot,
               chatId,
               formatManagementDailyResult(exported.dailyInput) +
-                "\n\nЗаписал 1 строку в " +
-                exported.dailyWrite.tabName
+                "\n\n" +
+                writeMessage
             );
             return;
           }

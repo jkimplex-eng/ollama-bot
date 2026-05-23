@@ -245,7 +245,7 @@ function createSheetsService({ webappUrl }) {
   async function updateMappedRowByDate(mappingKey, date, row, options = {}) {
     const { mapping, normalizedRows, headers, formatting } = prepareRows(mappingKey, [row], options);
     const normalizedDate = String(date || "").trim();
-    await postAction(
+    const result = await postAction(
       {
         action: "updateByDate",
         sheet: mapping.tabName,
@@ -261,7 +261,10 @@ function createSheetsService({ webappUrl }) {
     return {
       mappingKey,
       tabName: mapping.tabName,
-      rowsWritten: 1
+      rowsWritten: 1,
+      matchedRow: result?.matchedRow ?? result?.rowIndex ?? null,
+      dateMatchedAs: result?.dateMatchedAs ?? "",
+      appended: Boolean(result?.appended)
     };
   }
 
