@@ -11,7 +11,7 @@ const {
   SKU_DASHBOARD_HEADERS
 } = require("../services/reportBuilder");
 const { createDailyControlService } = require("../services/dailyControl");
-const { createManagementWorkbookService } = require("../services/managementWorkbook");
+const { createManagementWorkbookService, DAILY_INPUT_WRITE_COLUMNS } = require("../services/managementWorkbook");
 const { parseCogsCommand, parseDailyControlCommand, parseFinanceCommand, parseManagementCommand, parseReportCommand, parseSalesCommand } = require("../services/telegram");
 const { createCogsService } = require("../services/cogs");
 const { createFinanceFactsService } = require("../services/financeFacts");
@@ -604,7 +604,7 @@ async function run() {
     salesFactsService,
     sheetsService: {
       updateMappedRowByDate: async (mappingKey, date, row, options = {}) => {
-        managementWrites.push({ kind: "update", mappingKey, date, row, headers: options.headers });
+        managementWrites.push({ kind: "update", mappingKey, date, row, headers: options.headers, writeColumns: options.writeColumns });
         return { rowsWritten: 1, tabName: "Daily Input", matchedRow: 14, dateMatchedAs: "05-14", appended: false };
       }
     },
@@ -633,7 +633,60 @@ async function run() {
   assert.strictEqual(managementExportDaily.dailyWrite.matchedRow, 14);
   assert.strictEqual(managementExportDaily.dailyWrite.dateMatchedAs, "05-14");
   assert.strictEqual(managementExportDaily.dailyWrite.appended, false);
+  assert.deepStrictEqual(managementWrites[0].writeColumns, DAILY_INPUT_WRITE_COLUMNS);
+  assert.strictEqual(managementWrites[0].row[9], "");
+  assert.strictEqual(managementWrites[0].row[10], "");
+  assert.strictEqual(managementWrites[0].row[11], "");
+  assert.strictEqual(managementWrites[0].row[12], "");
+  assert.deepStrictEqual(managementWrites[0].headers, [
+    "Дата",
+    "День",
+    "Заказы ₽",
+    "Продажи ₽",
+    "Реклама ₽",
+    "Себестоимость ₽",
+    "Доставка до МП ₽",
+    "ВП ₽",
+    "Маржа ВП %",
+    "План ВП/день",
+    "Отклонение ₽",
+    "Накоп. ВП ₽",
+    "Run-rate прогноз ₽",
+    "Статус",
+    "Комментарий"
+  ]);
   assert.strictEqual(managementWorkbookService.templateOnlyMessage, "Этот лист считается формулами в шаблоне. Бот заполняет только Daily Input.");
+
+  const templatePlanManagementService = createManagementWorkbookService({
+    cogsService,
+    financeFactsService,
+    performanceService: {
+      getStoredRowsForDateRange: async () => [{ date: "2026-05-14", spend: 410 }]
+    },
+    salesFactsService,
+    sheetsService: {
+      updateMappedRowByDate: async () => ({ rowsWritten: 1, tabName: "Daily Input" })
+    },
+    planVpPerDay: 0
+  });
+  const templatePlanDaily = await templatePlanManagementService.buildDailyInputRow("2026-05-14");
+  assert.strictEqual(templatePlanDaily.row[8], 55);
+  assert.strictEqual(templatePlanDaily.row[9], "");
+  assert.strictEqual(templatePlanDaily.row[10], "");
+  assert.strictEqual(templatePlanDaily.metrics.comment, "План считается формулой в шаблоне.");
+  assert.deepStrictEqual(DAILY_INPUT_WRITE_COLUMNS, [
+    "Дата",
+    "День",
+    "Заказы ₽",
+    "Продажи ₽",
+    "Реклама ₽",
+    "Себестоимость ₽",
+    "Доставка до МП ₽",
+    "ВП ₽",
+    "Маржа ВП %",
+    "Статус",
+    "Комментарий"
+  ]);
 
   const originalFinanceFetch = global.fetch;
   let financeCallCount = 0;

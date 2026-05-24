@@ -19,6 +19,19 @@ const DAILY_INPUT_HEADERS = [
 const MOSCOW_TIMEZONE = "Europe/Moscow";
 const MANAGEMENT_TEMPLATE_ONLY_MESSAGE =
   "Этот лист считается формулами в шаблоне. Бот заполняет только Daily Input.";
+const DAILY_INPUT_WRITE_COLUMNS = [
+  "Дата",
+  "День",
+  "Заказы ₽",
+  "Продажи ₽",
+  "Реклама ₽",
+  "Себестоимость ₽",
+  "Доставка до МП ₽",
+  "ВП ₽",
+  "Маржа ВП %",
+  "Статус",
+  "Комментарий"
+];
 
 function formatMoscowDate(date) {
   return new Intl.DateTimeFormat("en-CA", {
@@ -183,11 +196,12 @@ function buildMetricForDate({
     cogs: cogsTotal
   });
   const margin = sales ? round2((grossProfit / sales) * 100) : 0;
-  const plan = round2(planVpPerDay);
-  const deviation = round2(grossProfit - plan);
+  const hasPlan = toNumber(planVpPerDay) > 0;
+  const plan = hasPlan ? round2(planVpPerDay) : "";
+  const deviation = hasPlan ? round2(grossProfit - planVpPerDay) : "";
   const hasSales = salesFacts.hasSales;
   const hasFinance = financeFacts.hasFinance;
-  const status = !hasSales || !hasFinance ? "NO DATA" : grossProfit >= plan ? "OK" : "BELOW PLAN";
+  const status = !hasSales || !hasFinance ? "NO DATA" : hasPlan ? (grossProfit >= planVpPerDay ? "OK" : "BELOW PLAN") : "OK";
   const warnings = [];
   if (!hasSales) warnings.push("Нет sales facts.");
   if (!hasFinance) warnings.push("Нет finance facts.");
@@ -209,6 +223,7 @@ function buildMetricForDate({
     status,
     comment:
       warnings.join(" ").trim() ||
+      (!hasPlan ? "План считается формулой в шаблоне." : "") ||
       (status === "OK" ? "План выполнен." : status === "BELOW PLAN" ? "Ниже дневного плана." : "")
   };
 }
@@ -363,9 +378,9 @@ function createManagementWorkbookService({
       "Реклама: " + result.metrics.advertising,
       "Себестоимость: " + result.metrics.cogsTotal,
       "ВП: " + result.metrics.grossProfit,
-      "План: " + result.metrics.plan,
-      "Отклонение: " + result.metrics.deviation,
-      "Run-rate: " + result.metrics.runRate,
+      "План: " + (result.metrics.plan === "" ? "по шаблону" : result.metrics.plan),
+      "Отклонение: " + (result.metrics.deviation === "" ? "по шаблону" : result.metrics.deviation),
+      "Run-rate: " + (result.metrics.plan === "" ? "по шаблону" : result.metrics.runRate),
       "Статус: " + result.metrics.status,
       ...(result.warnings || [])
     ].join("\n");
@@ -373,9 +388,15 @@ function createManagementWorkbookService({
 
   async function exportDaily(dateInput) {
     const dailyInput = await buildDailyInputRow(dateInput);
-    const dailyWrite = await sheetsService.updateMappedRowByDate("daily_input", dailyInput.date, dailyInput.row, {
+    const patchRow = [...dailyInput.row];
+    patchRow[9] = "";
+    patchRow[10] = "";
+    patchRow[11] = "";
+    patchRow[12] = "";
+    const dailyWrite = await sheetsService.updateMappedRowByDate("daily_input", dailyInput.date, patchRow, {
       headers: DAILY_INPUT_HEADERS,
-      dateColumn: "Дата"
+      dateColumn: "Дата",
+      writeColumns: DAILY_INPUT_WRITE_COLUMNS
     });
     return { dailyInput, dailyWrite };
   }
@@ -392,6 +413,7 @@ function createManagementWorkbookService({
 module.exports = {
   createManagementWorkbookService,
   DAILY_INPUT_HEADERS,
+  DAILY_INPUT_WRITE_COLUMNS,
   getSettingsDefaults,
   MANAGEMENT_TEMPLATE_ONLY_MESSAGE
 };

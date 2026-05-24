@@ -434,6 +434,7 @@ Apps Script должен принимать JSON:
   "dateColumn": "Дата",
   "date": "2026-05-14",
   "headers": ["Дата", "День"],
+  "writeColumns": ["Дата", "День"],
   "formatting": {
     "boldHeader": true,
     "freezeRows": 1,
@@ -659,7 +660,17 @@ function doPost(e) {
         appended = true;
       }
 
-      sheet.getRange(rowIndex, 1, 1, width).setValues([updateRow]);
+      var writeColumns = Array.isArray(payload.writeColumns) ? payload.writeColumns : [];
+      if (writeColumns.length) {
+        for (var c = 0; c < writeColumns.length; c += 1) {
+          var headerName = writeColumns[c];
+          var headerIndex = updateHeaders.indexOf(headerName);
+          if (headerIndex === -1) continue;
+          sheet.getRange(rowIndex, headerIndex + 1).setValue(updateRow[headerIndex]);
+        }
+      } else {
+        sheet.getRange(rowIndex, 1, 1, width).setValues([updateRow]);
+      }
       applySheetFormatting();
       return jsonResponse({
         ok: true,
@@ -692,6 +703,7 @@ function jsonResponse(data) {
 - `updateByDate` должен сохранять headers, искать строку по колонке `Дата`, обновлять найденную строку и добавлять новую только если дата не найдена
 - для `Daily Input` допустимо матчить даты как `DD.MM`, `DD.MM.YYYY`, `YYYY-MM-DD` и Google Sheets Date object
 - рекомендуется helper `normalizeDateKey(value)`, который приводит все форматы к `MM-DD` для monthly-шаблона
+- если передан `writeColumns`, Apps Script должен обновлять только эти колонки и не перетирать формулы, dropdowns и validations в остальных ячейках строки
 - `formatting` поддерживает: `boldHeader`, `freezeRows`, `autoResizeColumns`, `headerBackground`, `headerFontColor`, `currencyColumns`, `percentColumns`, `conditionalColumns`, `currencyRows`, `percentRows`, `conditionalRows`
 - для dashboard sheets рекомендуется:
   - чёрный header background

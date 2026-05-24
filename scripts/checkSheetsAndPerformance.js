@@ -754,6 +754,8 @@ async function run() {
   assert.strictEqual(fetchCalls[5].body.headers[0], "Дата");
   assert.strictEqual(fetchCalls[5].body.formatting.headerBackground, "#000000");
   assert.ok(fetchCalls[5].body.formatting.currencyColumns.includes("ВП ₽"));
+  assert.deepStrictEqual(fetchCalls[5].body.writeColumns, undefined);
+  assert.deepStrictEqual(fetchCalls[5].body.formatting.percentColumns, []);
   assert.deepStrictEqual(fetchCalls[0].body.formatting, {
     boldHeader: true,
     freezeRows: 1,

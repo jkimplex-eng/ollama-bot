@@ -204,7 +204,7 @@ const sheetsMap = {
         "Накоп. ВП ₽",
         "Run-rate прогноз ₽"
       ],
-      percentColumns: ["Маржа ВП %"],
+      percentColumns: [],
       conditionalColumns: [
         {
           header: "ВП ₽",
@@ -254,7 +254,7 @@ const sheetsMap = {
         "Накоп. ВП ₽",
         "Run-rate прогноз ₽"
       ],
-      percentColumns: ["Маржа ВП %"],
+      percentColumns: [],
       conditionalColumns: [
         {
           header: "ВП ₽",

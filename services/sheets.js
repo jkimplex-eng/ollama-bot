@@ -253,7 +253,8 @@ function createSheetsService({ webappUrl }) {
         formatting,
         dateColumn: options.dateColumn || "Дата",
         date: normalizedDate,
-        row: normalizedRows[0]
+        row: normalizedRows[0],
+        writeColumns: Array.isArray(options.writeColumns) ? options.writeColumns : undefined
       },
       mapping.tabName
     );
