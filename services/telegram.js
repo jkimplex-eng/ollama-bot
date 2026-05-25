@@ -70,11 +70,14 @@ function getHelpText() {
     "/cogs status",
     "/cogs set <skuOrOfferId> <cogs> <logisticsToMp?>",
     "/cogs clear",
+    "/cogs debug 2026-05-14",
     "/sales fetch 2026-05-13 2026-05-14",
     "/sales status",
     "/sales clear",
+    "/stocks debug",
     "/replenishment forecast 2026-05-13 2026-05-14",
     "/replenishment forecast в таблицу 2026-05-13 2026-05-14",
+    "/replenishment debug 2026-05-13 2026-05-14",
     "/finance status",
     "/finance clear",
     "/finance fetch 2026-05-13 2026-05-14",
@@ -592,7 +595,10 @@ function formatHealthInfo() {
 }
 
 function parseCogsCommand(text) {
-  const normalized = text.trim().replace(/\s+/g, " ");
+  const lines = String(text || "").split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const firstLine = lines[0] || "";
+  const normalized = firstLine.replace(/\s+/g, " ");
+
   let match = normalized.match(/^\/cogs\s+(template|status|clear|list)$/i);
   if (match) {
     return { type: match[1].toLowerCase() };
@@ -894,30 +900,53 @@ function formatReplenishmentForecast(result) {
     ].join("\n");
   }
 
-  return [
+  const grouped = new Map();
+  for (const row of result.rows) {
+    const city = row[0] || "unknown";
+    const cityList = grouped.get(city) || [];
+    cityList.push(row);
+    grouped.set(city, cityList);
+  }
+
+  const lines = [
     "Replenishment forecast",
     "Период: " + result.summary.period,
-    "SKU: " + result.summary.skuCount,
     "",
     ...(result.warnings || []),
-    result.warnings?.length ? "" : null,
-    ...result.rows.slice(0, 20).map(row =>
-      [
-        "City: " + row[0],
-        "Warehouse: " + row[1],
-        "SKU: " + row[2],
-        "Offer ID: " + row[3],
-        "Product Name: " + row[4],
-        "Sales Per Day: " + row[5],
-        "Current Stock: " + row[6],
-        "Days Of Stock: " + row[7],
-        "Target Stock: " + row[8],
-        "Recommended Shipment: " + row[9],
-        "Priority: " + row[10],
-        "Comment: " + row[11]
-      ].join("\n")
-    )
-  ].filter(Boolean).join("\n\n");
+    result.warnings?.length ? "" : null
+  ];
+
+  const targetCities = ["Москва", "СПб", "Казань"];
+  const citiesToShow = targetCities.filter(c => grouped.has(c));
+  for (const c of grouped.keys()) {
+    if (!citiesToShow.includes(c)) {
+      citiesToShow.push(c);
+    }
+  }
+
+  for (const city of citiesToShow) {
+    const cityRows = grouped.get(city) || [];
+    lines.push(`📍 ${city}:`);
+    let activeShipmentsCount = 0;
+    for (const row of cityRows) {
+      const sku = row[2];
+      const offerId = row[3];
+      const recommended = row[9];
+      const priority = row[10];
+      const stock = row[6];
+
+      if (recommended > 0) {
+        lines.push(`• ship ${recommended} ${offerId || sku} (Priority: ${priority}, stock: ${stock})`);
+        activeShipmentsCount++;
+      }
+    }
+    if (activeShipmentsCount === 0) {
+      lines.push("• no shipment needed");
+    }
+    lines.push("");
+  }
+
+  return lines.filter(line => line !== null).join("\n").trim();
 }
 
 function formatBackfillSummary(result) {
@@ -1926,7 +1955,47 @@ function startTelegramBot({
       }
     }
 
-  const salesCommand = parseSalesCommand(text);
+    if (text.toLowerCase() === "/stocks debug") {
+      try {
+        await tgBot.sendMessage(chatId, "Запрашиваю остатки Ozon (Stocks API)...");
+        const stocks = await ozonService.getStocks(1000);
+        
+        if (!stocks.length) {
+          await tgBot.sendMessage(chatId, "Остатки не найдены.");
+          return;
+        }
+
+        let response = "SKU | Offer ID | Warehouse (City) | Available | Reserved | Present\n";
+        response += "--------------------------------------------------------------------\n";
+        for (const stock of stocks.slice(0, 30)) {
+          const warehouseEntries = Array.isArray(stock.stocks) ? stock.stocks : [];
+          if (warehouseEntries.length === 0) {
+            response += `${stock.sku || "-"} | ${stock.offerId || "-"} | (unknown) | 0 | 0 | 0\n`;
+          } else {
+            for (const item of warehouseEntries) {
+              const city = ozonService.getCityForWarehouse(item.warehouse_id, item.warehouse_name);
+              const present = item.present ?? item.stock ?? 0;
+              const reserved = item.reserved ?? 0;
+              const available = item.available !== undefined ? item.available : Math.max(0, present - reserved);
+              
+              response += `${stock.sku || "-"} | ${stock.offerId || "-"} | ${item.warehouse_name || "unknown"} (${city}) | ${available} | ${reserved} | ${present}\n`;
+            }
+          }
+        }
+        
+        if (stocks.length > 30) {
+          response += `\n...Показано первых 30 записей из ${stocks.length}.`;
+        }
+
+        await sendLongMessage(tgBot, chatId, response);
+        return;
+      } catch (err) {
+        await tgBot.sendMessage(chatId, "Ошибка Stocks API: " + err.message);
+        return;
+      }
+    }
+
+    const salesCommand = parseSalesCommand(text);
 
     if (salesCommand) {
       try {

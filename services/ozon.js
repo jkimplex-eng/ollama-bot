@@ -144,25 +144,43 @@ function createOzonService({ clientId, apiKey }) {
       .join(" ");
   }
 
+  function getCityForWarehouse(warehouseId, warehouseName) {
+    const name = String(warehouseName || "").toLowerCase();
+    const id = String(warehouseId || "");
+
+    if (name.includes("хоругвино") || name.includes("пушкино") || name.includes("москва") || name.includes("мск") || id === "987654") {
+      return "Москва";
+    }
+    if (name.includes("шушары") || name.includes("спб") || name.includes("санкт") || name.includes("питер")) {
+      return "СПб";
+    }
+    if (name.includes("зеленодольск") || name.includes("казань") || name.includes("кзн")) {
+      return "Казань";
+    }
+    return "unknown";
+  }
+
   function getStock(product) {
     const stocks = product.stocks;
 
     if (Array.isArray(stocks)) {
       const total = stocks.reduce((sum, item) => {
-        const value = item.present ?? item.stock ?? item.available ?? 0;
-        return sum + Number(value || 0);
+        const present = Number(item.present ?? item.stock ?? 0);
+        const reserved = Number(item.reserved ?? 0);
+        const available = item.available !== undefined ? Number(item.available) : Math.max(0, present - reserved);
+        return sum + available;
       }, 0);
 
       return total;
     }
 
     if (typeof stocks === "number") return stocks;
-    if (!stocks || typeof stocks !== "object") return "";
-    if (typeof stocks.present === "number") return stocks.present;
-    if (typeof stocks.stock === "number") return stocks.stock;
-    if (typeof stocks.available === "number") return stocks.available;
-
-    return "";
+    if (!stocks || typeof stocks !== "object") return 0;
+    
+    const present = Number(stocks.present ?? stocks.stock ?? 0);
+    const reserved = Number(stocks.reserved ?? 0);
+    const available = stocks.available !== undefined ? Number(stocks.available) : Math.max(0, present - reserved);
+    return available;
   }
 
   function normalizeProduct(product) {
@@ -172,7 +190,8 @@ function createOzonService({ clientId, apiKey }) {
       price: product.price ?? product.marketing_price ?? product.old_price ?? "",
       stock: getStock(product),
       productId: product.product_id ?? product.id ?? "",
-      offerId: product.offer_id ?? ""
+      offerId: product.offer_id ?? "",
+      stocks: product.stocks ?? []
     };
   }
 
@@ -985,7 +1004,8 @@ function createOzonService({ clientId, apiKey }) {
     getFinanceTransactions,
     getProducts,
     getSalesFacts,
-    getStocks
+    getStocks,
+    getCityForWarehouse
   };
 }
 

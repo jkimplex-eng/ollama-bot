@@ -936,9 +936,30 @@ async function run() {
         { name: "Товар 2", sku: "222", offerId: "SJ11" }
       ],
       getStocks: async () => [
-        { sku: "111", offerId: "SJ10", stock: 20 },
-        { sku: "222", offerId: "SJ11", stock: 300 }
-      ]
+        {
+          sku: "111",
+          offerId: "SJ10",
+          stocks: [
+            { warehouse_id: "1", warehouse_name: "Хоругвино", present: 20, reserved: 0 }
+          ]
+        },
+        {
+          sku: "222",
+          offerId: "SJ11",
+          stocks: [
+            { warehouse_id: "2", warehouse_name: "Хоругвино", present: 200, reserved: 0 },
+            { warehouse_id: "3", warehouse_name: "Шушары", present: 50, reserved: 0 },
+            { warehouse_id: "4", warehouse_name: "Зеленодольск", present: 50, reserved: 0 }
+          ]
+        }
+      ],
+      getCityForWarehouse: (id, name) => {
+        const lower = String(name || "").toLowerCase();
+        if (lower.includes("хоругвино") || lower.includes("пушкино") || lower.includes("москва")) return "Москва";
+        if (lower.includes("шушары")) return "СПб";
+        if (lower.includes("зеленодольск")) return "Казань";
+        return "unknown";
+      }
     },
     salesFactsService: {
       getSalesRowsForDateRange: () => [
@@ -991,13 +1012,23 @@ async function run() {
     dateFrom: "2026-05-13",
     dateTo: "2026-05-14"
   });
-  assert.strictEqual(replenishmentForecast.rows[0][5], 14);
-  assert.strictEqual(replenishmentForecast.rows[0][8], 392);
-  assert.strictEqual(replenishmentForecast.rows[0][9], 372);
-  assert.strictEqual(replenishmentForecast.rows[0][10], "HIGH");
-  assert.strictEqual(replenishmentForecast.rows[1][10], "LOW");
-  assert.strictEqual(replenishmentForecast.rows[0][0], "unknown");
-  assert.strictEqual(replenishmentForecast.rows[0][1], "unknown");
+  // SKU 111 (SJ10) - Москва (row index 0)
+  assert.strictEqual(replenishmentForecast.rows[0][0], "Москва");
+  assert.strictEqual(replenishmentForecast.rows[0][1], "Хоругвино/Пушкино");
+  assert.strictEqual(replenishmentForecast.rows[0][5], 8.4); // Sales per day (14 * 0.6)
+  assert.strictEqual(replenishmentForecast.rows[0][6], 20); // Current stock (20)
+  assert.strictEqual(replenishmentForecast.rows[0][8], 235.2); // Target stock (8.4 * 28)
+  assert.strictEqual(replenishmentForecast.rows[0][9], 215.2); // Recommended shipment (235.2 - 20)
+  assert.strictEqual(replenishmentForecast.rows[0][10], "HIGH"); // Priority
+
+  // SKU 222 (SJ11) - Москва (row index 3)
+  assert.strictEqual(replenishmentForecast.rows[3][0], "Москва");
+  assert.strictEqual(replenishmentForecast.rows[3][1], "Хоругвино/Пушкино");
+  assert.strictEqual(replenishmentForecast.rows[3][5], 1.2); // Sales per day (2 * 0.6)
+  assert.strictEqual(replenishmentForecast.rows[3][6], 200); // Current stock (200)
+  assert.strictEqual(replenishmentForecast.rows[3][8], 33.6); // Target stock (1.2 * 28)
+  assert.strictEqual(replenishmentForecast.rows[3][9], 0); // Recommended shipment
+  assert.strictEqual(replenishmentForecast.rows[3][10], "LOW"); // Priority (daysOfStock = 166.7 >= 14)
 
   const replenishmentExport = await replenishmentService.exportForecast({
     dateFrom: "2026-05-13",
@@ -1039,7 +1070,8 @@ async function run() {
       price: "",
       stock: 12,
       productId: "",
-      offerId: "SJ10"
+      offerId: "SJ10",
+      stocks: [{ present: 12 }]
     });
   } finally {
     global.fetch = originalStocksFetch;
@@ -1140,8 +1172,8 @@ async function run() {
     dateTo: "2026-05-14"
   });
   assert.strictEqual(replenishmentWithoutStocksForecast.rows[0][6], 0);
-  assert.strictEqual(replenishmentWithoutStocksForecast.rows[0][0], "unknown");
-  assert.strictEqual(replenishmentWithoutStocksForecast.rows[0][1], "unknown");
+  assert.strictEqual(replenishmentWithoutStocksForecast.rows[0][0], "Москва");
+  assert.strictEqual(replenishmentWithoutStocksForecast.rows[0][1], "Хоругвино/Пушкино");
   assert.deepStrictEqual(replenishmentWithoutStocksForecast.warnings, [
     "Stocks unavailable, forecast uses zero stock."
   ]);

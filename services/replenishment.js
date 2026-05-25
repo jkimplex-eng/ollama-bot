@@ -147,24 +147,54 @@ function indexProducts(products) {
   return { bySku, byOfferId };
 }
 
-function indexStocks(stocks) {
-  const bySku = new Map();
-  const byOfferId = new Map();
+function indexStocksByCity(stocks, ozonService) {
+  const bySkuCity = new Map();
+  const byOfferIdCity = new Map();
 
-  for (const stock of stocks || []) {
-    const sku = String(stock.sku || "").trim();
-    const offerId = String(stock.offerId || "").trim();
-    const stockValue = toNumber(stock.stock);
+  for (const productStock of stocks || []) {
+    const sku = String(productStock.sku || "").trim();
+    const offerId = String(productStock.offerId || "").trim();
+    const warehouseEntries = Array.isArray(productStock.stocks) ? productStock.stocks : [];
 
-    if (sku) {
-      bySku.set(sku, stockValue);
-    }
-    if (offerId) {
-      byOfferId.set(offerId.toLowerCase(), stockValue);
+    if (warehouseEntries.length === 0) {
+      const city = "unknown";
+      const skuKey = sku ? `${sku}|${city}` : "";
+      const offerKey = offerId ? `${offerId.toLowerCase()}|${city}` : "";
+      const entry = { available: 0, reserved: 0, present: 0 };
+      if (skuKey) bySkuCity.set(skuKey, entry);
+      if (offerKey) byOfferIdCity.set(offerKey, entry);
+    } else {
+      for (const item of warehouseEntries) {
+        const city = ozonService?.getCityForWarehouse 
+          ? ozonService.getCityForWarehouse(item.warehouse_id, item.warehouse_name)
+          : "unknown";
+        
+        const present = toNumber(item.present ?? item.stock ?? 0);
+        const reserved = toNumber(item.reserved ?? 0);
+        const available = item.available !== undefined ? toNumber(item.available) : Math.max(0, present - reserved);
+
+        const skuKey = sku ? `${sku}|${city}` : "";
+        const offerKey = offerId ? `${offerId.toLowerCase()}|${city}` : "";
+
+        if (skuKey) {
+          const current = bySkuCity.get(skuKey) || { available: 0, reserved: 0, present: 0 };
+          current.available += available;
+          current.reserved += reserved;
+          current.present += present;
+          bySkuCity.set(skuKey, current);
+        }
+        if (offerKey) {
+          const current = byOfferIdCity.get(offerKey) || { available: 0, reserved: 0, present: 0 };
+          current.available += available;
+          current.reserved += reserved;
+          current.present += present;
+          byOfferIdCity.set(offerKey, current);
+        }
+      }
     }
   }
 
-  return { bySku, byOfferId };
+  return { bySkuCity, byOfferIdCity };
 }
 
 function createReplenishmentService({
@@ -193,46 +223,67 @@ function createReplenishmentService({
     }
 
     const productIndex = indexProducts(products);
-    const stockIndex = indexStocks(stocks);
+    const stockIndex = indexStocksByCity(stocks, ozonService);
 
-    const rows = aggregatedSales.map(item => {
+    const rows = [];
+    const targetCities = ["Москва", "СПб", "Казань"];
+    const cityRatios = {
+      "Москва": 0.60,
+      "СПб": 0.20,
+      "Казань": 0.20
+    };
+    const cityWarehouses = {
+      "Москва": "Хоругвино/Пушкино",
+      "СПб": "Шушары",
+      "Казань": "Зеленодольск"
+    };
+
+    for (const item of aggregatedSales) {
       const product =
         productIndex.bySku.get(item.sku) ||
         productIndex.byOfferId.get(String(item.offerId || "").toLowerCase()) ||
         null;
-      const currentStock =
-        stockIndex.bySku.get(item.sku) ??
-        stockIndex.byOfferId.get(String(item.offerId || "").toLowerCase()) ??
-        0;
-      const salesPerDay = calculateSalesPerDay(item.quantitySold, days);
-      const targetStock = calculateTargetStock(salesPerDay, forecastDays, safetyDays);
-      const recommendedShipment = calculateRecommendedShipment(targetStock, currentStock, minShipment);
-      const daysOfStock = calculateDaysOfStock(currentStock, salesPerDay);
 
       const resolved = cogsService ? cogsService.resolveCogs(item.sku, item.offerId) : null;
       const cogsEntry = resolved ? resolved.match : null;
 
-      const commentParts = ["Нет разбивки по складам, используется общий остаток SKU."];
+      for (const city of targetCities) {
+        const skuKey = item.sku ? `${item.sku}|${city}` : "";
+        const offerKey = item.offerId ? `${item.offerId.toLowerCase()}|${city}` : "";
 
-      if (!cogsEntry) {
-        commentParts.push("COGS не задан.");
+        const stockEntry =
+          (skuKey ? stockIndex.bySkuCity.get(skuKey) : null) ||
+          (offerKey ? stockIndex.byOfferIdCity.get(offerKey) : null) ||
+          { available: 0, reserved: 0, present: 0 };
+
+        const currentStock = stockEntry.available;
+        const salesPerDay = calculateSalesPerDay(item.quantitySold, days);
+        const salesPerDayCity = round2(salesPerDay * cityRatios[city]);
+        const targetStock = calculateTargetStock(salesPerDayCity, forecastDays, safetyDays);
+        const recommendedShipment = calculateRecommendedShipment(targetStock, currentStock, minShipment);
+        const daysOfStock = calculateDaysOfStock(currentStock, salesPerDayCity);
+
+        const commentParts = [`Остатки ${city}: доступно ${stockEntry.available}, резерв ${stockEntry.reserved}. Нет разбивки по складам внутри кластера.`];
+        if (!cogsEntry) {
+          commentParts.push("COGS не задан.");
+        }
+
+        rows.push([
+          city,
+          cityWarehouses[city],
+          item.sku || String(product?.sku || ""),
+          item.offerId || String(product?.offerId || ""),
+          item.productName || product?.name || "",
+          salesPerDayCity,
+          round2(currentStock),
+          daysOfStock,
+          targetStock,
+          recommendedShipment,
+          getPriority(currentStock, daysOfStock),
+          commentParts.join(" ")
+        ]);
       }
-
-      return [
-        "unknown",
-        "unknown",
-        item.sku || String(product?.sku || ""),
-        item.offerId || String(product?.offerId || ""),
-        item.productName || product?.name || "",
-        salesPerDay,
-        round2(currentStock),
-        daysOfStock,
-        targetStock,
-        recommendedShipment,
-        getPriority(currentStock, daysOfStock),
-        commentParts.join(" ")
-      ];
-    });
+    }
 
     return {
       headers: REPLENISHMENT_HEADERS,
@@ -263,37 +314,57 @@ function createReplenishmentService({
     }
 
     const productIndex = indexProducts(products);
-    const stockIndex = indexStocks(stocks);
+    const stockIndex = indexStocksByCity(stocks, ozonService);
 
-    const rows = aggregatedSales.map(item => {
+    const rows = [];
+    const targetCities = ["Москва", "СПб", "Казань"];
+    const cityRatios = {
+      "Москва": 0.60,
+      "СПб": 0.20,
+      "Казань": 0.20
+    };
+
+    for (const item of aggregatedSales) {
       const product =
         productIndex.bySku.get(item.sku) ||
         productIndex.byOfferId.get(String(item.offerId || "").toLowerCase()) ||
         null;
-      const currentStock =
-        stockIndex.bySku.get(item.sku) ??
-        stockIndex.byOfferId.get(String(item.offerId || "").toLowerCase()) ??
-        0;
-      const salesPerDay = calculateSalesPerDay(item.quantitySold, days);
-      const targetStock = calculateTargetStock(salesPerDay, forecastDays, safetyDays);
-      const recommendedShipment = calculateRecommendedShipment(targetStock, currentStock, minShipment);
-      const daysOfStock = calculateDaysOfStock(currentStock, salesPerDay);
 
       const resolved = cogsService ? cogsService.resolveCogs(item.sku, item.offerId) : null;
       const cogsVal = resolved ? resolved.match.cogs : "COGS не задан";
       const source = resolved ? resolved.source : "none";
 
-      return {
-        offerId: item.offerId || product?.offerId || "",
-        sku: item.sku || product?.sku || "",
-        quantity: item.quantitySold,
-        currentStock,
-        matchedCogs: cogsVal,
-        cogsSource: source,
-        recommendedShipment,
-        priority: getPriority(currentStock, daysOfStock)
-      };
-    });
+      for (const city of targetCities) {
+        const skuKey = item.sku ? `${item.sku}|${city}` : "";
+        const offerKey = item.offerId ? `${item.offerId.toLowerCase()}|${city}` : "";
+
+        const stockEntry =
+          (skuKey ? stockIndex.bySkuCity.get(skuKey) : null) ||
+          (offerKey ? stockIndex.byOfferIdCity.get(offerKey) : null) ||
+          { available: 0, reserved: 0, present: 0 };
+
+        const currentStock = stockEntry.available;
+        const salesPerDay = calculateSalesPerDay(item.quantitySold, days);
+        const salesPerDayCity = round2(salesPerDay * cityRatios[city]);
+        const targetStock = calculateTargetStock(salesPerDayCity, forecastDays, safetyDays);
+        const recommendedShipment = calculateRecommendedShipment(targetStock, currentStock, minShipment);
+        const daysOfStock = calculateDaysOfStock(currentStock, salesPerDayCity);
+
+        rows.push({
+          offerId: item.offerId || product?.offerId || "",
+          sku: item.sku || product?.sku || "",
+          quantity: item.quantitySold,
+          city,
+          currentStock,
+          available: stockEntry.available,
+          reserved: stockEntry.reserved,
+          matchedCogs: cogsVal,
+          cogsSource: source,
+          recommendedShipment,
+          priority: getPriority(currentStock, daysOfStock)
+        });
+      }
+    }
 
     return rows;
   }
@@ -321,5 +392,6 @@ module.exports = {
   calculateTargetStock,
   createReplenishmentService,
   getPriority,
-  REPLENISHMENT_HEADERS
+  REPLENISHMENT_HEADERS,
+  indexStocksByCity
 };

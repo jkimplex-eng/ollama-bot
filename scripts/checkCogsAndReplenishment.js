@@ -116,7 +116,7 @@ replenishmentService.buildForecast({ dateFrom: "2026-05-14", dateTo: "2026-05-14
   .then(forecast => {
     assert.strictEqual(forecast.warnings.length, 1);
     assert.strictEqual(forecast.warnings[0], "Stocks unavailable, forecast uses zero stock.");
-    assert.strictEqual(forecast.rows.length, 1);
+    assert.strictEqual(forecast.rows.length, 3);
     
     // The comment row is the 12th element (index 11) in the row array
     const comment = forecast.rows[0][11];
@@ -132,6 +132,36 @@ replenishmentService.buildForecast({ dateFrom: "2026-05-14", dateTo: "2026-05-14
     assert.strictEqual(replDebugCmd.type, "debug");
     assert.strictEqual(replDebugCmd.dateFrom, "2026-05-13");
     assert.strictEqual(replDebugCmd.dateTo, "2026-05-14");
+
+    // 9. Test getCityForWarehouse
+    console.log("Testing getCityForWarehouse mapping...");
+    const { createOzonService } = require("../services/ozon");
+    const ozonService = createOzonService({ clientId: "dummy", apiKey: "dummy" });
+    assert.strictEqual(ozonService.getCityForWarehouse("1", "Хоругвино"), "Москва");
+    assert.strictEqual(ozonService.getCityForWarehouse("2", "Пушкино РФ"), "Москва");
+    assert.strictEqual(ozonService.getCityForWarehouse("3", "Шушары СПб"), "СПб");
+    assert.strictEqual(ozonService.getCityForWarehouse("4", "Зеленодольск Казань"), "Казань");
+    assert.strictEqual(ozonService.getCityForWarehouse("5", "Неизвестный склад"), "unknown");
+
+    // 10. Test indexStocksByCity aggregation
+    console.log("Testing indexStocksByCity...");
+    const { indexStocksByCity } = require("../services/replenishment");
+    const testStocks = [
+      {
+        sku: "SKU1",
+        offerId: "OFF1",
+        stocks: [
+          { warehouse_id: "1", warehouse_name: "Хоругвино", present: 10, reserved: 2, available: 8 },
+          { warehouse_id: "2", warehouse_name: "Пушкино", present: 20, reserved: 5, available: 15 }
+        ]
+      }
+    ];
+    const stockIndex = indexStocksByCity(testStocks, ozonService);
+    const moscowEntry = stockIndex.bySkuCity.get("SKU1|Москва");
+    assert.ok(moscowEntry);
+    assert.strictEqual(moscowEntry.present, 30);
+    assert.strictEqual(moscowEntry.reserved, 7);
+    assert.strictEqual(moscowEntry.available, 23);
 
     // Clean up
     if (fs.existsSync(tempFilePath)) {
