@@ -266,6 +266,35 @@ const sheetsMap = {
     },
     mode: "replace"
   },
+  replenishment_plan: {
+    logicalName: "replenishment_plan",
+    tabName: "Replenishment Plan",
+    columns: [
+      "City",
+      "Warehouse",
+      "SKU",
+      "Offer ID",
+      "Product Name",
+      "Sales Per Day",
+      "Current Stock",
+      "Days Of Stock",
+      "Target Stock",
+      "Recommended Shipment",
+      "Priority",
+      "Comment"
+    ],
+    formatting: {
+      boldHeader: true,
+      freezeRows: 1,
+      autoResizeColumns: true,
+      headerBackground: "#000000",
+      headerFontColor: "#ffffff",
+      currencyColumns: [],
+      percentColumns: [],
+      conditionalColumns: []
+    },
+    mode: "replace"
+  },
   alerts: {
     logicalName: "alerts",
     tabName: "Alerts",

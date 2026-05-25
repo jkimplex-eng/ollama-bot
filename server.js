@@ -14,6 +14,7 @@ const { createManagementWorkbookService } = require("./services/managementWorkbo
 const { createOllamaService } = require("./services/ollama");
 const { createOzonService } = require("./services/ozon");
 const { createPerformanceService } = require("./services/performance");
+const { createReplenishmentService } = require("./services/replenishment");
 const { createReportBuilderService } = require("./services/reportBuilder");
 const { createSalesFactsService } = require("./services/salesFacts");
 const { createSheetsService } = require("./services/sheets");
@@ -89,6 +90,16 @@ const managementWorkbookService = createManagementWorkbookService({
   salesFactsService,
   sheetsService,
   planVpPerDay: env.dailyControlPlanVp
+});
+
+const replenishmentService = createReplenishmentService({
+  cogsService,
+  ozonService,
+  salesFactsService,
+  sheetsService,
+  forecastDays: env.replenishmentForecastDays,
+  safetyDays: env.replenishmentSafetyDays,
+  minShipment: env.replenishmentMinShipment
 });
 
 const jobsService = createJobsService({
@@ -168,6 +179,7 @@ const activeTelegramService = startTelegramBot({
   financeFactsService,
   managementWorkbookService,
   performanceService,
+  replenishmentService,
   reportBuilderService,
   salesFactsService,
   token: env.telegramBotToken,

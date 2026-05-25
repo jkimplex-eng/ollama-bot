@@ -54,6 +54,9 @@ Daily summary / cron:
 - `CRON_SECRET`
 - `DAILY_SUMMARY_CHAT_ID`
 - `DAILY_CONTROL_PLAN_VP=180645`
+- `REPLENISHMENT_FORECAST_DAYS=21`
+- `REPLENISHMENT_SAFETY_DAYS=7`
+- `REPLENISHMENT_MIN_SHIPMENT=1`
 
 Optional local COGS mapping:
 
@@ -156,6 +159,8 @@ Service:
 - `/cogs status`
 - `/cogs set <skuOrOfferId> <cogs> <logisticsToMp?>`
 - `/cogs clear`
+- `/replenishment forecast 2026-05-13 2026-05-14`
+- `/replenishment forecast в таблицу 2026-05-13 2026-05-14`
 - `/models`
 
 ## Запуск
@@ -354,6 +359,7 @@ Cron:
 - `cogs_mapping`: `SKU | Offer ID | Product Name | COGS | Logistics To MP | Notes`
 - `daily_summary`: `Дата | Выручка | Выплата Ozon | Заказы | Комиссия | Логистика | Реклама | Себестоимость | Прибыль | Маржа | ДРР`
 - `daily_control`: `Дата | День | Заказы ₽ | Продажи ₽ | Реклама ₽ | Себестоимость ₽ | Доставка до МП ₽ | ВП ₽ | Маржа ВП % | План ВП/день | Отклонение ₽ | Накоп. ВП ₽ | Run-rate прогноз ₽ | Статус | Комментарий`
+- `replenishment_plan`: `City | Warehouse | SKU | Offer ID | Product Name | Sales Per Day | Current Stock | Days Of Stock | Target Stock | Recommended Shipment | Priority | Comment`
 - `alerts`: `Дата | Уровень | Тип | Сообщение`
 
 Дополнительные daily diagnostics tabs:

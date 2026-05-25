@@ -12,9 +12,17 @@ const {
 } = require("../services/reportBuilder");
 const { createDailyControlService } = require("../services/dailyControl");
 const { createManagementWorkbookService, DAILY_INPUT_WRITE_COLUMNS, MAX_BACKFILL_DAYS } = require("../services/managementWorkbook");
-const { parseCogsCommand, parseDailyControlCommand, parseFinanceCommand, parseManagementCommand, parseReportCommand, parseSalesCommand } = require("../services/telegram");
+const { parseCogsCommand, parseDailyControlCommand, parseFinanceCommand, parseManagementCommand, parseReplenishmentCommand, parseReportCommand, parseSalesCommand } = require("../services/telegram");
 const { createCogsService, parseBulkImportText } = require("../services/cogs");
 const { createFinanceFactsService } = require("../services/financeFacts");
+const {
+  calculateDaysOfStock,
+  calculateRecommendedShipment,
+  calculateSalesPerDay,
+  calculateTargetStock,
+  createReplenishmentService,
+  getPriority
+} = require("../services/replenishment");
 const { createSalesFactsService } = require("../services/salesFacts");
 const { clampOzonLimit, createOzonService, getPageSignature, getPostingIdentity } = require("../services/ozon");
 
@@ -362,6 +370,26 @@ async function run() {
     dateFrom: "2026-05-13",
     dateTo: "2026-05-14"
   });
+  assert.deepStrictEqual(parseReplenishmentCommand("/replenishment forecast 2026-05-13 2026-05-14"), {
+    type: "forecast",
+    toSheet: false,
+    dateFrom: "2026-05-13",
+    dateTo: "2026-05-14"
+  });
+  assert.deepStrictEqual(parseReplenishmentCommand("/replenishment forecast в таблицу 2026-05-13 2026-05-14"), {
+    type: "forecast",
+    toSheet: true,
+    dateFrom: "2026-05-13",
+    dateTo: "2026-05-14"
+  });
+  assert.strictEqual(calculateSalesPerDay(62, 2), 31);
+  assert.strictEqual(calculateTargetStock(31, 21, 7), 868);
+  assert.strictEqual(calculateRecommendedShipment(868, 200, 1), 668);
+  assert.strictEqual(calculateRecommendedShipment(10, 10, 1), 0);
+  assert.strictEqual(calculateDaysOfStock(42, 6), 7);
+  assert.strictEqual(getPriority(6), "HIGH");
+  assert.strictEqual(getPriority(10), "MEDIUM");
+  assert.strictEqual(getPriority(20), "LOW");
   assert.strictEqual(clampOzonLimit(150), 100);
   assert.strictEqual(clampOzonLimit(undefined), 100);
   assert.strictEqual(clampOzonLimit(0), 100);
@@ -898,6 +926,86 @@ async function run() {
       }),
     error => error.message.includes(String(MAX_BACKFILL_DAYS))
   );
+
+  const replenishmentWrites = [];
+  const replenishmentService = createReplenishmentService({
+    cogsService,
+    ozonService: {
+      getProducts: async () => [
+        { name: "Товар 1", sku: "111", offerId: "SJ10" },
+        { name: "Товар 2", sku: "222", offerId: "SJ11" }
+      ],
+      getStocks: async () => [
+        { sku: "111", offerId: "SJ10", stock: 20 },
+        { sku: "222", offerId: "SJ11", stock: 300 }
+      ]
+    },
+    salesFactsService: {
+      getSalesRowsForDateRange: () => [
+        {
+          date: "2026-05-13",
+          sku: "111",
+          offerId: "SJ10",
+          productName: "Товар 1",
+          quantity: 14,
+          revenue: 14000
+        },
+        {
+          date: "2026-05-14",
+          sku: "111",
+          offerId: "SJ10",
+          productName: "Товар 1",
+          quantity: 14,
+          revenue: 14000
+        },
+        {
+          date: "2026-05-13",
+          sku: "222",
+          offerId: "SJ11",
+          productName: "Товар 2",
+          quantity: 2,
+          revenue: 2000
+        },
+        {
+          date: "2026-05-14",
+          sku: "222",
+          offerId: "SJ11",
+          productName: "Товар 2",
+          quantity: 2,
+          revenue: 2000
+        }
+      ]
+    },
+    sheetsService: {
+      clearAndWriteMappedRows: async (mappingKey, rows, options = {}) => {
+        replenishmentWrites.push({ mappingKey, rows, headers: options.headers });
+        return { rowsWritten: rows.length, tabName: "Replenishment Plan" };
+      }
+    },
+    forecastDays: 21,
+    safetyDays: 7,
+    minShipment: 1
+  });
+
+  const replenishmentForecast = await replenishmentService.buildForecast({
+    dateFrom: "2026-05-13",
+    dateTo: "2026-05-14"
+  });
+  assert.strictEqual(replenishmentForecast.rows[0][5], 14);
+  assert.strictEqual(replenishmentForecast.rows[0][8], 392);
+  assert.strictEqual(replenishmentForecast.rows[0][9], 372);
+  assert.strictEqual(replenishmentForecast.rows[0][10], "HIGH");
+  assert.strictEqual(replenishmentForecast.rows[1][10], "LOW");
+  assert.strictEqual(replenishmentForecast.rows[0][0], "unknown");
+  assert.strictEqual(replenishmentForecast.rows[0][1], "unknown");
+
+  const replenishmentExport = await replenishmentService.exportForecast({
+    dateFrom: "2026-05-13",
+    dateTo: "2026-05-14"
+  });
+  assert.strictEqual(replenishmentExport.writeResult.tabName, "Replenishment Plan");
+  assert.strictEqual(replenishmentWrites[0].mappingKey, "replenishment_plan");
+  assert.strictEqual(replenishmentWrites[0].headers[0], "City");
   assert.strictEqual(managementWorkbookService.templateOnlyMessage, "Этот лист считается формулами в шаблоне. Бот заполняет только Daily Input.");
 
   const templatePlanManagementService = createManagementWorkbookService({

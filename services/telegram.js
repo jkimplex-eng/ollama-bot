@@ -73,6 +73,8 @@ function getHelpText() {
     "/sales fetch 2026-05-13 2026-05-14",
     "/sales status",
     "/sales clear",
+    "/replenishment forecast 2026-05-13 2026-05-14",
+    "/replenishment forecast в таблицу 2026-05-13 2026-05-14",
     "/finance status",
     "/finance clear",
     "/finance fetch 2026-05-13 2026-05-14",
@@ -654,6 +656,24 @@ function parseFinanceCommand(text) {
   return null;
 }
 
+function parseReplenishmentCommand(text) {
+  const normalized = text.trim().replace(/\s+/g, " ").toLowerCase();
+  const match = normalized.match(
+    /^\/replenishment\s+forecast(?:\s+в\s+таблицу)?\s+(\d{4}-\d{2}-\d{2})\s+(\d{4}-\d{2}-\d{2})$/
+  );
+
+  if (!match) {
+    return null;
+  }
+
+  return {
+    type: "forecast",
+    toSheet: normalized.includes(" в таблицу "),
+    dateFrom: match[1],
+    dateTo: match[2]
+  };
+}
+
 function formatStoredRowsStatus(status) {
   return [
     "Performance rows status",
@@ -858,6 +878,35 @@ function formatSalesFetchResult(saved, summary, warning) {
   return lines.join("\n");
 }
 
+function formatReplenishmentForecast(result) {
+  if (!result.rows.length) {
+    return "Нет sales facts для расчёта replenishment за выбранный период.";
+  }
+
+  return [
+    "Replenishment forecast",
+    "Период: " + result.summary.period,
+    "SKU: " + result.summary.skuCount,
+    "",
+    ...result.rows.slice(0, 20).map(row =>
+      [
+        "City: " + row[0],
+        "Warehouse: " + row[1],
+        "SKU: " + row[2],
+        "Offer ID: " + row[3],
+        "Product Name: " + row[4],
+        "Sales Per Day: " + row[5],
+        "Current Stock: " + row[6],
+        "Days Of Stock: " + row[7],
+        "Target Stock: " + row[8],
+        "Recommended Shipment: " + row[9],
+        "Priority: " + row[10],
+        "Comment: " + row[11]
+      ].join("\n")
+    )
+  ].join("\n\n");
+}
+
 function formatBackfillSummary(result) {
   const lines = [
     "Backfill complete:",
@@ -906,6 +955,7 @@ function startTelegramBot({
   financeFactsService,
   managementWorkbookService,
   performanceService,
+  replenishmentService,
   reportBuilderService,
   salesFactsService,
   token,
@@ -1841,7 +1891,7 @@ function startTelegramBot({
       }
     }
 
-    const salesCommand = parseSalesCommand(text);
+  const salesCommand = parseSalesCommand(text);
 
     if (salesCommand) {
       try {
@@ -1870,6 +1920,38 @@ function startTelegramBot({
         }
       } catch (err) {
         await tgBot.sendMessage(chatId, "Ошибка sales facts: " + (err.userMessage || err.message));
+        return;
+      }
+    }
+
+    const replenishmentCommand = parseReplenishmentCommand(text);
+
+    if (replenishmentCommand) {
+      try {
+        if (replenishmentCommand.toSheet) {
+          const exported = await replenishmentService.exportForecast({
+            dateFrom: replenishmentCommand.dateFrom,
+            dateTo: replenishmentCommand.dateTo
+          });
+          await sendLongMessage(
+            tgBot,
+            chatId,
+            "Записал " +
+              exported.writeResult.rowsWritten +
+              " строк в " +
+              exported.writeResult.tabName
+          );
+          return;
+        }
+
+        const forecast = await replenishmentService.buildForecast({
+          dateFrom: replenishmentCommand.dateFrom,
+          dateTo: replenishmentCommand.dateTo
+        });
+        await sendLongMessage(tgBot, chatId, formatReplenishmentForecast(forecast));
+        return;
+      } catch (err) {
+        await tgBot.sendMessage(chatId, "Ошибка replenishment: " + err.message);
         return;
       }
     }
@@ -2035,6 +2117,7 @@ module.exports = {
   parseAnalyticsCommand,
   parseCogsCommand,
   parseFinanceCommand,
+  parseReplenishmentCommand,
   parseDailyControlCommand,
   parseManagementCommand,
   parseSalesCommand,
