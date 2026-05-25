@@ -167,7 +167,16 @@ function createReplenishmentService({
     const salesRows = salesFactsService.getSalesRowsForDateRange(dateFrom, dateTo);
     const aggregatedSales = aggregateSalesBySku(salesRows);
     const products = await ozonService.getProducts(1000);
-    const stocks = await ozonService.getStocks(1000);
+    let stocks = [];
+    const warnings = [];
+
+    try {
+      stocks = await ozonService.getStocks(1000);
+    } catch (error) {
+      warnings.push("Stocks unavailable, forecast uses zero stock.");
+      stocks = [];
+    }
+
     const productIndex = indexProducts(products);
     const stockIndex = indexStocks(stocks);
 
@@ -189,6 +198,9 @@ function createReplenishmentService({
         cogsService?.getCogsByOfferId(item.offerId) ||
         null;
       const commentParts = ["Нет разбивки по складам, используется общий остаток SKU."];
+      if (warnings.length) {
+        commentParts.push("Stocks unavailable, forecast uses zero stock.");
+      }
 
       if (!cogsEntry) {
         commentParts.push("COGS не задан.");
@@ -219,7 +231,8 @@ function createReplenishmentService({
         forecastDays,
         safetyDays,
         minShipment
-      }
+      },
+      warnings
     };
   }
 

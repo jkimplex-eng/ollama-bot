@@ -39,7 +39,62 @@ function normalizeMoney(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function safeBodyPreview(value, maxLength = 300) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxLength);
+}
+
+function parseJsonString(text) {
+  const normalized = String(text || "").trim();
+  if (!normalized) {
+    return {};
+  }
+  return JSON.parse(normalized);
+}
+
 function createOzonService({ clientId, apiKey }) {
+  async function parseOzonResponse(response, path) {
+    if (typeof response.text === "function") {
+      const rawText = await response.text();
+      try {
+        return parseJsonString(rawText);
+      } catch (error) {
+        console.log("[ozon] invalid response body", {
+          path,
+          preview: safeBodyPreview(rawText)
+        });
+        throw new Error(
+          "Ozon returned invalid JSON for " + path + ". Preview: " + safeBodyPreview(rawText)
+        );
+      }
+    }
+
+    if (typeof response.json === "function") {
+      const payload = await response.json();
+      if (typeof payload === "string") {
+        try {
+          return parseJsonString(payload);
+        } catch (error) {
+          console.log("[ozon] invalid response payload", {
+            path,
+            preview: safeBodyPreview(payload)
+          });
+          throw new Error(
+            "Ozon returned invalid JSON payload for " + path + ". Preview: " + safeBodyPreview(payload)
+          );
+        }
+      }
+      if (payload && typeof payload === "object") {
+        return payload;
+      }
+      return {};
+    }
+
+    return {};
+  }
+
   async function requestOzon(path, body) {
     if (!clientId || !apiKey) {
       throw new Error("OZON_CLIENT_ID или OZON_API_KEY не найден в .env");
@@ -55,7 +110,7 @@ function createOzonService({ clientId, apiKey }) {
       body: JSON.stringify(body)
     });
 
-    const data = await response.json();
+    const data = await parseOzonResponse(response, path);
 
     if (!response.ok) {
       throw new Error(JSON.stringify(data));

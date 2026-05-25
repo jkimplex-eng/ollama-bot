@@ -880,7 +880,10 @@ function formatSalesFetchResult(saved, summary, warning) {
 
 function formatReplenishmentForecast(result) {
   if (!result.rows.length) {
-    return "Нет sales facts для расчёта replenishment за выбранный период.";
+    return [
+      "Нет sales facts для расчёта replenishment за выбранный период.",
+      ...(result.warnings || [])
+    ].join("\n");
   }
 
   return [
@@ -888,6 +891,8 @@ function formatReplenishmentForecast(result) {
     "Период: " + result.summary.period,
     "SKU: " + result.summary.skuCount,
     "",
+    ...(result.warnings || []),
+    result.warnings?.length ? "" : null,
     ...result.rows.slice(0, 20).map(row =>
       [
         "City: " + row[0],
@@ -904,7 +909,7 @@ function formatReplenishmentForecast(result) {
         "Comment: " + row[11]
       ].join("\n")
     )
-  ].join("\n\n");
+  ].filter(Boolean).join("\n\n");
 }
 
 function formatBackfillSummary(result) {

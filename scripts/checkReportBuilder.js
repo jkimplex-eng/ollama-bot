@@ -1006,6 +1006,145 @@ async function run() {
   assert.strictEqual(replenishmentExport.writeResult.tabName, "Replenishment Plan");
   assert.strictEqual(replenishmentWrites[0].mappingKey, "replenishment_plan");
   assert.strictEqual(replenishmentWrites[0].headers[0], "City");
+
+  const originalStocksFetch = global.fetch;
+  global.fetch = async url => {
+    if (url.endsWith("/v3/product/info/stocks")) {
+      return {
+        ok: true,
+        json: async () => ({
+          result: {
+            items: [{ sku: "111", offer_id: "SJ10", stocks: [{ present: 12 }] }]
+          }
+        })
+      };
+    }
+    if (url.endsWith("/v3/product/info/list")) {
+      return {
+        ok: true,
+        json: async () => ({ result: { items: [] } })
+      };
+    }
+    throw new Error("Unexpected stocks fetch call: " + url);
+  };
+  try {
+    const ozonStocksService = createOzonService({
+      clientId: "test-client",
+      apiKey: "test-key"
+    });
+    const stocks = await ozonStocksService.getStocks(100);
+    assert.deepStrictEqual(stocks[0], {
+      name: "",
+      sku: "111",
+      price: "",
+      stock: 12,
+      productId: "",
+      offerId: "SJ10"
+    });
+  } finally {
+    global.fetch = originalStocksFetch;
+  }
+
+  const originalStocksStringFetch = global.fetch;
+  global.fetch = async url => {
+    if (url.endsWith("/v3/product/info/stocks")) {
+      return {
+        ok: true,
+        text: async () => JSON.stringify({
+          result: {
+            items: [{ sku: "222", offer_id: "SJ11", stocks: [{ present: 7 }] }]
+          }
+        })
+      };
+    }
+    if (url.endsWith("/v3/product/info/list")) {
+      return {
+        ok: true,
+        json: async () => ({ result: { items: [] } })
+      };
+    }
+    throw new Error("Unexpected stocks string fetch call: " + url);
+  };
+  try {
+    const ozonStocksService = createOzonService({
+      clientId: "test-client",
+      apiKey: "test-key"
+    });
+    const stocks = await ozonStocksService.getStocks(100);
+    assert.strictEqual(stocks[0].stock, 7);
+    assert.strictEqual(stocks[0].offerId, "SJ11");
+  } finally {
+    global.fetch = originalStocksStringFetch;
+  }
+
+  const originalInvalidStocksFetch = global.fetch;
+  global.fetch = async url => {
+    if (url.endsWith("/v3/product/info/stocks")) {
+      return {
+        ok: true,
+        text: async () => "<html>broken response</html>"
+      };
+    }
+    throw new Error("Unexpected invalid stocks fetch call: " + url);
+  };
+  try {
+    const ozonStocksService = createOzonService({
+      clientId: "test-client",
+      apiKey: "test-key"
+    });
+    await assert.rejects(
+      () => ozonStocksService.getStocks(100),
+      error => error.message.includes("invalid JSON")
+    );
+  } finally {
+    global.fetch = originalInvalidStocksFetch;
+  }
+
+  const replenishmentWithoutStocks = createReplenishmentService({
+    cogsService,
+    ozonService: {
+      getProducts: async () => [{ name: "Товар 1", sku: "111", offerId: "SJ10" }],
+      getStocks: async () => {
+        throw new Error("invalid JSON");
+      }
+    },
+    salesFactsService: {
+      getSalesRowsForDateRange: () => [
+        {
+          date: "2026-05-13",
+          sku: "111",
+          offerId: "SJ10",
+          productName: "Товар 1",
+          quantity: 10,
+          revenue: 10000
+        },
+        {
+          date: "2026-05-14",
+          sku: "111",
+          offerId: "SJ10",
+          productName: "Товар 1",
+          quantity: 10,
+          revenue: 10000
+        }
+      ]
+    },
+    sheetsService: {
+      clearAndWriteMappedRows: async () => ({ rowsWritten: 1, tabName: "Replenishment Plan" })
+    },
+    forecastDays: 21,
+    safetyDays: 7,
+    minShipment: 1
+  });
+  const replenishmentWithoutStocksForecast = await replenishmentWithoutStocks.buildForecast({
+    dateFrom: "2026-05-13",
+    dateTo: "2026-05-14"
+  });
+  assert.strictEqual(replenishmentWithoutStocksForecast.rows[0][6], 0);
+  assert.strictEqual(replenishmentWithoutStocksForecast.rows[0][0], "unknown");
+  assert.strictEqual(replenishmentWithoutStocksForecast.rows[0][1], "unknown");
+  assert.deepStrictEqual(replenishmentWithoutStocksForecast.warnings, [
+    "Stocks unavailable, forecast uses zero stock."
+  ]);
   assert.strictEqual(managementWorkbookService.templateOnlyMessage, "Этот лист считается формулами в шаблоне. Бот заполняет только Daily Input.");
 
   const templatePlanManagementService = createManagementWorkbookService({
