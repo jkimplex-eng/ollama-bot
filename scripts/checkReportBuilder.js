@@ -11,9 +11,9 @@ const {
   SKU_DASHBOARD_HEADERS
 } = require("../services/reportBuilder");
 const { createDailyControlService } = require("../services/dailyControl");
-const { createManagementWorkbookService, DAILY_INPUT_WRITE_COLUMNS } = require("../services/managementWorkbook");
+const { createManagementWorkbookService, DAILY_INPUT_WRITE_COLUMNS, MAX_BACKFILL_DAYS } = require("../services/managementWorkbook");
 const { parseCogsCommand, parseDailyControlCommand, parseFinanceCommand, parseManagementCommand, parseReportCommand, parseSalesCommand } = require("../services/telegram");
-const { createCogsService } = require("../services/cogs");
+const { createCogsService, parseBulkImportText } = require("../services/cogs");
 const { createFinanceFactsService } = require("../services/financeFacts");
 const { createSalesFactsService } = require("../services/salesFacts");
 const { clampOzonLimit, createOzonService, getPageSignature, getPostingIdentity } = require("../services/ozon");
@@ -312,14 +312,35 @@ async function run() {
     toSheet: false,
     value: "2026-05"
   });
+  assert.deepStrictEqual(parseManagementCommand("/management backfill 2026-05-01 2026-05-14"), {
+    type: "backfill",
+    toSheet: false,
+    dateFrom: "2026-05-01",
+    dateTo: "2026-05-14"
+  });
+  assert.deepStrictEqual(parseManagementCommand("/management backfill в таблицу 2026-05-01 2026-05-14"), {
+    type: "backfill",
+    toSheet: true,
+    dateFrom: "2026-05-01",
+    dateTo: "2026-05-14"
+  });
 
   assert.deepStrictEqual(parseCogsCommand("/cogs template"), { type: "template" });
+  assert.deepStrictEqual(parseCogsCommand("/cogs list"), { type: "list" });
   assert.deepStrictEqual(parseCogsCommand("/cogs status"), { type: "status" });
   assert.deepStrictEqual(parseCogsCommand("/cogs clear"), { type: "clear" });
+  assert.deepStrictEqual(parseCogsCommand("/cogs import text"), { type: "import_text" });
   assert.deepStrictEqual(parseCogsCommand("/cogs set SKU123 199.50"), {
     type: "set",
     sku: "SKU123",
-    cogs: "199.50"
+    cogs: "199.50",
+    logisticsToMp: ""
+  });
+  assert.deepStrictEqual(parseCogsCommand("/cogs set SJ11 199.50 15"), {
+    type: "set",
+    sku: "SJ11",
+    cogs: "199.50",
+    logisticsToMp: "15"
   });
   assert.deepStrictEqual(parseSalesCommand("/sales status"), { type: "status" });
   assert.deepStrictEqual(parseSalesCommand("/sales clear"), { type: "clear" });
@@ -362,20 +383,74 @@ async function run() {
     filePath: path.join(tempDir, "sales-rows.json")
   });
 
+  assert.deepStrictEqual(
+    parseBulkImportText("SKU;Offer ID;Product Name;COGS;Logistics To MP\n111;SJ11;Товар 1;510;12"),
+    [
+      {
+        sku: "111",
+        offerId: "SJ11",
+        offerIdKey: "sj11",
+        productName: "Товар 1",
+        cogs: 510,
+        logisticsToMp: 12,
+        notes: ""
+      }
+    ]
+  );
+
+  assert.deepStrictEqual(
+    parseBulkImportText("SJ10\t510\nsj59\t571"),
+    [
+      {
+        sku: "",
+        offerId: "SJ10",
+        offerIdKey: "sj10",
+        productName: "",
+        cogs: 510,
+        logisticsToMp: 0,
+        notes: ""
+      },
+      {
+        sku: "",
+        offerId: "sj59",
+        offerIdKey: "sj59",
+        productName: "",
+        cogs: 571,
+        logisticsToMp: 0,
+        notes: ""
+      }
+    ]
+  );
+
   cogsService.setSku("111", 123.45, { logisticsToMp: 10, productName: "Товар 1" });
   cogsService.setSku("222", 50, { logisticsToMp: 5, productName: "Товар 2" });
+  cogsService.importText("SJ10\t510\nsj59\t571");
   assert.deepStrictEqual(cogsService.getCogsBySku("111"), {
     sku: "111",
     offerId: "",
+    offerIdKey: "",
     productName: "Товар 1",
     cogs: 123.45,
     logisticsToMp: 10,
     notes: ""
   });
+  assert.strictEqual(cogsService.getCogsByOfferId("SJ10").cogs, 510);
+  assert.strictEqual(cogsService.getCogsByOfferId("sj10").cogs, 510);
   assert.deepStrictEqual(cogsService.getStatus(), {
     totalConfiguredSkus: 2,
-    totalItems: 2
+    totalItems: 4
   });
+  assert.deepStrictEqual(
+    cogsService.mergeCogsIntoPerformanceRows([{ sku: "", offerId: "SJ59", quantity: 1 }]).rows[0],
+    {
+      sku: "",
+      offerId: "SJ59",
+      quantity: 1,
+      cogs: 571,
+      logisticsToMp: 0,
+      cogsConfigured: true
+    }
+  );
   assert.deepStrictEqual(
     salesFactsService.saveSalesRows(
       [
@@ -655,6 +730,174 @@ async function run() {
     "Статус",
     "Комментарий"
   ]);
+
+  salesFactsService.clearSalesRows();
+  financeFactsService.clearFinanceRows();
+  cogsService.clear();
+  cogsService.importText("SJ59\t571");
+  salesFactsService.saveSalesRows(
+    [
+      {
+        date: "2026-05-14",
+        sku: "3715298591",
+        offerId: "sj59",
+        productName: "Успокаивающая сыворотка для лица",
+        quantity: 1,
+        revenue: 7322,
+        price: 7322,
+        postingNumber: "posting-sj59"
+      }
+    ],
+    { source: "test" }
+  );
+  financeFactsService.saveFinanceRows(
+    [
+      {
+        date: "2026-05-14",
+        sales: 7000,
+        returns: 0,
+        ozonCommission: -500,
+        logistics: -100,
+        partnerServices: 0,
+        fboServices: 0,
+        advertising: -200,
+        otherServices: 0,
+        accruedTotal: 6200
+      }
+    ],
+    { source: "test" }
+  );
+
+  const fallbackManagementService = createManagementWorkbookService({
+    cogsService,
+    financeFactsService,
+    performanceService: {
+      getStoredRowsForDateRange: async () => []
+    },
+    salesFactsService,
+    sheetsService: {
+      updateMappedRowByDate: async () => ({ rowsWritten: 1, tabName: "Daily Input" })
+    },
+    planVpPerDay: 0
+  });
+  const fallbackDaily = await fallbackManagementService.buildDailyInputRow("2026-05-14");
+  assert.strictEqual(fallbackDaily.row[5], 571);
+  assert.strictEqual(fallbackDaily.row[6], 0);
+
+  const backfillWrites = [];
+  const backfillSalesSaved = [];
+  const backfillFinanceSaved = [];
+  const backfillService = createManagementWorkbookService({
+    cogsService,
+    financeFactsService: {
+      getFinanceRowsForDateRange: financeFactsService.getFinanceRowsForDateRange,
+      saveFinanceRows: rows => backfillFinanceSaved.push(...rows)
+    },
+    performanceService: {
+      getStoredRowsForDateRange: async () => []
+    },
+    salesFactsService: {
+      getSalesRowsForDateRange: salesFactsService.getSalesRowsForDateRange,
+      saveSalesRows: rows => backfillSalesSaved.push(...rows)
+    },
+    sheetsService: {
+      updateMappedRowByDate: async (mappingKey, date, row, options = {}) => {
+        backfillWrites.push({ mappingKey, date, row, writeColumns: options.writeColumns });
+        return { rowsWritten: 1, tabName: "Daily Input", matchedRow: 7, appended: false };
+      }
+    },
+    planVpPerDay: 0
+  });
+
+  const backfillResult = await backfillService.backfillDailyInput({
+    dateFrom: "2026-05-13",
+    dateTo: "2026-05-14",
+    fetchSalesForDay: async date => [
+      {
+        date,
+        sku: "111",
+        offerId: "SJ10",
+        productName: "Товар 1",
+        quantity: 1,
+        revenue: 1000,
+        price: 1000,
+        postingNumber: "posting-" + date
+      }
+    ],
+    fetchFinanceForDay: async date => [
+      {
+        date,
+        sales: 900,
+        returns: -50,
+        ozonCommission: -100,
+        logistics: -20,
+        partnerServices: 0,
+        fboServices: 0,
+        advertising: -100,
+        otherServices: 0,
+        accruedTotal: 630
+      }
+    ]
+  });
+  assert.deepStrictEqual(backfillResult, {
+    daysProcessed: 2,
+    daysUpdated: 2,
+    daysFailed: 0,
+    failures: []
+  });
+  assert.strictEqual(backfillWrites.length, 2);
+  assert.deepStrictEqual(backfillWrites[0].writeColumns, DAILY_INPUT_WRITE_COLUMNS);
+  assert.strictEqual(backfillSalesSaved.length, 2);
+  assert.strictEqual(backfillFinanceSaved.length, 2);
+
+  const partialFailureBackfill = await backfillService.backfillDailyInput({
+    dateFrom: "2026-05-13",
+    dateTo: "2026-05-14",
+    fetchSalesForDay: async date => [
+      {
+        date,
+        sku: "111",
+        offerId: "SJ10",
+        productName: "Товар 1",
+        quantity: 1,
+        revenue: 1000,
+        price: 1000,
+        postingNumber: "posting-" + date
+      }
+    ],
+    fetchFinanceForDay: async date => {
+      if (date === "2026-05-14") {
+        throw new Error("finance failed");
+      }
+      return [
+        {
+          date,
+          sales: 900,
+          returns: 0,
+          ozonCommission: -100,
+          logistics: -20,
+          partnerServices: 0,
+          fboServices: 0,
+          advertising: -100,
+          otherServices: 0,
+          accruedTotal: 680
+        }
+      ];
+    }
+  });
+  assert.strictEqual(partialFailureBackfill.daysProcessed, 2);
+  assert.strictEqual(partialFailureBackfill.daysUpdated, 1);
+  assert.strictEqual(partialFailureBackfill.daysFailed, 1);
+  assert.strictEqual(partialFailureBackfill.failures[0].date, "2026-05-14");
+
+  await assert.rejects(
+    () =>
+      backfillService.backfillDailyInput({
+        dateFrom: "2026-05-01",
+        dateTo: "2026-06-05"
+      }),
+    error => error.message.includes(String(MAX_BACKFILL_DAYS))
+  );
   assert.strictEqual(managementWorkbookService.templateOnlyMessage, "Этот лист считается формулами в шаблоне. Бот заполняет только Daily Input.");
 
   const templatePlanManagementService = createManagementWorkbookService({
@@ -670,7 +913,7 @@ async function run() {
     planVpPerDay: 0
   });
   const templatePlanDaily = await templatePlanManagementService.buildDailyInputRow("2026-05-14");
-  assert.strictEqual(templatePlanDaily.row[8], 55);
+  assert.strictEqual(templatePlanDaily.row[8], 80.41);
   assert.strictEqual(templatePlanDaily.row[9], "");
   assert.strictEqual(templatePlanDaily.row[10], "");
   assert.strictEqual(templatePlanDaily.metrics.comment, "План считается формулой в шаблоне.");

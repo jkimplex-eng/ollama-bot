@@ -19,6 +19,7 @@ const DAILY_INPUT_HEADERS = [
 const MOSCOW_TIMEZONE = "Europe/Moscow";
 const MANAGEMENT_TEMPLATE_ONLY_MESSAGE =
   "Этот лист считается формулами в шаблоне. Бот заполняет только Daily Input.";
+const MAX_BACKFILL_DAYS = 31;
 const DAILY_INPUT_WRITE_COLUMNS = [
   "Дата",
   "День",
@@ -234,6 +235,18 @@ function getSettingsDefaults(planVpPerDay = 0) {
   ];
 }
 
+function getCogsEntryForRow(cogsService, row) {
+  if (!cogsService || !row) {
+    return null;
+  }
+
+  return (
+    cogsService.getCogsBySku(row.sku) ||
+    cogsService.getCogsByOfferId(row.offerId) ||
+    null
+  );
+}
+
 function createManagementWorkbookService({
   cogsService,
   financeFactsService,
@@ -256,10 +269,27 @@ function createManagementWorkbookService({
   async function loadFactsForRange(dateFrom, dateTo) {
     const salesRowsRaw = salesFactsService ? salesFactsService.getSalesRowsForDateRange(dateFrom, dateTo) : [];
     const salesMerged = cogsService ? cogsService.mergeCogsIntoPerformanceRows(salesRowsRaw) : { rows: salesRowsRaw, missingSkus: [] };
+    const salesRows = salesMerged.rows.map(row => {
+      if (row.cogsConfigured || !cogsService) {
+        return row;
+      }
+
+      const cogsEntry = getCogsEntryForRow(cogsService, row);
+      if (!cogsEntry) {
+        return row;
+      }
+
+      return {
+        ...row,
+        cogs: toNumber(cogsEntry.cogs),
+        logisticsToMp: toNumber(cogsEntry.logisticsToMp),
+        cogsConfigured: true
+      };
+    });
     const financeRows = financeFactsService ? financeFactsService.getFinanceRowsForDateRange(dateFrom, dateTo) : [];
     const performanceRows = performanceService ? await performanceService.getStoredRowsForDateRange(dateFrom, dateTo) : [];
     return {
-      salesRows: salesMerged.rows,
+      salesRows,
       financeRows,
       performanceRows,
       missingSkus: salesMerged.missingSkus || []
@@ -401,7 +431,76 @@ function createManagementWorkbookService({
     return { dailyInput, dailyWrite };
   }
 
+  async function backfillDailyInput({ dateFrom, dateTo, fetchSalesForDay, fetchFinanceForDay }) {
+    const normalizedFrom = formatDate(dateFrom);
+    const normalizedTo = formatDate(dateTo);
+    const dates = listDates(normalizedFrom, normalizedTo);
+
+    if (dates.length > MAX_BACKFILL_DAYS) {
+      throw new Error("Backfill range is too large. Max " + MAX_BACKFILL_DAYS + " days.");
+    }
+
+    const failures = [];
+    let daysUpdated = 0;
+
+    for (const date of dates) {
+      try {
+        if (fetchSalesForDay) {
+          const salesRows = await fetchSalesForDay(date);
+          if (salesFactsService && Array.isArray(salesRows) && salesRows.length) {
+            salesFactsService.saveSalesRows(salesRows, {
+              dateFrom: date,
+              dateTo: date,
+              savedAt: new Date().toISOString(),
+              source: "backfill"
+            });
+          }
+        }
+
+        if (fetchFinanceForDay) {
+          const financeRows = await fetchFinanceForDay(date);
+          if (financeFactsService && Array.isArray(financeRows) && financeRows.length) {
+            financeFactsService.saveFinanceRows(financeRows, {
+              dateFrom: date,
+              dateTo: date,
+              savedAt: new Date().toISOString(),
+              source: "backfill"
+            });
+          }
+        }
+
+        const dailyInput = await buildDailyInputRow(date);
+        const patchRow = [...dailyInput.row];
+        patchRow[9] = "";
+        patchRow[10] = "";
+        patchRow[11] = "";
+        patchRow[12] = "";
+
+        await sheetsService.updateMappedRowByDate("daily_input", date, patchRow, {
+          headers: DAILY_INPUT_HEADERS,
+          dateColumn: "Дата",
+          writeColumns: DAILY_INPUT_WRITE_COLUMNS
+        });
+
+        daysUpdated += 1;
+      } catch (error) {
+        failures.push({
+          date,
+          reason: error.message
+        });
+      }
+    }
+
+    return {
+      daysProcessed: dates.length,
+      daysUpdated,
+      daysFailed: failures.length,
+      failures
+    };
+  }
+
   return {
+    backfillDailyInput,
     buildDailyInputRow,
     exportDaily,
     formatDailySummary,
@@ -414,6 +513,7 @@ module.exports = {
   createManagementWorkbookService,
   DAILY_INPUT_HEADERS,
   DAILY_INPUT_WRITE_COLUMNS,
+  MAX_BACKFILL_DAYS,
   getSettingsDefaults,
   MANAGEMENT_TEMPLATE_ONLY_MESSAGE
 };

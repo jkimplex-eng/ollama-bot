@@ -105,6 +105,8 @@ Alerts:
 - `/daily control в таблицу today`
 - `/management daily 2026-05-14`
 - `/management daily в таблицу 2026-05-14`
+- `/management backfill 2026-05-01 2026-05-14`
+- `/management backfill в таблицу 2026-05-01 2026-05-14`
 - `/management month 2026-05`
 - `/management dashboard 2026-05`
 - `/analytics`
@@ -149,8 +151,10 @@ Service:
 - `/jobs run`
 - `/jobs stop`
 - `/cogs template`
+- `/cogs import text`
+- `/cogs list`
 - `/cogs status`
-- `/cogs set <sku> <cogs>`
+- `/cogs set <skuOrOfferId> <cogs> <logisticsToMp?>`
 - `/cogs clear`
 - `/models`
 

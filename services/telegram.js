@@ -23,6 +23,8 @@ function getHelpText() {
     "/daily control в таблицу 2026-05-14",
     "/management daily 2026-05-14",
     "/management daily в таблицу 2026-05-14",
+    "/management backfill 2026-05-01 2026-05-14",
+    "/management backfill в таблицу 2026-05-01 2026-05-14",
     "/management month 2026-05",
     "/management dashboard 2026-05",
     "/analytics",
@@ -63,8 +65,10 @@ function getHelpText() {
     "/report sku 2026-05-01 2026-05-14",
     "/report sku в таблицу 2026-05-01 2026-05-14",
     "/cogs template",
+    "/cogs import text",
+    "/cogs list",
     "/cogs status",
-    "/cogs set <sku> <cogs>",
+    "/cogs set <skuOrOfferId> <cogs> <logisticsToMp?>",
     "/cogs clear",
     "/sales fetch 2026-05-13 2026-05-14",
     "/sales status",
@@ -235,6 +239,19 @@ function parseDailyControlCommand(text) {
 function parseManagementCommand(text) {
   const normalized = text.trim().replace(/\s+/g, " ");
   const lower = normalized.toLowerCase();
+  const backfillMatch = lower.match(
+    /^\/management\s+backfill(?:\s+в\s+таблицу)?\s+(\d{4}-\d{2}-\d{2})\s+(\d{4}-\d{2}-\d{2})$/
+  );
+
+  if (backfillMatch) {
+    return {
+      type: "backfill",
+      toSheet: lower.includes(" в таблицу "),
+      dateFrom: backfillMatch[1],
+      dateTo: backfillMatch[2]
+    };
+  }
+
   const match = lower.match(
     /^\/management\s+(daily|month|dashboard)(?:\s+в\s+таблицу)?\s+(today|yesterday|сегодня|вчера|\d{4}-\d{2}-\d{2}|\d{4}-\d{2})$/
   );
@@ -574,17 +591,22 @@ function formatHealthInfo() {
 
 function parseCogsCommand(text) {
   const normalized = text.trim().replace(/\s+/g, " ");
-  let match = normalized.match(/^\/cogs\s+(template|status|clear)$/i);
+  let match = normalized.match(/^\/cogs\s+(template|status|clear|list)$/i);
   if (match) {
     return { type: match[1].toLowerCase() };
   }
 
-  match = normalized.match(/^\/cogs\s+set\s+(\S+)\s+([0-9]+(?:[.,][0-9]+)?)$/i);
+  if (/^\/cogs\s+import\s+text$/i.test(normalized)) {
+    return { type: "import_text" };
+  }
+
+  match = normalized.match(/^\/cogs\s+set\s+(\S+)\s+([0-9]+(?:[.,][0-9]+)?)(?:\s+([0-9]+(?:[.,][0-9]+)?))?$/i);
   if (match) {
     return {
       type: "set",
       sku: match[1],
-      cogs: match[2]
+      cogs: match[2],
+      logisticsToMp: match[3] || ""
     };
   }
 
@@ -736,6 +758,27 @@ function formatCogsStatus(status) {
   ].join("\n");
 }
 
+function formatCogsList(items) {
+  if (!items.length) {
+    return "COGS list пуст.";
+  }
+
+  return [
+    "COGS list",
+    "Total items: " + items.length,
+    "",
+    ...items.slice(0, 20).map((item, index) =>
+      [
+        index + 1 + ". " + (item.offerId || item.sku || "-"),
+        "SKU: " + (item.sku || "-"),
+        "Offer ID: " + (item.offerId || "-"),
+        "COGS: " + item.cogs,
+        "Logistics To MP: " + item.logisticsToMp
+      ].join("\n")
+    )
+  ].join("\n\n");
+}
+
 function formatSalesStatus(status) {
   return [
     "Sales facts status",
@@ -810,6 +853,24 @@ function formatSalesFetchResult(saved, summary, warning) {
 
   if (warning) {
     lines.push(warning);
+  }
+
+  return lines.join("\n");
+}
+
+function formatBackfillSummary(result) {
+  const lines = [
+    "Backfill complete:",
+    "Days processed: " + result.daysProcessed,
+    "Days updated: " + result.daysUpdated,
+    "Days failed: " + result.daysFailed
+  ];
+
+  if (result.failures.length) {
+    lines.push("");
+    lines.push(
+      ...result.failures.map(item => item.date + " | " + item.reason)
+    );
   }
 
   return lines.join("\n");
@@ -1073,6 +1134,39 @@ function startTelegramBot({
           }
 
           await sendLongMessage(tgBot, chatId, formatManagementTemplateOnlyMessage());
+          return;
+        }
+
+        if (managementCommand.type === "backfill") {
+          if (!managementCommand.toSheet) {
+            await sendLongMessage(
+              tgBot,
+              chatId,
+              "Для записи в шаблон используй /management backfill в таблицу YYYY-MM-DD YYYY-MM-DD"
+            );
+            return;
+          }
+
+          const result = await managementWorkbookService.backfillDailyInput({
+            dateFrom: managementCommand.dateFrom,
+            dateTo: managementCommand.dateTo,
+            fetchSalesForDay: async date => {
+              const salesResult = await ozonService.getSalesFacts({
+                dateFrom: date + "T00:00:00+03:00",
+                dateTo: date + "T23:59:59.999+03:00"
+              });
+              return salesResult.rows;
+            },
+            fetchFinanceForDay: async date => {
+              const financeResult = await ozonService.getFinanceFacts({
+                dateFrom: date + "T00:00:00+03:00",
+                dateTo: date + "T23:59:59.999+03:00"
+              });
+              return financeResult.rows;
+            }
+          });
+
+          await sendLongMessage(tgBot, chatId, formatBackfillSummary(result));
           return;
         }
       } catch (err) {
@@ -1701,13 +1795,39 @@ function startTelegramBot({
           await sendLongMessage(tgBot, chatId, formatCogsTemplate());
           return;
         }
+        if (cogsCommand.type === "list") {
+          await sendLongMessage(tgBot, chatId, formatCogsList(cogsService.list()));
+          return;
+        }
         if (cogsCommand.type === "status") {
           await sendLongMessage(tgBot, chatId, formatCogsStatus(cogsService.getStatus()));
           return;
         }
         if (cogsCommand.type === "set") {
-          const item = cogsService.setSku(cogsCommand.sku, cogsCommand.cogs);
-          await tgBot.sendMessage(chatId, "COGS сохранен: " + item.sku + " -> " + item.cogs);
+          const item = cogsService.setSku(cogsCommand.sku, cogsCommand.cogs, {
+            logisticsToMp: cogsCommand.logisticsToMp
+          });
+          await tgBot.sendMessage(
+            chatId,
+            "COGS сохранен: " + (item.offerId || item.sku) + " -> " + item.cogs
+          );
+          return;
+        }
+        if (cogsCommand.type === "import_text") {
+          const payload = text.split(/\r?\n/).slice(1).join("\n").trim();
+          if (!payload) {
+            await tgBot.sendMessage(
+              chatId,
+              "Отправь /cogs import text и строки COGS в одном сообщении со следующей строки."
+            );
+            return;
+          }
+
+          const result = cogsService.importText(payload);
+          await tgBot.sendMessage(
+            chatId,
+            "COGS импортирован. Rows: " + result.imported + ", total items: " + result.totalItems
+          );
           return;
         }
         if (cogsCommand.type === "clear") {
