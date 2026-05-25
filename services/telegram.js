@@ -602,6 +602,14 @@ function parseCogsCommand(text) {
     return { type: "import_text" };
   }
 
+  match = normalized.match(/^\/cogs\s+debug\s+(\d{4}-\d{2}-\d{2})$/i);
+  if (match) {
+    return {
+      type: "debug",
+      date: match[1]
+    };
+  }
+
   match = normalized.match(/^\/cogs\s+set\s+(\S+)\s+([0-9]+(?:[.,][0-9]+)?)(?:\s+([0-9]+(?:[.,][0-9]+)?))?$/i);
   if (match) {
     return {
@@ -657,9 +665,9 @@ function parseFinanceCommand(text) {
 }
 
 function parseReplenishmentCommand(text) {
-  const normalized = text.trim().replace(/\s+/g, " ").toLowerCase();
+  const normalized = text.trim().replace(/\s+/g, " ");
   const match = normalized.match(
-    /^\/replenishment\s+forecast(?:\s+в\s+таблицу)?\s+(\d{4}-\d{2}-\d{2})\s+(\d{4}-\d{2}-\d{2})$/
+    /^\/replenishment\s+(forecast|debug)(?:\s+в\s+таблицу)?\s+(\d{4}-\d{2}-\d{2})\s+(\d{4}-\d{2}-\d{2})$/i
   );
 
   if (!match) {
@@ -667,10 +675,10 @@ function parseReplenishmentCommand(text) {
   }
 
   return {
-    type: "forecast",
-    toSheet: normalized.includes(" в таблицу "),
-    dateFrom: match[1],
-    dateTo: match[2]
+    type: match[1].toLowerCase(),
+    toSheet: normalized.toLowerCase().includes(" в таблицу "),
+    dateFrom: match[2],
+    dateTo: match[3]
   };
 }
 
@@ -1881,8 +1889,30 @@ function startTelegramBot({
           const result = cogsService.importText(payload);
           await tgBot.sendMessage(
             chatId,
-            "COGS импортирован. Rows: " + result.imported + ", total items: " + result.totalItems
+            "Imported: " + result.imported + "\n" +
+            "Skipped: " + result.skipped + "\n" +
+            "Total items: " + result.totalItems
           );
+          return;
+        }
+        if (cogsCommand.type === "debug") {
+          const date = cogsCommand.date;
+          const salesRows = salesFactsService.getSalesRowsForDateRange(date, date);
+          const aggregated = salesFactsService.aggregateSalesBySku(salesRows);
+          
+          let response = "offerId | sku | quantity | matched COGS | match source\n";
+          response += "---------------------------------------------------------\n";
+          if (aggregated.length === 0) {
+            response += "Нет продаж за эту дату.";
+          } else {
+            for (const item of aggregated) {
+              const resolved = cogsService.resolveCogs(item.sku, item.offerId);
+              const cogsVal = resolved ? resolved.match.cogs : "COGS не задан";
+              const source = resolved ? resolved.source : "none";
+              response += `${item.offerId || "-"} | ${item.sku || "-"} | ${item.quantity} | ${cogsVal} | ${source}\n`;
+            }
+          }
+          await sendLongMessage(tgBot, chatId, response);
           return;
         }
         if (cogsCommand.type === "clear") {
@@ -1933,6 +1963,25 @@ function startTelegramBot({
 
     if (replenishmentCommand) {
       try {
+        if (replenishmentCommand.type === "debug") {
+          const debugData = await replenishmentService.buildDebug({
+            dateFrom: replenishmentCommand.dateFrom,
+            dateTo: replenishmentCommand.dateTo
+          });
+          
+          let response = "offerId | sku | quantity | currentStock | matched COGS | COGS match source | recommended shipment | priority\n";
+          response += "----------------------------------------------------------------------------------------------------------------\n";
+          if (debugData.length === 0) {
+            response += "Нет данных по продажам за этот период.";
+          } else {
+            for (const row of debugData) {
+              response += `${row.offerId || "-"} | ${row.sku || "-"} | ${row.quantity} | ${row.currentStock} | ${row.matchedCogs} | ${row.cogsSource} | ${row.recommendedShipment} | ${row.priority}\n`;
+            }
+          }
+          await sendLongMessage(tgBot, chatId, response);
+          return;
+        }
+
         if (replenishmentCommand.toSheet) {
           const exported = await replenishmentService.exportForecast({
             dateFrom: replenishmentCommand.dateFrom,

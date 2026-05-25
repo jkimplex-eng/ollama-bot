@@ -65,10 +65,24 @@ function parseBulkImportText(text) {
       .split(/\r?\n/)
       .map(line => line.trim())
       .filter(Boolean)
-      .filter(line => !/^sku\s*;|^offer id\s*;|^sku\s+offer id/i.test(line))
+      .filter(line => !/^(sku|offer|product|cogs|себес|name)/i.test(line))
       .map(line => {
-        if (line.includes(";")) {
-          const parts = line.split(";").map(part => part.trim());
+        const normalizedLine = line.replace(/(\d+),(\d+)/g, "$1.$2");
+        let parts = [];
+
+        if (normalizedLine.includes("\t")) {
+          parts = normalizedLine.split("\t");
+        } else if (normalizedLine.includes(";")) {
+          parts = normalizedLine.split(";");
+        } else if (normalizedLine.includes(",")) {
+          parts = normalizedLine.split(",");
+        } else {
+          parts = normalizedLine.split(/\s+/);
+        }
+
+        parts = parts.map(p => p.trim());
+
+        if (parts.length >= 4) {
           return [
             parts[0] || "",
             parts[1] || "",
@@ -79,9 +93,27 @@ function parseBulkImportText(text) {
           ];
         }
 
-        if (line.includes("\t")) {
-          const parts = line.split("\t").map(part => part.trim());
-          return ["", parts[0] || "", "", parts[1] || "", parts[2] || "", ""];
+        if (parts.length === 2) {
+          const identifier = parts[0];
+          const cogs = parts[1];
+          const treatAsOfferId = /[^\d]/.test(identifier);
+          if (treatAsOfferId) {
+            return ["", identifier, "", cogs, "", ""];
+          } else {
+            return [identifier, "", "", cogs, "", ""];
+          }
+        }
+
+        if (parts.length === 3) {
+          const identifier = parts[0];
+          const cogs = parts[1];
+          const logisticsToMp = parts[2];
+          const treatAsOfferId = /[^\d]/.test(identifier);
+          if (treatAsOfferId) {
+            return ["", identifier, "", cogs, logisticsToMp, ""];
+          } else {
+            return [identifier, "", "", cogs, logisticsToMp, ""];
+          }
         }
 
         return null;
@@ -154,7 +186,36 @@ function createCogsService({ filePath }) {
     });
   }
 
+  function resolveCogs(sku, offerId) {
+    const items = list();
+    const normalizedSku = sku ? String(sku).trim() : "";
+    const normalizedOfferId = offerId ? String(offerId).trim() : "";
+
+    if (normalizedSku) {
+      const match = items.find(item => item.sku === normalizedSku);
+      if (match) {
+        return { match, source: "sku" };
+      }
+    }
+
+    if (normalizedOfferId) {
+      const matchExact = items.find(item => item.offerId === normalizedOfferId);
+      if (matchExact) {
+        return { match: matchExact, source: "offerId" };
+      }
+
+      const lowerOfferId = normalizedOfferId.toLowerCase();
+      const matchCI = items.find(item => item.offerIdKey === lowerOfferId);
+      if (matchCI) {
+        return { match: matchCI, source: "offerId-case-insensitive" };
+      }
+    }
+
+    return null;
+  }
+
   function importText(text) {
+    const lines = String(text || "").split(/\r?\n/).map(line => line.trim()).filter(Boolean);
     const parsed = parseBulkImportText(text);
     if (!parsed.length) {
       throw new Error("Не удалось распознать строки COGS для импорта.");
@@ -179,6 +240,7 @@ function createCogsService({ filePath }) {
     writeItems(items);
     return {
       imported: parsed.length,
+      skipped: Math.max(0, lines.length - parsed.length),
       totalItems: list().length
     };
   }
@@ -189,16 +251,13 @@ function createCogsService({ filePath }) {
   }
 
   function getCogsBySku(sku) {
-    const normalizedSku = normalizeKey(sku);
-    if (!normalizedSku) {
-      return null;
-    }
-    return list().find(item => item.sku === normalizedSku) || null;
+    const res = resolveCogs(sku, null);
+    return res ? res.match : null;
   }
 
   function getCogsByOfferId(offerId) {
-    const normalizedOfferId = normalizeOfferId(offerId);
-    return list().find(item => item.offerIdKey === normalizedOfferId) || null;
+    const res = resolveCogs(null, offerId);
+    return res ? res.match : null;
   }
 
   function getStatus() {
@@ -212,7 +271,8 @@ function createCogsService({ filePath }) {
   function mergeCogsIntoPerformanceRows(rows) {
     const missingSkus = new Set();
     const mergedRows = rows.map(row => {
-      const cogsEntry = getCogsBySku(row.sku) || getCogsByOfferId(row.offerId);
+      const resolved = resolveCogs(row.sku, row.offerId);
+      const cogsEntry = resolved ? resolved.match : null;
       if (!cogsEntry && (row.sku || row.offerId)) {
         missingSkus.add(String(row.sku || row.offerId));
       }
@@ -240,7 +300,8 @@ function createCogsService({ filePath }) {
     list,
     mergeCogsIntoPerformanceRows,
     parseCogsRows,
-    setSku
+    setSku,
+    resolveCogs
   };
 }
 

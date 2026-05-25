@@ -65,12 +65,27 @@ function calculateDaysOfStock(currentStock, salesPerDay) {
   return round2(toNumber(currentStock) / toNumber(salesPerDay));
 }
 
-function getPriority(daysOfStock) {
-  const value = toNumber(daysOfStock);
-  if (value > 0 && value < 7) {
+function getPriority(currentStock, daysOfStock) {
+  if (daysOfStock === undefined) {
+    const days = toNumber(currentStock);
+    if (days > 0 && days < 7) {
+      return "HIGH";
+    }
+    if (days > 0 && days < 14) {
+      return "MEDIUM";
+    }
+    return "LOW";
+  }
+
+  const stock = toNumber(currentStock);
+  const days = toNumber(daysOfStock);
+  if (stock <= 0) {
     return "HIGH";
   }
-  if (value > 0 && value < 14) {
+  if (days < 7) {
+    return "HIGH";
+  }
+  if (days < 14) {
     return "MEDIUM";
   }
   return "LOW";
@@ -193,14 +208,11 @@ function createReplenishmentService({
       const targetStock = calculateTargetStock(salesPerDay, forecastDays, safetyDays);
       const recommendedShipment = calculateRecommendedShipment(targetStock, currentStock, minShipment);
       const daysOfStock = calculateDaysOfStock(currentStock, salesPerDay);
-      const cogsEntry =
-        cogsService?.getCogsBySku(item.sku) ||
-        cogsService?.getCogsByOfferId(item.offerId) ||
-        null;
+
+      const resolved = cogsService ? cogsService.resolveCogs(item.sku, item.offerId) : null;
+      const cogsEntry = resolved ? resolved.match : null;
+
       const commentParts = ["Нет разбивки по складам, используется общий остаток SKU."];
-      if (warnings.length) {
-        commentParts.push("Stocks unavailable, forecast uses zero stock.");
-      }
 
       if (!cogsEntry) {
         commentParts.push("COGS не задан.");
@@ -217,7 +229,7 @@ function createReplenishmentService({
         daysOfStock,
         targetStock,
         recommendedShipment,
-        getPriority(daysOfStock),
+        getPriority(currentStock, daysOfStock),
         commentParts.join(" ")
       ];
     });
@@ -236,6 +248,56 @@ function createReplenishmentService({
     };
   }
 
+  async function buildDebug({ dateFrom, dateTo }) {
+    const dates = listDates(dateFrom, dateTo);
+    const days = dates.length || 1;
+    const salesRows = salesFactsService.getSalesRowsForDateRange(dateFrom, dateTo);
+    const aggregatedSales = aggregateSalesBySku(salesRows);
+    const products = await ozonService.getProducts(1000);
+    let stocks = [];
+
+    try {
+      stocks = await ozonService.getStocks(1000);
+    } catch (error) {
+      stocks = [];
+    }
+
+    const productIndex = indexProducts(products);
+    const stockIndex = indexStocks(stocks);
+
+    const rows = aggregatedSales.map(item => {
+      const product =
+        productIndex.bySku.get(item.sku) ||
+        productIndex.byOfferId.get(String(item.offerId || "").toLowerCase()) ||
+        null;
+      const currentStock =
+        stockIndex.bySku.get(item.sku) ??
+        stockIndex.byOfferId.get(String(item.offerId || "").toLowerCase()) ??
+        0;
+      const salesPerDay = calculateSalesPerDay(item.quantitySold, days);
+      const targetStock = calculateTargetStock(salesPerDay, forecastDays, safetyDays);
+      const recommendedShipment = calculateRecommendedShipment(targetStock, currentStock, minShipment);
+      const daysOfStock = calculateDaysOfStock(currentStock, salesPerDay);
+
+      const resolved = cogsService ? cogsService.resolveCogs(item.sku, item.offerId) : null;
+      const cogsVal = resolved ? resolved.match.cogs : "COGS не задан";
+      const source = resolved ? resolved.source : "none";
+
+      return {
+        offerId: item.offerId || product?.offerId || "",
+        sku: item.sku || product?.sku || "",
+        quantity: item.quantitySold,
+        currentStock,
+        matchedCogs: cogsVal,
+        cogsSource: source,
+        recommendedShipment,
+        priority: getPriority(currentStock, daysOfStock)
+      };
+    });
+
+    return rows;
+  }
+
   async function exportForecast(params) {
     const forecast = await buildForecast(params);
     const writeResult = await sheetsService.clearAndWriteMappedRows("replenishment_plan", forecast.rows, {
@@ -246,7 +308,8 @@ function createReplenishmentService({
 
   return {
     buildForecast,
-    exportForecast
+    exportForecast,
+    buildDebug
   };
 }
 
