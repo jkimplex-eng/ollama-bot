@@ -518,16 +518,33 @@ function createOzonService({ clientId, apiKey }) {
     ) {
       return "advertising";
     }
-    if (haystack.includes("партнер") || haystack.includes("партн") || haystack.includes("partner")) {
+    if (
+      haystack.includes("партнер") ||
+      haystack.includes("партн") ||
+      haystack.includes("partner") ||
+      haystack.includes("services of partners")
+    ) {
       return "partnerServices";
     }
-    if (haystack.includes("fbo")) {
+    if (
+      haystack.includes("fbo") ||
+      haystack.includes("услуги fbo")
+    ) {
       return "fboServices";
     }
-    if (haystack.includes("достав") || haystack.includes("логист") || haystack.includes("delivery") || haystack.includes("logistic")) {
+    if (
+      haystack.includes("достав") ||
+      haystack.includes("логист") ||
+      haystack.includes("delivery") ||
+      haystack.includes("logistic")
+    ) {
       return "logistics";
     }
-    if (haystack.includes("комисс") || haystack.includes("вознагражд") || haystack.includes("commission")) {
+    if (
+      haystack.includes("комисс") ||
+      haystack.includes("вознагражд") ||
+      haystack.includes("commission")
+    ) {
       return "ozonCommission";
     }
     return "otherServices";
@@ -535,6 +552,20 @@ function createOzonService({ clientId, apiKey }) {
 
   function classifyTransactionAmount(transaction) {
     const haystack = buildTextHaystack(transaction.operationType, transaction.operationTypeName);
+
+    // Exclusion: if the transaction is a payout/transfer, it must NOT be classified as any service or commission:
+    if (
+      haystack.includes("payout") ||
+      haystack.includes("payment") ||
+      haystack.includes("transfer") ||
+      haystack.includes("accrued") ||
+      haystack.includes("выплат") ||
+      haystack.includes("перевод") ||
+      haystack.includes("баланс")
+    ) {
+      return "otherServices";
+    }
+
     if (
       haystack.includes("продвиж") ||
       haystack.includes("реклам") ||
@@ -550,16 +581,33 @@ function createOzonService({ clientId, apiKey }) {
     ) {
       return "advertising";
     }
-    if (haystack.includes("партнер") || haystack.includes("партн") || haystack.includes("partner")) {
+    if (
+      haystack.includes("партнер") ||
+      haystack.includes("партн") ||
+      haystack.includes("partner") ||
+      haystack.includes("services of partners")
+    ) {
       return "partnerServices";
     }
-    if (haystack.includes("fbo")) {
+    if (
+      haystack.includes("fbo") ||
+      haystack.includes("услуги fbo")
+    ) {
       return "fboServices";
     }
-    if (haystack.includes("достав") || haystack.includes("логист") || haystack.includes("delivery") || haystack.includes("logistic")) {
+    if (
+      haystack.includes("достав") ||
+      haystack.includes("логист") ||
+      haystack.includes("delivery") ||
+      haystack.includes("logistic")
+    ) {
       return "logistics";
     }
-    if (haystack.includes("комисс") || haystack.includes("вознагражд") || haystack.includes("commission")) {
+    if (
+      haystack.includes("комисс") ||
+      haystack.includes("вознагражд") ||
+      haystack.includes("commission")
+    ) {
       return "ozonCommission";
     }
     return "otherServices";
@@ -583,8 +631,16 @@ function createOzonService({ clientId, apiKey }) {
   function aggregateFinanceFacts(transactions) {
     const byDate = new Map();
     const groupedTypes = new Map();
-    const advertisingGroups = new Map();
     let uncategorizedLogged = 0;
+
+    const bucketMaps = {
+      advertising: new Map(),
+      ozonCommission: new Map(),
+      partnerServices: new Map(),
+      fboServices: new Map(),
+      logistics: new Map(),
+      otherServices: new Map()
+    };
 
     for (const transaction of transactions.map(normalizeFinanceTransaction)) {
       const row = byDate.get(transaction.date) || createEmptyFinanceRow(transaction.date);
@@ -598,14 +654,38 @@ function createOzonService({ clientId, apiKey }) {
 
       if (transaction.saleCommission !== 0) {
         row.ozonCommission += -Math.abs(transaction.saleCommission);
+        const commKey = [
+          transaction.operationType || "-",
+          transaction.operationTypeName || "-",
+          "(saleCommission)"
+        ].join(" | ");
+        const currentComm = bucketMaps.ozonCommission.get(commKey) || { key: commKey, totalAmount: 0 };
+        currentComm.totalAmount = Number((currentComm.totalAmount - Math.abs(transaction.saleCommission)).toFixed(2));
+        bucketMaps.ozonCommission.set(commKey, currentComm);
       }
 
       if (transaction.deliveryCharge !== 0) {
         row.logistics += -Math.abs(transaction.deliveryCharge);
+        const logKey = [
+          transaction.operationType || "-",
+          transaction.operationTypeName || "-",
+          "(deliveryCharge)"
+        ].join(" | ");
+        const currentLog = bucketMaps.logistics.get(logKey) || { key: logKey, totalAmount: 0 };
+        currentLog.totalAmount = Number((currentLog.totalAmount - Math.abs(transaction.deliveryCharge)).toFixed(2));
+        bucketMaps.logistics.set(logKey, currentLog);
       }
 
       if (transaction.returnDeliveryCharge !== 0) {
         row.logistics += -Math.abs(transaction.returnDeliveryCharge);
+        const logKey = [
+          transaction.operationType || "-",
+          transaction.operationTypeName || "-",
+          "(returnDeliveryCharge)"
+        ].join(" | ");
+        const currentLog = bucketMaps.logistics.get(logKey) || { key: logKey, totalAmount: 0 };
+        currentLog.totalAmount = Number((currentLog.totalAmount - Math.abs(transaction.returnDeliveryCharge)).toFixed(2));
+        bucketMaps.logistics.set(logKey, currentLog);
       }
 
       let serviceAmountTotal = 0;
@@ -616,15 +696,17 @@ function createOzonService({ clientId, apiKey }) {
         serviceAmountTotal += service.amount;
         const bucket = classifyServiceBucket(service.name);
         row[bucket] += service.amount > 0 ? -Math.abs(service.amount) : service.amount;
-        if (bucket === "advertising") {
-          const adKey = [
-            transaction.operationType || "-",
-            transaction.operationTypeName || "-",
-            service.name || "-"
-          ].join(" | ");
-          const currentAd = advertisingGroups.get(adKey) || { key: adKey, totalAmount: 0 };
-          currentAd.totalAmount = Number((currentAd.totalAmount + service.amount).toFixed(2));
-          advertisingGroups.set(adKey, currentAd);
+
+        const groupKey = [
+          transaction.operationType || "-",
+          transaction.operationTypeName || "-",
+          service.name || "-"
+        ].join(" | ");
+        const bucketMap = bucketMaps[bucket];
+        if (bucketMap) {
+          const current = bucketMap.get(groupKey) || { key: groupKey, totalAmount: 0 };
+          current.totalAmount = Number((current.totalAmount + service.amount).toFixed(2));
+          bucketMap.set(groupKey, current);
         }
       }
 
@@ -639,16 +721,19 @@ function createOzonService({ clientId, apiKey }) {
       if (Math.abs(remainderAmount) > 0.0001) {
         const bucket = classifyTransactionAmount(transaction);
         row[bucket] += remainderAmount;
-        if (bucket === "advertising") {
-          const adKey = [
-            transaction.operationType || "-",
-            transaction.operationTypeName || "-",
-            "(transaction)"
-          ].join(" | ");
-          const currentAd = advertisingGroups.get(adKey) || { key: adKey, totalAmount: 0 };
-          currentAd.totalAmount = Number((currentAd.totalAmount + remainderAmount).toFixed(2));
-          advertisingGroups.set(adKey, currentAd);
+
+        const groupKey = [
+          transaction.operationType || "-",
+          transaction.operationTypeName || "-",
+          "(remainder)"
+        ].join(" | ");
+        const bucketMap = bucketMaps[bucket];
+        if (bucketMap) {
+          const current = bucketMap.get(groupKey) || { key: groupKey, totalAmount: 0 };
+          current.totalAmount = Number((current.totalAmount + remainderAmount).toFixed(2));
+          bucketMap.set(groupKey, current);
         }
+
         if (bucket === "otherServices" && uncategorizedLogged < 5) {
           uncategorizedLogged += 1;
           console.log("[ozon] finance uncategorized", {
@@ -689,7 +774,11 @@ function createOzonService({ clientId, apiKey }) {
           accruedTotal: Number(item.accruedTotal.toFixed(2))
         })),
       groupedOperations: Array.from(groupedTypes.values()).sort((left, right) => Math.abs(right.totalAmount) - Math.abs(left.totalAmount)),
-      advertisingGroups: Array.from(advertisingGroups.values()).sort((left, right) => Math.abs(right.totalAmount) - Math.abs(left.totalAmount))
+      advertisingGroups: Array.from(bucketMaps.advertising.values()).sort((left, right) => Math.abs(right.totalAmount) - Math.abs(left.totalAmount)),
+      commissionGroups: Array.from(bucketMaps.ozonCommission.values()).sort((left, right) => Math.abs(right.totalAmount) - Math.abs(left.totalAmount)),
+      partnerServicesGroups: Array.from(bucketMaps.partnerServices.values()).sort((left, right) => Math.abs(right.totalAmount) - Math.abs(left.totalAmount)),
+      fboServicesGroups: Array.from(bucketMaps.fboServices.values()).sort((left, right) => Math.abs(right.totalAmount) - Math.abs(left.totalAmount)),
+      otherServicesGroups: Array.from(bucketMaps.otherServices.values()).sort((left, right) => Math.abs(right.totalAmount) - Math.abs(left.totalAmount))
     };
   }
 
@@ -728,6 +817,10 @@ function createOzonService({ clientId, apiKey }) {
         rows: aggregated.rows,
         diagnostics: {
           advertisingGroups: aggregated.advertisingGroups,
+          commissionGroups: aggregated.commissionGroups,
+          partnerServicesGroups: aggregated.partnerServicesGroups,
+          fboServicesGroups: aggregated.fboServicesGroups,
+          otherServicesGroups: aggregated.otherServicesGroups,
           groupedOperations: aggregated.groupedOperations,
           transactionCount: transactions.length
         },

@@ -720,12 +720,12 @@ async function run() {
     "",
     3000,
     2600,
-    300,
+    -300,
     -400,
     150,
-    70,
-    30,
-    20,
+    -70,
+    -30,
+    -20,
     1430,
     55,
     180645
@@ -814,7 +814,7 @@ async function run() {
   const fallbackDaily = await fallbackManagementService.buildDailyInputRow("2026-05-14");
   assert.strictEqual(fallbackDaily.row[5], -200);
   assert.strictEqual(fallbackDaily.row[6], 571);
-  assert.strictEqual(fallbackDaily.row[7], 100);
+  assert.strictEqual(fallbackDaily.row[7], -100);
   assert.strictEqual(fallbackDaily.row[8], 0);
   assert.strictEqual(fallbackDaily.row[9], 0);
 
@@ -1960,6 +1960,81 @@ async function run() {
   assert.deepStrictEqual(pnlRows.find(row => row[0] === "Себес"), ["Себес", 370.35, 100]);
   assert.deepStrictEqual(pnlRows.find(row => row[0] === "Прибыль"), ["Прибыль", 1271.97, 1600]);
   assert.deepStrictEqual(pnlRows.find(row => row[0] === "Начислено / Выплата"), ["Начислено / Выплата", 1642.32, 1700]);
+
+  // New tests for Daily Input finance mapping and negative sign requirements
+  console.log("Running new negative signs and Daily Input finance mapping tests...");
+
+  // Mock a finance result for 2026-05-14
+  const expectedFinanceFacts = {
+    date: "2026-05-14",
+    sales: 396053,
+    returns: -10173,
+    ozonCommission: -158211,
+    logistics: -14147,
+    partnerServices: -3742,
+    fboServices: -1625,
+    advertising: -39695,
+    otherServices: 0,
+    accruedTotal: 166855
+  };
+
+  // 1. Verify expected mock values
+  assert.strictEqual(expectedFinanceFacts.ozonCommission, -158211);
+  assert.strictEqual(expectedFinanceFacts.partnerServices, -3742);
+  assert.strictEqual(expectedFinanceFacts.fboServices, -1625);
+
+  // 2. Verify Daily Input row mapping for 2026-05-14 maps E, I, J correctly and G > 0 when COGS exists
+  const customCogsService = createCogsService({
+    filePath: path.join(tempDir, "custom-cogs.json")
+  });
+  customCogsService.setSku("111", 120, { logisticsToMp: 10 });
+
+  const customFinanceFactsService = createFinanceFactsService({
+    filePath: path.join(tempDir, "custom-finance.json")
+  });
+  customFinanceFactsService.saveFinanceRows([expectedFinanceFacts]);
+
+  const customSalesFactsService = createSalesFactsService({
+    filePath: path.join(tempDir, "custom-sales.json")
+  });
+  customSalesFactsService.saveSalesRows([
+    {
+      date: "2026-05-14",
+      sku: "111",
+      offerId: "offer-111",
+      productName: "Товар 1",
+      quantity: 2,
+      revenue: 2000
+    }
+  ]);
+
+  const testWorkbookService = createManagementWorkbookService({
+    cogsService: customCogsService,
+    financeFactsService: customFinanceFactsService,
+    salesFactsService: customSalesFactsService,
+    performanceService: {
+      getStoredRowsForDateRange: async () => []
+    },
+    sheetsService: {
+      updateMappedRowByDate: async () => ({ rowsWritten: 1, tabName: "Daily Input" })
+    },
+    planVpPerDay: 0
+  });
+
+  const dailyInputRowResult = await testWorkbookService.buildDailyInputRow("2026-05-14");
+  
+  // Row structure:
+  // A Дата (0), B День (1), C Заказы (2), D Продажи (3), E Комиссия Ozon (4), F Реклама (5), G Себестоимость (6),
+  // H Доставка до МП (7), I Услуги партнёров (8), J Услуги FBO (9)
+  assert.strictEqual(dailyInputRowResult.row[4], -158211, "E Комиссия Ozon ₽ must be -158211");
+  assert.strictEqual(dailyInputRowResult.row[8], -3742, "I Услуги партнёров ₽ must be -3742");
+  assert.strictEqual(dailyInputRowResult.row[9], -1625, "J Услуги FBO ₽ must be -1625");
+  
+  // G Себестоимость ₽ > 0 when COGS exists. Quantity = 2, COGS = 120, so G should be 240
+  assert.ok(dailyInputRowResult.row[6] > 0, "G Себестоимость ₽ must be > 0");
+  assert.strictEqual(dailyInputRowResult.row[6], 240, "G Себестоимость ₽ must match cogs * quantity");
+
+  console.log("New negative signs and Daily Input finance mapping tests passed!");
 
   console.log("Report builder checks passed");
 }

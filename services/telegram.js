@@ -862,11 +862,51 @@ function formatFinanceDiagnostics(result) {
     )
   );
 
+  if (result.diagnostics.commissionGroups?.length) {
+    lines.push("");
+    lines.push("Commission classification:");
+    lines.push(
+      ...result.diagnostics.commissionGroups.slice(0, 20).map(item =>
+        item.key + " | total=" + item.totalAmount
+      )
+    );
+  }
+
+  if (result.diagnostics.partnerServicesGroups?.length) {
+    lines.push("");
+    lines.push("Partner services classification:");
+    lines.push(
+      ...result.diagnostics.partnerServicesGroups.slice(0, 20).map(item =>
+        item.key + " | total=" + item.totalAmount
+      )
+    );
+  }
+
+  if (result.diagnostics.fboServicesGroups?.length) {
+    lines.push("");
+    lines.push("FBO services classification:");
+    lines.push(
+      ...result.diagnostics.fboServicesGroups.slice(0, 20).map(item =>
+        item.key + " | total=" + item.totalAmount
+      )
+    );
+  }
+
   if (result.diagnostics.advertisingGroups?.length) {
     lines.push("");
     lines.push("Advertising classification:");
     lines.push(
       ...result.diagnostics.advertisingGroups.slice(0, 20).map(item =>
+        item.key + " | total=" + item.totalAmount
+      )
+    );
+  }
+
+  if (result.diagnostics.otherServicesGroups?.length) {
+    lines.push("");
+    lines.push("Other/unclassified operations:");
+    lines.push(
+      ...result.diagnostics.otherServicesGroups.slice(0, 20).map(item =>
         item.key + " | total=" + item.totalAmount
       )
     );

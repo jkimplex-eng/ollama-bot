@@ -203,10 +203,10 @@ function buildMetricForDate({
   const cogsTotal = round2(salesFacts.cogsTotal);
   const logisticsToMp = round2(salesFacts.logisticsToMpTotal);
 
-  const ozonCommission = round2(Math.abs(protectValue(financeFacts.ozonCommission)));
-  const logisticsActual = round2(Math.abs(protectValue(financeFacts.logistics)));
-  const partnerServices = round2(Math.abs(protectValue(financeFacts.partnerServices)));
-  const fboServices = round2(Math.abs(protectValue(financeFacts.fboServices)));
+  const ozonCommission = round2(protectValue(financeFacts.ozonCommission));
+  const logisticsActual = round2(protectValue(financeFacts.logistics));
+  const partnerServices = round2(protectValue(financeFacts.partnerServices));
+  const fboServices = round2(protectValue(financeFacts.fboServices));
 
   const grossProfit = calculateGrossProfit({
     sales,
@@ -266,11 +266,8 @@ function getCogsEntryForRow(cogsService, row) {
     return null;
   }
 
-  return (
-    cogsService.getCogsBySku(row.sku) ||
-    cogsService.getCogsByOfferId(row.offerId) ||
-    null
-  );
+  const resolved = cogsService.resolveCogs(row.sku, row.offerId);
+  return resolved ? resolved.match : null;
 }
 
 function createManagementWorkbookService({
