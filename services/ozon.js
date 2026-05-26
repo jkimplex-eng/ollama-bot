@@ -820,6 +820,7 @@ function createOzonService({ clientId, apiKey }) {
           commissionGroups: aggregated.commissionGroups,
           partnerServicesGroups: aggregated.partnerServicesGroups,
           fboServicesGroups: aggregated.fboServicesGroups,
+          logisticsGroups: aggregated.logisticsGroups,
           otherServicesGroups: aggregated.otherServicesGroups,
           groupedOperations: aggregated.groupedOperations,
           transactionCount: transactions.length

@@ -515,8 +515,49 @@ function createManagementWorkbookService({
     };
   }
 
+  async function buildDailyInputDebug(dateInput) {
+    const date = resolveDateInput(dateInput);
+    const dailyInput = await buildDailyInputRow(date);
+    
+    const rawFinance = financeFactsService ? financeFactsService.getFinanceRowsForDateRange(date, date) : [];
+    const rawSales = salesFactsService ? salesFactsService.getSalesRowsForDateRange(date, date) : [];
+    
+    const salesMerged = cogsService ? cogsService.mergeCogsIntoPerformanceRows(rawSales) : { rows: rawSales };
+    const salesRows = salesMerged.rows.map(row => {
+      if (row.cogsConfigured || !cogsService) {
+        return row;
+      }
+      const cogsEntry = getCogsEntryForRow(cogsService, row);
+      if (!cogsEntry) {
+        return row;
+      }
+      return {
+        ...row,
+        cogs: toNumber(cogsEntry.cogs),
+        logisticsToMp: toNumber(cogsEntry.logisticsToMp),
+        cogsConfigured: true
+      };
+    });
+    
+    const cogsTotal = round2(salesRows.reduce((sum, row) => sum + toNumber(row.cogs) * toNumber(row.quantity), 0));
+    
+    return {
+      date,
+      rawFinance,
+      salesFactsAggregate: {
+        totalRevenue: round2(salesRows.reduce((sum, row) => sum + toNumber(row.revenue), 0)),
+        totalQuantity: salesRows.reduce((sum, row) => sum + toNumber(row.quantity), 0),
+        rowsCount: salesRows.length
+      },
+      cogsTotal,
+      finalPayload: dailyInput.row,
+      writeColumns: DAILY_INPUT_WRITE_COLUMNS
+    };
+  }
+
   return {
     backfillDailyInput,
+    buildDailyInputDebug,
     buildDailyInputRow,
     exportDaily,
     formatDailySummary,

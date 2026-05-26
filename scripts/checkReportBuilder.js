@@ -310,6 +310,10 @@ async function run() {
     toSheet: false,
     value: "2026-05-14"
   });
+  assert.deepStrictEqual(parseManagementCommand("/management daily debug 2026-05-14"), {
+    type: "daily_debug",
+    value: "2026-05-14"
+  });
   assert.deepStrictEqual(parseManagementCommand("/management month в таблицу 2026-05"), {
     type: "month",
     toSheet: true,
@@ -2062,6 +2066,32 @@ async function run() {
   // G Себестоимость ₽ > 0 when COGS exists. Quantity = 2, COGS = 120, so G should be 240
   assert.ok(dailyInputRowResult.row[6] > 0, "G Себестоимость ₽ must be > 0");
   assert.strictEqual(dailyInputRowResult.row[6], 240, "G Себестоимость ₽ must match cogs * quantity");
+
+  // Test buildDailyInputDebug
+  const dailyDebugResult = await testWorkbookService.buildDailyInputDebug("2026-05-14");
+  assert.strictEqual(dailyDebugResult.date, "2026-05-14");
+  assert.strictEqual(dailyDebugResult.cogsTotal, 240);
+  assert.deepStrictEqual(dailyDebugResult.writeColumns, [
+    "Дата",
+    "День",
+    "Заказы ₽",
+    "Продажи ₽",
+    "Комиссия Ozon ₽",
+    "Реклама ₽",
+    "Себестоимость ₽",
+    "Доставка до МП ₽",
+    "Услуги партнёров ₽",
+    "Услуги FBO ₽",
+    "ВП ₽",
+    "Маржа ВП %",
+    "Статус",
+    "Комментарий"
+  ]);
+  assert.strictEqual(dailyDebugResult.rawFinance.length, 1);
+  assert.strictEqual(dailyDebugResult.salesFactsAggregate.totalRevenue, 2000);
+  assert.strictEqual(dailyDebugResult.salesFactsAggregate.totalQuantity, 2);
+  assert.strictEqual(dailyDebugResult.salesFactsAggregate.rowsCount, 1);
+  console.log("buildDailyInputDebug tests passed successfully!");
 
   console.log("New positive signs and Daily Input finance mapping tests passed!");
 

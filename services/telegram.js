@@ -244,6 +244,17 @@ function parseDailyControlCommand(text) {
 function parseManagementCommand(text) {
   const normalized = text.trim().replace(/\s+/g, " ");
   const lower = normalized.toLowerCase();
+  
+  const debugMatch = lower.match(
+    /^\/management\s+daily\s+debug\s+(\d{4}-\d{2}-\d{2})$/
+  );
+  if (debugMatch) {
+    return {
+      type: "daily_debug",
+      value: debugMatch[1]
+    };
+  }
+
   const backfillMatch = lower.match(
     /^\/management\s+backfill(?:\s+в\s+таблицу)?\s+(\d{4}-\d{2}-\d{2})\s+(\d{4}-\d{2}-\d{2})$/
   );
@@ -721,6 +732,26 @@ function formatManagementDailyResult(result) {
   return result.summaryText;
 }
 
+function formatManagementDailyDebug(debug) {
+  return [
+    "Management Daily Debug " + debug.date,
+    "",
+    "Raw Finance Facts on Disk:",
+    JSON.stringify(debug.rawFinance, null, 2),
+    "",
+    "Raw Sales Facts Aggregate:",
+    JSON.stringify(debug.salesFactsAggregate, null, 2),
+    "",
+    "COGS Total: " + debug.cogsTotal,
+    "",
+    "Final Daily Input Payload:",
+    JSON.stringify(debug.finalPayload, null, 2),
+    "",
+    "Write Columns:",
+    JSON.stringify(debug.writeColumns, null, 2)
+  ].join("\n");
+}
+
 function formatManagementMonthResult(result, type) {
   return [
     "Management " + type + " " + result.month,
@@ -887,6 +918,16 @@ function formatFinanceDiagnostics(result) {
     lines.push("FBO services classification:");
     lines.push(
       ...result.diagnostics.fboServicesGroups.slice(0, 20).map(item =>
+        item.key + " | total=" + item.totalAmount
+      )
+    );
+  }
+
+  if (result.diagnostics.logisticsGroups?.length) {
+    lines.push("");
+    lines.push("Logistics classification:");
+    lines.push(
+      ...result.diagnostics.logisticsGroups.slice(0, 20).map(item =>
         item.key + " | total=" + item.totalAmount
       )
     );
@@ -1244,6 +1285,12 @@ function startTelegramBot({
 
     if (managementCommand) {
       try {
+        if (managementCommand.type === "daily_debug") {
+          const debugResult = await managementWorkbookService.buildDailyInputDebug(managementCommand.value);
+          await sendLongMessage(tgBot, chatId, formatManagementDailyDebug(debugResult));
+          return;
+        }
+
         if (managementCommand.type === "daily") {
           if (managementCommand.toSheet) {
             const exported = await managementWorkbookService.exportDaily(managementCommand.value);
