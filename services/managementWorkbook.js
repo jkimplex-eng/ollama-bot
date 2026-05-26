@@ -3,6 +3,7 @@ const DAILY_INPUT_HEADERS = [
   "День",
   "Заказы ₽",
   "Продажи ₽",
+  "Комиссия Ozon ₽",
   "Реклама ₽",
   "Себестоимость ₽",
   "Доставка до МП ₽",
@@ -25,13 +26,10 @@ const DAILY_INPUT_WRITE_COLUMNS = [
   "День",
   "Заказы ₽",
   "Продажи ₽",
+  "Комиссия Ozon ₽",
   "Реклама ₽",
   "Себестоимость ₽",
-  "Доставка до МП ₽",
-  "ВП ₽",
-  "Маржа ВП %",
-  "Статус",
-  "Комментарий"
+  "Доставка до МП ₽"
 ];
 
 function formatMoscowDate(date) {
@@ -67,6 +65,15 @@ function toNumber(value) {
 
 function round2(value) {
   return Number(toNumber(value).toFixed(2));
+}
+
+function protectValue(val) {
+  if (val === null || val === undefined || String(val).trim() === "" || String(val).trim() === "-") {
+    return 0;
+  }
+  const cleaned = String(val).replace(/\s/g, "").replace(",", ".");
+  const num = parseFloat(cleaned);
+  return isNaN(num) ? 0 : num;
 }
 
 function resolveDateInput(input) {
@@ -186,6 +193,10 @@ function buildMetricForDate({
     : round2(performanceFacts.spend);
   const cogsTotal = round2(salesFacts.cogsTotal);
   const logisticsToMp = round2(salesFacts.logisticsToMpTotal);
+
+  const ozonCommission = round2(Math.abs(protectValue(financeFacts.ozonCommission)));
+  const logisticsActual = round2(Math.abs(protectValue(financeFacts.logistics)));
+
   const grossProfit = calculateGrossProfit({
     sales,
     returns,
@@ -214,8 +225,10 @@ function buildMetricForDate({
     sales,
     returns,
     advertising,
+    ozonCommission,
     cogsTotal,
     logisticsToMp,
+    logisticsActual,
     grossProfit,
     margin,
     plan,
@@ -366,18 +379,19 @@ function createManagementWorkbookService({
 
     const row = [
       metrics.date,
-      metrics.day,
-      metrics.orderedRevenue,
-      metrics.sales,
-      metrics.advertising,
-      metrics.cogsTotal,
-      metrics.logisticsToMp,
-      metrics.grossProfit,
-      metrics.margin,
-      metrics.plan,
-      metrics.deviation,
-      cumulativeGrossProfit,
-      runRate,
+      "",
+      protectValue(metrics.orderedRevenue),
+      protectValue(metrics.sales),
+      protectValue(metrics.ozonCommission),
+      protectValue(metrics.advertising),
+      protectValue(metrics.cogsTotal),
+      protectValue(metrics.logisticsActual),
+      protectValue(metrics.grossProfit),
+      protectValue(metrics.margin),
+      metrics.plan === "" ? "" : protectValue(metrics.plan),
+      metrics.deviation === "" ? "" : protectValue(metrics.deviation),
+      protectValue(cumulativeGrossProfit),
+      protectValue(runRate),
       metrics.status,
       metrics.comment
     ];
@@ -418,11 +432,7 @@ function createManagementWorkbookService({
 
   async function exportDaily(dateInput) {
     const dailyInput = await buildDailyInputRow(dateInput);
-    const patchRow = [...dailyInput.row];
-    patchRow[9] = "";
-    patchRow[10] = "";
-    patchRow[11] = "";
-    patchRow[12] = "";
+    const patchRow = dailyInput.row.slice(0, 8);
     const dailyWrite = await sheetsService.updateMappedRowByDate("daily_input", dailyInput.date, patchRow, {
       headers: DAILY_INPUT_HEADERS,
       dateColumn: "Дата",
@@ -470,11 +480,7 @@ function createManagementWorkbookService({
         }
 
         const dailyInput = await buildDailyInputRow(date);
-        const patchRow = [...dailyInput.row];
-        patchRow[9] = "";
-        patchRow[10] = "";
-        patchRow[11] = "";
-        patchRow[12] = "";
+        const patchRow = dailyInput.row.slice(0, 8);
 
         await sheetsService.updateMappedRowByDate("daily_input", date, patchRow, {
           headers: DAILY_INPUT_HEADERS,

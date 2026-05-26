@@ -150,7 +150,16 @@ function createMetricRow(label, dates, valuesByDate) {
 }
 
 function getAdvertisingSpend(row) {
-  return toNumber(row.spend || row.adSpend || row.cost || 0);
+  if (row.spend !== undefined && row.spend !== null && row.spend !== "") {
+    return toNumber(row.spend);
+  }
+  if (row.adSpend !== undefined && row.adSpend !== null && row.adSpend !== "") {
+    return toNumber(row.adSpend);
+  }
+  if (row.cost !== undefined && row.cost !== null && row.cost !== "") {
+    return toNumber(row.cost);
+  }
+  return 0;
 }
 
 function getExpenseEffect(value) {
@@ -169,8 +178,12 @@ function buildPnlSummaryRows(rows, { dateFrom, dateTo, salesRows = [], financeRo
   const partnerServicesByDate = sumByDate(financeRows, dates, row => row.partnerServices);
   const fboServicesByDate = sumByDate(financeRows, dates, row => row.fboServices);
   const otherServicesByDate = sumByDate(financeRows, dates, row => row.otherServices);
-  const financeAdsByDate = sumByDate(financeRows, dates, row => row.advertising);
-  const adsByDate = financeRows.length ? financeAdsByDate : sumByDate(rows, dates, getAdvertisingSpend);
+  const performanceAds = sumByDate(rows, dates, getAdvertisingSpend);
+  const adsByDate = buildDateMap(dates, () => 0);
+  for (const date of dates) {
+    const val = performanceAds.get(date) || 0;
+    adsByDate.set(date, financeRows.length ? -Math.abs(val) : val);
+  }
   const accruedByDate = sumByDate(financeRows, dates, row => row.accruedTotal);
   const profitByDate = buildDateMap(dates, () => 0);
   const cogsByDate = sumByDate(salesRows, dates, row => toNumber(row.cogs) * toNumber(row.quantity));

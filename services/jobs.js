@@ -178,11 +178,16 @@ function createJobsService({
 
   async function syncStocks() {
     return runJob("stocks", async () => {
-      const stocks = await ozonService.getStocks(stockLimit);
-      const rows = stocks.map(stockToSheetRow);
+      try {
+        const stocks = await ozonService.getStocks(stockLimit);
+        const rows = stocks.map(stockToSheetRow);
 
-      await sheetsService.clearAndWriteMappedRows(STOCKS_SHEET, rows);
-      return { rows: stocks.length };
+        await sheetsService.clearAndWriteMappedRows(STOCKS_SHEET, rows);
+        return { rows: stocks.length };
+      } catch (error) {
+        console.error(error.stack || error);
+        return { rows: 0, error: error.message };
+      }
     });
   }
 

@@ -178,13 +178,13 @@ async function run() {
         ["Заказано", 1000],
         ["Продажи", 900],
         ["Возвраты", -50],
-        ["Реклама", -80],
+        ["Реклама", -100],
         ["Комиссия Ozon", -100],
         ["Логистика", -20],
         ["Услуги партнёров", -10],
         ["Услуги FBO", -5],
         ["Себес", 100],
-        ["Прибыль", 535],
+        ["Прибыль", 515],
         ["Начислено / Выплата", 635]
       ]
     }
@@ -715,19 +715,20 @@ async function run() {
   });
 
   const managementDaily = await managementWorkbookService.buildDailyInputRow("2026-05-14");
-  assert.deepStrictEqual(managementDaily.row.slice(0, 10), [
+  assert.deepStrictEqual(managementDaily.row.slice(0, 11), [
     "2026-05-14",
-    managementDaily.row[1],
+    "",
     3000,
     2600,
+    300,
     -400,
     150,
-    15,
+    70,
     1430,
     55,
     180645
   ]);
-  assert.strictEqual(managementDaily.row[12], 5203.57);
+  assert.strictEqual(managementDaily.row[13], 5203.57);
 
   const managementExportDaily = await managementWorkbookService.exportDaily("2026-05-14");
   assert.strictEqual(managementExportDaily.dailyWrite.tabName, "Daily Input");
@@ -737,15 +738,13 @@ async function run() {
   assert.strictEqual(managementExportDaily.dailyWrite.dateMatchedAs, "05-14");
   assert.strictEqual(managementExportDaily.dailyWrite.appended, false);
   assert.deepStrictEqual(managementWrites[0].writeColumns, DAILY_INPUT_WRITE_COLUMNS);
-  assert.strictEqual(managementWrites[0].row[9], "");
-  assert.strictEqual(managementWrites[0].row[10], "");
-  assert.strictEqual(managementWrites[0].row[11], "");
-  assert.strictEqual(managementWrites[0].row[12], "");
+  assert.strictEqual(managementWrites[0].row.length, 8);
   assert.deepStrictEqual(managementWrites[0].headers, [
     "Дата",
     "День",
     "Заказы ₽",
     "Продажи ₽",
+    "Комиссия Ozon ₽",
     "Реклама ₽",
     "Себестоимость ₽",
     "Доставка до МП ₽",
@@ -809,8 +808,9 @@ async function run() {
     planVpPerDay: 0
   });
   const fallbackDaily = await fallbackManagementService.buildDailyInputRow("2026-05-14");
-  assert.strictEqual(fallbackDaily.row[5], 571);
-  assert.strictEqual(fallbackDaily.row[6], 0);
+  assert.strictEqual(fallbackDaily.row[5], -200);
+  assert.strictEqual(fallbackDaily.row[6], 571);
+  assert.strictEqual(fallbackDaily.row[7], 100);
 
   const backfillWrites = [];
   const backfillSalesSaved = [];
@@ -1040,7 +1040,7 @@ async function run() {
 
   const originalStocksFetch = global.fetch;
   global.fetch = async url => {
-    if (url.endsWith("/v3/product/info/stocks")) {
+    if (url.endsWith("/v2/product/info/stocks")) {
       return {
         ok: true,
         json: async () => ({
@@ -1079,7 +1079,7 @@ async function run() {
 
   const originalStocksStringFetch = global.fetch;
   global.fetch = async url => {
-    if (url.endsWith("/v3/product/info/stocks")) {
+    if (url.endsWith("/v2/product/info/stocks")) {
       return {
         ok: true,
         text: async () => JSON.stringify({
@@ -1111,7 +1111,7 @@ async function run() {
 
   const originalInvalidStocksFetch = global.fetch;
   global.fetch = async url => {
-    if (url.endsWith("/v3/product/info/stocks")) {
+    if (url.endsWith("/v2/product/info/stocks")) {
       return {
         ok: true,
         text: async () => "<html>broken response</html>"
@@ -1192,22 +1192,19 @@ async function run() {
     planVpPerDay: 0
   });
   const templatePlanDaily = await templatePlanManagementService.buildDailyInputRow("2026-05-14");
-  assert.strictEqual(templatePlanDaily.row[8], 80.41);
-  assert.strictEqual(templatePlanDaily.row[9], "");
+  assert.strictEqual(templatePlanDaily.row[9], 80.41);
   assert.strictEqual(templatePlanDaily.row[10], "");
+  assert.strictEqual(templatePlanDaily.row[11], "");
   assert.strictEqual(templatePlanDaily.metrics.comment, "План считается формулой в шаблоне.");
   assert.deepStrictEqual(DAILY_INPUT_WRITE_COLUMNS, [
     "Дата",
     "День",
     "Заказы ₽",
     "Продажи ₽",
+    "Комиссия Ozon ₽",
     "Реклама ₽",
     "Себестоимость ₽",
-    "Доставка до МП ₽",
-    "ВП ₽",
-    "Маржа ВП %",
-    "Статус",
-    "Комментарий"
+    "Доставка до МП ₽"
   ]);
 
   const originalFinanceFetch = global.fetch;
@@ -1662,13 +1659,14 @@ async function run() {
         status: "delivered",
         products: [{ sku: "111", offer_id: "offer-111", name: "Товар 1", quantity: 1, price: 100 }]
       }));
-      if (body.offset === 0) {
+      if (!body.cursor) {
         return {
           ok: true,
           json: async () => ({
             result: {
               postings: firstPageRows,
-              has_next: true
+              has_next: true,
+              cursor: "page-2"
             }
           })
         };
@@ -1679,7 +1677,8 @@ async function run() {
         json: async () => ({
           result: {
             postings: secondPageRows,
-            has_next: true
+            has_next: true,
+            cursor: "page-3"
           }
         })
       };

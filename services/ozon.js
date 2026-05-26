@@ -427,7 +427,7 @@ function createOzonService({ clientId, apiKey }) {
 
   async function getStocks(limit = 100) {
     const normalizedLimit = normalizeLimit(limit);
-    const data = await requestOzon("/v3/product/info/stocks", {
+    const data = await requestOzon("/v2/product/info/stocks", {
       filter: {
         visibility: "ALL"
       },
@@ -745,9 +745,35 @@ function createOzonService({ clientId, apiKey }) {
     }
   }
 
-  async function getFboPostings({ dateFrom, dateTo, offset = 0, limit = 100 }) {
+  async function getFboPostings({ dateFrom, dateTo, cursor = "", limit = 100 }) {
     const safeLimit = clampOzonLimit(limit, 100);
     const data = await requestOzon("/v3/posting/fbo/list", {
+      dir: "ASC",
+      filter: {
+        since: dateFrom,
+        to: dateTo
+      },
+      limit: safeLimit,
+      cursor,
+      with: {
+        analytics_data: true,
+        financial_data: true
+      }
+    });
+
+    const result = data.result || data;
+    const postings = result.postings || result.items || [];
+    return {
+      postings,
+      has_next: Boolean(result.has_next),
+      cursor: result.cursor || "",
+      limit: safeLimit
+    };
+  }
+
+  async function getFbsPostings({ dateFrom, dateTo, offset = 0, limit = 100 }) {
+    const safeLimit = clampOzonLimit(limit, 100);
+    const data = await requestOzon("/v3/posting/fbs/list", {
       dir: "ASC",
       filter: {
         since: dateFrom,
@@ -767,31 +793,6 @@ function createOzonService({ clientId, apiKey }) {
       postings,
       has_next: Boolean(result.has_next),
       offset: offset + postings.length,
-      limit: safeLimit
-    };
-  }
-
-  async function getFbsPostings({ dateFrom, dateTo, lastId = "", limit = 100 }) {
-    const safeLimit = clampOzonLimit(limit, 100);
-    const data = await requestOzon("/v3/posting/fbs/list", {
-      dir: "ASC",
-      filter: {
-        since: dateFrom,
-        to: dateTo
-      },
-      limit: safeLimit,
-      last_id: lastId,
-      with: {
-        analytics_data: true,
-        financial_data: true
-      }
-    });
-
-    const result = data.result || data;
-    return {
-      postings: result.postings || result.items || [],
-      has_next: Boolean(result.has_next),
-      last_id: result.last_id || "",
       limit: safeLimit
     };
   }
@@ -892,7 +893,7 @@ function createOzonService({ clientId, apiKey }) {
     }
 
     try {
-      let offset = 0;
+      let fboCursor = "";
       let page = 1;
       let hasNextFbo = true;
       let previousFboBoundary = "";
@@ -912,14 +913,14 @@ function createOzonService({ clientId, apiKey }) {
           dateTo,
           limit: safeLimit,
           page,
-          offset
+          cursor: fboCursor || ""
         });
-        const fbo = await getFboPostings({ dateFrom, dateTo, offset, limit: safeLimit });
+        const fbo = await getFboPostings({ dateFrom, dateTo, cursor: fboCursor, limit: safeLimit });
         const details = registerPage({
           postings: fbo.postings,
           scheme: "FBO",
           page,
-          offset
+          cursor: fboCursor || ""
         });
         if (safetyStopped || !fbo.postings.length) {
           break;
@@ -931,12 +932,14 @@ function createOzonService({ clientId, apiKey }) {
           break;
         }
         previousFboBoundary = boundarySignature;
-        hasNextFbo = Boolean(fbo.postings.length === safeLimit && fbo.has_next !== false);
-        offset += fbo.postings.length;
+        hasNextFbo = Boolean(
+          fbo.postings.length === safeLimit &&
+            fbo.has_next !== false
+        );
+        fboCursor = fbo.cursor || "";
         page += 1;
       }
 
-      let lastId = "";
       let hasNextFbs = true;
       let fbsPage = 1;
       let previousFbsBoundary = "";
@@ -951,19 +954,20 @@ function createOzonService({ clientId, apiKey }) {
           stopReason = "max_pages";
           break;
         }
+        const offset = (fbsPage - 1) * safeLimit;
         console.log("[ozon] sales fetch FBS", {
           dateFrom,
           dateTo,
           limit: safeLimit,
           page: fbsPage,
-          cursor: lastId || ""
+          offset
         });
-        const fbs = await getFbsPostings({ dateFrom, dateTo, lastId, limit: safeLimit });
+        const fbs = await getFbsPostings({ dateFrom, dateTo, offset, limit: safeLimit });
         const details = registerPage({
           postings: fbs.postings,
           scheme: "FBS",
           page: fbsPage,
-          cursor: lastId || ""
+          offset
         });
         if (safetyStopped || !fbs.postings.length) {
           break;
@@ -975,13 +979,7 @@ function createOzonService({ clientId, apiKey }) {
           break;
         }
         previousFbsBoundary = boundarySignature;
-        hasNextFbs = Boolean(
-          fbs.postings.length === safeLimit &&
-            fbs.has_next &&
-            fbs.last_id &&
-            fbs.last_id !== lastId
-        );
-        lastId = fbs.last_id || "";
+        hasNextFbs = Boolean(fbs.postings.length === safeLimit && fbs.has_next !== false);
         fbsPage += 1;
       }
 

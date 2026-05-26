@@ -209,32 +209,43 @@ function createAlertsService({
   }
 
   async function runChecks() {
-    const alerts = await collectAlerts();
-    const significantAlerts = alerts.filter(alert => alert.severity !== "low");
-    const state = loadState();
-    const signature = signatureForAlerts(significantAlerts);
-    const isDuplicate = signature === state.lastSignature;
+    try {
+      const alerts = await collectAlerts();
+      const significantAlerts = alerts.filter(alert => alert.severity !== "low");
+      const state = loadState();
+      const signature = signatureForAlerts(significantAlerts);
+      const isDuplicate = signature === state.lastSignature;
 
-    writeLog("info", "Alerts check finished", {
-      alerts: alerts.length,
-      significantAlerts: significantAlerts.length
-    });
-
-    if (significantAlerts.length && !isDuplicate) {
-      const message = formatAlerts(significantAlerts);
-      await notifier(message);
-      saveState({
-        lastSignature: signature,
-        lastSentAt: new Date().toISOString()
+      writeLog("info", "Alerts check finished", {
+        alerts: alerts.length,
+        significantAlerts: significantAlerts.length
       });
-      writeLog("info", "Alert message sent", { significantAlerts: significantAlerts.length });
-    }
 
-    return {
-      alerts,
-      significantAlerts,
-      duplicate: isDuplicate
-    };
+      if (significantAlerts.length && !isDuplicate) {
+        const message = formatAlerts(significantAlerts);
+        await notifier(message);
+        saveState({
+          lastSignature: signature,
+          lastSentAt: new Date().toISOString()
+        });
+        writeLog("info", "Alert message sent", { significantAlerts: significantAlerts.length });
+      }
+
+      return {
+        alerts,
+        significantAlerts,
+        duplicate: isDuplicate
+      };
+    } catch (error) {
+      console.error(error.stack || error);
+      writeLog("error", "Alerts run failed with exception", { error: error.message });
+      return {
+        alerts: [],
+        significantAlerts: [],
+        duplicate: false,
+        error: error.message
+      };
+    }
   }
 
   function start() {

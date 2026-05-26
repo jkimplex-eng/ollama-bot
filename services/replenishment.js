@@ -93,13 +93,30 @@ function getPriority(currentStock, daysOfStock) {
 
 function getCityForRegion(regionName) {
   const name = String(regionName || "").toLowerCase();
-  if (name.includes("москва") || name.includes("мск") || name.includes("хоругвино") || name.includes("пушкино")) {
+  if (
+    name.includes("москва") ||
+    name.includes("москов") ||
+    name.includes("мск") ||
+    name.includes("хоругвино") ||
+    name.includes("пушкино")
+  ) {
     return "Москва";
   }
-  if (name.includes("санкт") || name.includes("ленинград") || name.includes("спб") || name.includes("питер") || name.includes("шушары")) {
+  if (
+    name.includes("санкт") ||
+    name.includes("ленинград") ||
+    name.includes("спб") ||
+    name.includes("питер") ||
+    name.includes("шушары")
+  ) {
     return "СПб";
   }
-  if (name.includes("казань") || name.includes("татарстан") || name.includes("зеленодольск") || name.includes("кзн")) {
+  if (
+    name.includes("казань") ||
+    name.includes("татарстан") ||
+    name.includes("зеленодольск") ||
+    name.includes("кзн")
+  ) {
     return "Казань";
   }
   return "unknown";
@@ -467,5 +484,6 @@ module.exports = {
   getPriority,
   REPLENISHMENT_HEADERS,
   indexStocksByCity,
-  getCityForRegion
+  getCityForRegion,
+  getRegionalSalesQuantity
 };
