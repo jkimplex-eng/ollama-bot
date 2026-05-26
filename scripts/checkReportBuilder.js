@@ -720,12 +720,12 @@ async function run() {
     "",
     3000,
     2600,
-    -300,
-    -400,
+    300,
+    400,
     150,
-    -70,
-    -30,
-    -20,
+    70,
+    30,
+    20,
     1430,
     55,
     180645
@@ -812,9 +812,9 @@ async function run() {
     planVpPerDay: 0
   });
   const fallbackDaily = await fallbackManagementService.buildDailyInputRow("2026-05-14");
-  assert.strictEqual(fallbackDaily.row[5], -200);
+  assert.strictEqual(fallbackDaily.row[5], 200);
   assert.strictEqual(fallbackDaily.row[6], 571);
-  assert.strictEqual(fallbackDaily.row[7], -100);
+  assert.strictEqual(fallbackDaily.row[7], 100);
   assert.strictEqual(fallbackDaily.row[8], 0);
   assert.strictEqual(fallbackDaily.row[9], 0);
 
@@ -2026,15 +2026,44 @@ async function run() {
   // Row structure:
   // A Дата (0), B День (1), C Заказы (2), D Продажи (3), E Комиссия Ozon (4), F Реклама (5), G Себестоимость (6),
   // H Доставка до МП (7), I Услуги партнёров (8), J Услуги FBO (9)
-  assert.strictEqual(dailyInputRowResult.row[4], -158211, "E Комиссия Ozon ₽ must be -158211");
-  assert.strictEqual(dailyInputRowResult.row[8], -3742, "I Услуги партнёров ₽ must be -3742");
-  assert.strictEqual(dailyInputRowResult.row[9], -1625, "J Услуги FBO ₽ must be -1625");
+  const ozonCommissionInput = dailyInputRowResult.row[4];
+  const partnerServicesInput = dailyInputRowResult.row[8];
+  const fboServicesInput = dailyInputRowResult.row[9];
+  const advertisingInput = dailyInputRowResult.row[5];
+  const logisticsInput = dailyInputRowResult.row[7];
+
+  console.log("Daily Input exported positive values debug log:");
+  console.log("- Commission: raw =", expectedFinanceFacts.ozonCommission, "| exported =", ozonCommissionInput);
+  console.log("- Advertising: raw =", expectedFinanceFacts.advertising, "| exported =", advertisingInput);
+  console.log("- Logistics: raw =", expectedFinanceFacts.logistics, "| exported =", logisticsInput);
+  console.log("- Partner services: raw =", expectedFinanceFacts.partnerServices, "| exported =", partnerServicesInput);
+  console.log("- FBO services: raw =", expectedFinanceFacts.fboServices, "| exported =", fboServicesInput);
+
+  if (
+    ozonCommissionInput !== 158211 ||
+    partnerServicesInput !== 3742 ||
+    fboServicesInput !== 1625 ||
+    advertisingInput !== 39695 ||
+    Math.abs(logisticsInput - 14147) > 1
+  ) {
+    console.log("[Requirement 8 Debug Output - Reconciliations Differ]");
+    console.log("CLASSIFICATION OPERATIONS INCLUDED IN BUCKETS:");
+    console.log("- Commission includes marketplace commission or sale_commission operations.");
+    console.log("- Partner services includes 'Услуги партнёров', 'partner services', or 'services of partners'.");
+    console.log("- FBO services includes 'Услуги FBO' or 'FBO'.");
+  }
+
+  assert.strictEqual(ozonCommissionInput, 158211, "E Комиссия Ozon ₽ must be 158211");
+  assert.strictEqual(partnerServicesInput, 3742, "I Услуги партнёров ₽ must be 3742");
+  assert.strictEqual(fboServicesInput, 1625, "J Услуги FBO ₽ must be 1625");
+  assert.strictEqual(advertisingInput, 39695, "F Реклама ₽ must be 39695");
+  assert.ok(Math.abs(logisticsInput - 14147) <= 0.1 || logisticsInput === 14146.92, "H Доставка до МП ₽ must be 14147 or 14146.92");
   
   // G Себестоимость ₽ > 0 when COGS exists. Quantity = 2, COGS = 120, so G should be 240
   assert.ok(dailyInputRowResult.row[6] > 0, "G Себестоимость ₽ must be > 0");
   assert.strictEqual(dailyInputRowResult.row[6], 240, "G Себестоимость ₽ must match cogs * quantity");
 
-  console.log("New negative signs and Daily Input finance mapping tests passed!");
+  console.log("New positive signs and Daily Input finance mapping tests passed!");
 
   console.log("Report builder checks passed");
 }
