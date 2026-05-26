@@ -7,6 +7,8 @@ const DAILY_INPUT_HEADERS = [
   "Реклама ₽",
   "Себестоимость ₽",
   "Доставка до МП ₽",
+  "Услуги партнёров ₽",
+  "Услуги FBO ₽",
   "ВП ₽",
   "Маржа ВП %",
   "План ВП/день",
@@ -29,7 +31,13 @@ const DAILY_INPUT_WRITE_COLUMNS = [
   "Комиссия Ozon ₽",
   "Реклама ₽",
   "Себестоимость ₽",
-  "Доставка до МП ₽"
+  "Доставка до МП ₽",
+  "Услуги партнёров ₽",
+  "Услуги FBO ₽",
+  "ВП ₽",
+  "Маржа ВП %",
+  "Статус",
+  "Комментарий"
 ];
 
 function formatMoscowDate(date) {
@@ -188,14 +196,17 @@ function buildMetricForDate({
   const quantity = round2(salesFacts.orderedQuantity);
   const sales = round2(financeFacts.sales);
   const returns = round2(financeFacts.returns);
-  const advertising = financeFacts.hasFinance
-    ? round2(financeFacts.advertising)
-    : round2(performanceFacts.spend);
+  const advertisingRaw = financeFacts.hasFinance
+    ? protectValue(financeFacts.advertising)
+    : protectValue(performanceFacts.spend);
+  const advertising = advertisingRaw > 0 ? -advertisingRaw : advertisingRaw;
   const cogsTotal = round2(salesFacts.cogsTotal);
   const logisticsToMp = round2(salesFacts.logisticsToMpTotal);
 
   const ozonCommission = round2(Math.abs(protectValue(financeFacts.ozonCommission)));
   const logisticsActual = round2(Math.abs(protectValue(financeFacts.logistics)));
+  const partnerServices = round2(Math.abs(protectValue(financeFacts.partnerServices)));
+  const fboServices = round2(Math.abs(protectValue(financeFacts.fboServices)));
 
   const grossProfit = calculateGrossProfit({
     sales,
@@ -229,6 +240,8 @@ function buildMetricForDate({
     cogsTotal,
     logisticsToMp,
     logisticsActual,
+    partnerServices,
+    fboServices,
     grossProfit,
     margin,
     plan,
@@ -386,10 +399,12 @@ function createManagementWorkbookService({
       protectValue(metrics.advertising),
       protectValue(metrics.cogsTotal),
       protectValue(metrics.logisticsActual),
+      protectValue(metrics.partnerServices),
+      protectValue(metrics.fboServices),
       protectValue(metrics.grossProfit),
       protectValue(metrics.margin),
-      metrics.plan === "" ? "" : protectValue(metrics.plan),
-      metrics.deviation === "" ? "" : protectValue(metrics.deviation),
+      metrics.plan === "" ? 0 : protectValue(metrics.plan),
+      metrics.deviation === "" ? 0 : protectValue(metrics.deviation),
       protectValue(cumulativeGrossProfit),
       protectValue(runRate),
       metrics.status,
@@ -432,8 +447,7 @@ function createManagementWorkbookService({
 
   async function exportDaily(dateInput) {
     const dailyInput = await buildDailyInputRow(dateInput);
-    const patchRow = dailyInput.row.slice(0, 8);
-    const dailyWrite = await sheetsService.updateMappedRowByDate("daily_input", dailyInput.date, patchRow, {
+    const dailyWrite = await sheetsService.updateMappedRowByDate("daily_input", dailyInput.date, dailyInput.row, {
       headers: DAILY_INPUT_HEADERS,
       dateColumn: "Дата",
       writeColumns: DAILY_INPUT_WRITE_COLUMNS
@@ -480,9 +494,8 @@ function createManagementWorkbookService({
         }
 
         const dailyInput = await buildDailyInputRow(date);
-        const patchRow = dailyInput.row.slice(0, 8);
 
-        await sheetsService.updateMappedRowByDate("daily_input", date, patchRow, {
+        await sheetsService.updateMappedRowByDate("daily_input", date, dailyInput.row, {
           headers: DAILY_INPUT_HEADERS,
           dateColumn: "Дата",
           writeColumns: DAILY_INPUT_WRITE_COLUMNS

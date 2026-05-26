@@ -715,7 +715,7 @@ async function run() {
   });
 
   const managementDaily = await managementWorkbookService.buildDailyInputRow("2026-05-14");
-  assert.deepStrictEqual(managementDaily.row.slice(0, 11), [
+  assert.deepStrictEqual(managementDaily.row.slice(0, 13), [
     "2026-05-14",
     "",
     3000,
@@ -724,11 +724,13 @@ async function run() {
     -400,
     150,
     70,
+    30,
+    20,
     1430,
     55,
     180645
   ]);
-  assert.strictEqual(managementDaily.row[13], 5203.57);
+  assert.strictEqual(managementDaily.row[15], 5203.57);
 
   const managementExportDaily = await managementWorkbookService.exportDaily("2026-05-14");
   assert.strictEqual(managementExportDaily.dailyWrite.tabName, "Daily Input");
@@ -738,7 +740,7 @@ async function run() {
   assert.strictEqual(managementExportDaily.dailyWrite.dateMatchedAs, "05-14");
   assert.strictEqual(managementExportDaily.dailyWrite.appended, false);
   assert.deepStrictEqual(managementWrites[0].writeColumns, DAILY_INPUT_WRITE_COLUMNS);
-  assert.strictEqual(managementWrites[0].row.length, 8);
+  assert.strictEqual(managementWrites[0].row.length, 18);
   assert.deepStrictEqual(managementWrites[0].headers, [
     "Дата",
     "День",
@@ -748,6 +750,8 @@ async function run() {
     "Реклама ₽",
     "Себестоимость ₽",
     "Доставка до МП ₽",
+    "Услуги партнёров ₽",
+    "Услуги FBO ₽",
     "ВП ₽",
     "Маржа ВП %",
     "План ВП/день",
@@ -811,6 +815,8 @@ async function run() {
   assert.strictEqual(fallbackDaily.row[5], -200);
   assert.strictEqual(fallbackDaily.row[6], 571);
   assert.strictEqual(fallbackDaily.row[7], 100);
+  assert.strictEqual(fallbackDaily.row[8], 0);
+  assert.strictEqual(fallbackDaily.row[9], 0);
 
   const backfillWrites = [];
   const backfillSalesSaved = [];
@@ -1192,9 +1198,10 @@ async function run() {
     planVpPerDay: 0
   });
   const templatePlanDaily = await templatePlanManagementService.buildDailyInputRow("2026-05-14");
-  assert.strictEqual(templatePlanDaily.row[9], 80.41);
-  assert.strictEqual(templatePlanDaily.row[10], "");
-  assert.strictEqual(templatePlanDaily.row[11], "");
+  assert.strictEqual(templatePlanDaily.row[9], 0);
+  assert.strictEqual(templatePlanDaily.row[11], 80.41);
+  assert.strictEqual(templatePlanDaily.row[12], 0);
+  assert.strictEqual(templatePlanDaily.row[13], 0);
   assert.strictEqual(templatePlanDaily.metrics.comment, "План считается формулой в шаблоне.");
   assert.deepStrictEqual(DAILY_INPUT_WRITE_COLUMNS, [
     "Дата",
@@ -1204,7 +1211,13 @@ async function run() {
     "Комиссия Ozon ₽",
     "Реклама ₽",
     "Себестоимость ₽",
-    "Доставка до МП ₽"
+    "Доставка до МП ₽",
+    "Услуги партнёров ₽",
+    "Услуги FBO ₽",
+    "ВП ₽",
+    "Маржа ВП %",
+    "Статус",
+    "Комментарий"
   ]);
 
   const originalFinanceFetch = global.fetch;
