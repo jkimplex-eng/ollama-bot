@@ -1017,8 +1017,8 @@ async function run() {
   assert.strictEqual(replenishmentForecast.rows[0][1], "Хоругвино/Пушкино");
   assert.strictEqual(replenishmentForecast.rows[0][5], 8.4); // Sales per day (14 * 0.6)
   assert.strictEqual(replenishmentForecast.rows[0][6], 20); // Current stock (20)
-  assert.strictEqual(replenishmentForecast.rows[0][8], 235.2); // Target stock (8.4 * 28)
-  assert.strictEqual(replenishmentForecast.rows[0][9], 215.2); // Recommended shipment (235.2 - 20)
+  assert.strictEqual(replenishmentForecast.rows[0][8], 277.2); // Target stock (8.4 * 33)
+  assert.strictEqual(replenishmentForecast.rows[0][9], 258); // Recommended shipment (Math.ceil(277.2 - 20) = 258)
   assert.strictEqual(replenishmentForecast.rows[0][10], "HIGH"); // Priority
 
   // SKU 222 (SJ11) - Москва (row index 3)
@@ -1026,7 +1026,7 @@ async function run() {
   assert.strictEqual(replenishmentForecast.rows[3][1], "Хоругвино/Пушкино");
   assert.strictEqual(replenishmentForecast.rows[3][5], 1.2); // Sales per day (2 * 0.6)
   assert.strictEqual(replenishmentForecast.rows[3][6], 200); // Current stock (200)
-  assert.strictEqual(replenishmentForecast.rows[3][8], 33.6); // Target stock (1.2 * 28)
+  assert.strictEqual(replenishmentForecast.rows[3][8], 39.6); // Target stock (1.2 * 33)
   assert.strictEqual(replenishmentForecast.rows[3][9], 0); // Recommended shipment
   assert.strictEqual(replenishmentForecast.rows[3][10], "LOW"); // Priority (daysOfStock = 166.7 >= 14)
 
@@ -1506,7 +1506,8 @@ async function run() {
       postingNumber: "posting-revenue-1",
       orderId: "posting-revenue-1",
       status: "delivered",
-      scheme: "FBO"
+      scheme: "FBO",
+      region: ""
     });
     assert.deepStrictEqual(revenueResult.summary, {
       rows: 1,
@@ -1583,7 +1584,8 @@ async function run() {
       postingNumber: "28345787-2367-1",
       orderId: "28345787-2367-1",
       status: "delivered",
-      scheme: "FBO"
+      scheme: "FBO",
+      region: ""
     });
     assert.deepStrictEqual(priceAmountResult.summary, {
       rows: 1,

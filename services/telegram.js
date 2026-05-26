@@ -909,7 +909,7 @@ function formatReplenishmentForecast(result) {
   }
 
   const lines = [
-    "Replenishment forecast",
+    "📦 Умный расчет подсорта товара:",
     "Период: " + result.summary.period,
     "",
     ...(result.warnings || []),
@@ -924,21 +924,38 @@ function formatReplenishmentForecast(result) {
     }
   }
 
+  const cityWarehouseLabels = {
+    "Москва": "Москва (Склады: Хоругвино/Пушкино)",
+    "СПб": "СПб (Склад: Шушары)",
+    "Казань": "Казань (Склад: Зеленодольск)"
+  };
+
+  const priorityLabels = {
+    "HIGH": "КРИТИЧНЫЙ",
+    "MEDIUM": "СРЕДНИЙ",
+    "LOW": "НИЗКИЙ"
+  };
+
   for (const city of citiesToShow) {
     const cityRows = grouped.get(city) || [];
-    lines.push(`📍 ${city}:`);
+    lines.push(cityWarehouseLabels[city] || `📍 ${city}:`);
     let activeShipmentsCount = 0;
     for (const row of cityRows) {
       const sku = row[2];
       const offerId = row[3];
+      const salesPerDay = row[5];
+      const stock = row[6];
       const recommended = row[9];
       const priority = row[10];
-      const stock = row[6];
+
+      const pLabel = priorityLabels[priority] || priority;
 
       if (recommended > 0) {
-        lines.push(`• ship ${recommended} ${offerId || sku} (Priority: ${priority}, stock: ${stock})`);
-        activeShipmentsCount++;
+        lines.push(`• ${offerId || sku}: Скорость ${salesPerDay} шт/день → Доступно: ${stock} шт → Рекомендация: Привезти ${recommended} шт. (Приоритет: ${pLabel})`);
+      } else {
+        lines.push(`• ${offerId || sku}: Скорость ${salesPerDay} шт/день → Доступно: ${stock} шт → Рекомендация: Поставка не нужна`);
       }
+      activeShipmentsCount++;
     }
     if (activeShipmentsCount === 0) {
       lines.push("• no shipment needed");

@@ -363,6 +363,7 @@ function createOzonService({ clientId, apiKey }) {
     const postingNumber = item.posting_number || item.order_id || "";
     const status = item.status || "";
     const products = Array.isArray(item.products) ? item.products : [];
+    const rawRegion = item.analytics_data?.region || item.analytics_data?.city || "";
 
     return products.map(product => {
       const normalized = normalizePostingProduct(product, item, {}, debugLogger);
@@ -377,7 +378,8 @@ function createOzonService({ clientId, apiKey }) {
         postingNumber,
         orderId: String(item.order_id || postingNumber || ""),
         status,
-        scheme
+        scheme,
+        region: rawRegion
       };
     });
   }

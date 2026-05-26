@@ -41,7 +41,8 @@ function normalizeSalesRow(row) {
     price: row.price === "" ? "" : toNumber(row.price),
     postingNumber: String(row.postingNumber || ""),
     orderId: String(row.orderId || ""),
-    status: String(row.status || "")
+    status: String(row.status || ""),
+    region: String(row.region || "")
   };
 }
 

@@ -163,6 +163,27 @@ replenishmentService.buildForecast({ dateFrom: "2026-05-14", dateTo: "2026-05-14
     assert.strictEqual(moscowEntry.reserved, 7);
     assert.strictEqual(moscowEntry.available, 23);
 
+    // 11. Test getCityForRegion and regional velocity
+    console.log("Testing getCityForRegion and regional velocity calculations...");
+    const { getCityForRegion, getRegionalSalesQuantity } = require("../services/replenishment");
+    assert.strictEqual(getCityForRegion("Москва Г."), "Москва");
+    assert.strictEqual(getCityForRegion("Московская обл."), "Москва");
+    assert.strictEqual(getCityForRegion("Санкт-Петербург г."), "СПб");
+    assert.strictEqual(getCityForRegion("Республика Татарстан"), "Казань");
+    assert.strictEqual(getCityForRegion("Челябинская обл."), "unknown");
+
+    const mockSalesRows = [
+      { sku: "SKU1", offerId: "OFF1", quantity: 10, region: "Москва Г." },
+      { sku: "SKU1", offerId: "OFF1", quantity: 5, region: "Республика Татарстан" },
+      { sku: "SKU1", offerId: "OFF1", quantity: 10, region: "Неизвестный регион" } // Fallback: 6 to Moscow, 2 to СПб, 2 to Казань
+    ];
+    const regionalQty = getRegionalSalesQuantity(mockSalesRows);
+    const skuEntry = regionalQty.get("SKU1");
+    assert.ok(skuEntry);
+    assert.strictEqual(skuEntry["Москва"], 16); // 10 + 6
+    assert.strictEqual(skuEntry["СПб"], 2);      // 2
+    assert.strictEqual(skuEntry["Казань"], 7);    // 5 + 2
+
     // Clean up
     if (fs.existsSync(tempFilePath)) {
       fs.unlinkSync(tempFilePath);

@@ -91,6 +91,53 @@ function getPriority(currentStock, daysOfStock) {
   return "LOW";
 }
 
+function getCityForRegion(regionName) {
+  const name = String(regionName || "").toLowerCase();
+  if (name.includes("москва") || name.includes("мск") || name.includes("хоругвино") || name.includes("пушкино")) {
+    return "Москва";
+  }
+  if (name.includes("санкт") || name.includes("ленинград") || name.includes("спб") || name.includes("питер") || name.includes("шушары")) {
+    return "СПб";
+  }
+  if (name.includes("казань") || name.includes("татарстан") || name.includes("зеленодольск") || name.includes("кзн")) {
+    return "Казань";
+  }
+  return "unknown";
+}
+
+function getRegionalSalesQuantity(salesRows) {
+  const map = new Map();
+
+  for (const row of salesRows) {
+    const sku = String(row.sku || "").trim();
+    const offerId = String(row.offerId || "").trim();
+    const key = sku || offerId;
+    if (!key) {
+      continue;
+    }
+
+    const current = map.get(key) || { "Москва": 0, "СПб": 0, "Казань": 0 };
+    const quantity = toNumber(row.quantity);
+    const city = getCityForRegion(row.region);
+
+    if (city === "Москва") {
+      current["Москва"] += quantity;
+    } else if (city === "СПб") {
+      current["СПб"] += quantity;
+    } else if (city === "Казань") {
+      current["Казань"] += quantity;
+    } else {
+      current["Москва"] += quantity * 0.60;
+      current["СПб"] += quantity * 0.20;
+      current["Казань"] += quantity * 0.20;
+    }
+
+    map.set(key, current);
+  }
+
+  return map;
+}
+
 function aggregateSalesBySku(rows) {
   const map = new Map();
 
@@ -225,13 +272,9 @@ function createReplenishmentService({
     const productIndex = indexProducts(products);
     const stockIndex = indexStocksByCity(stocks, ozonService);
 
+    const regionalSales = getRegionalSalesQuantity(salesRows);
     const rows = [];
     const targetCities = ["Москва", "СПб", "Казань"];
-    const cityRatios = {
-      "Москва": 0.60,
-      "СПб": 0.20,
-      "Казань": 0.20
-    };
     const cityWarehouses = {
       "Москва": "Хоругвино/Пушкино",
       "СПб": "Шушары",
@@ -247,20 +290,37 @@ function createReplenishmentService({
       const resolved = cogsService ? cogsService.resolveCogs(item.sku, item.offerId) : null;
       const cogsEntry = resolved ? resolved.match : null;
 
+      const skuKey = item.sku || item.offerId || "";
+      const regionalEntry = regionalSales.get(skuKey) || { "Москва": 0, "СПб": 0, "Казань": 0 };
+
       for (const city of targetCities) {
-        const skuKey = item.sku ? `${item.sku}|${city}` : "";
-        const offerKey = item.offerId ? `${item.offerId.toLowerCase()}|${city}` : "";
+        const stockSkuKey = item.sku ? `${item.sku}|${city}` : "";
+        const stockOfferKey = item.offerId ? `${item.offerId.toLowerCase()}|${city}` : "";
 
         const stockEntry =
-          (skuKey ? stockIndex.bySkuCity.get(skuKey) : null) ||
-          (offerKey ? stockIndex.byOfferIdCity.get(offerKey) : null) ||
+          (stockSkuKey ? stockIndex.bySkuCity.get(stockSkuKey) : null) ||
+          (stockOfferKey ? stockIndex.byOfferIdCity.get(stockOfferKey) : null) ||
           { available: 0, reserved: 0, present: 0 };
 
         const currentStock = stockEntry.available;
-        const salesPerDay = calculateSalesPerDay(item.quantitySold, days);
-        const salesPerDayCity = round2(salesPerDay * cityRatios[city]);
-        const targetStock = calculateTargetStock(salesPerDayCity, forecastDays, safetyDays);
-        const recommendedShipment = calculateRecommendedShipment(targetStock, currentStock, minShipment);
+        const citySalesQty = regionalEntry[city] || 0;
+        const salesPerDayCity = round2(calculateSalesPerDay(citySalesQty, days));
+
+        const cityLeadTimes = {
+          "Москва": 3,
+          "СПб": 5,
+          "Казань": 6
+        };
+        const leadTime = cityLeadTimes[city] || 0;
+        const targetStock = round2(salesPerDayCity * (leadTime + 30));
+
+        let recommendedShipment = targetStock - currentStock;
+        if (recommendedShipment <= 0) {
+          recommendedShipment = 0;
+        } else {
+          recommendedShipment = Math.ceil(recommendedShipment);
+        }
+
         const daysOfStock = calculateDaysOfStock(currentStock, salesPerDayCity);
 
         const commentParts = [`Остатки ${city}: доступно ${stockEntry.available}, резерв ${stockEntry.reserved}. Нет разбивки по складам внутри кластера.`];
@@ -316,13 +376,9 @@ function createReplenishmentService({
     const productIndex = indexProducts(products);
     const stockIndex = indexStocksByCity(stocks, ozonService);
 
+    const regionalSales = getRegionalSalesQuantity(salesRows);
     const rows = [];
     const targetCities = ["Москва", "СПб", "Казань"];
-    const cityRatios = {
-      "Москва": 0.60,
-      "СПб": 0.20,
-      "Казань": 0.20
-    };
 
     for (const item of aggregatedSales) {
       const product =
@@ -334,20 +390,37 @@ function createReplenishmentService({
       const cogsVal = resolved ? resolved.match.cogs : "COGS не задан";
       const source = resolved ? resolved.source : "none";
 
+      const skuKey = item.sku || item.offerId || "";
+      const regionalEntry = regionalSales.get(skuKey) || { "Москва": 0, "СПб": 0, "Казань": 0 };
+
       for (const city of targetCities) {
-        const skuKey = item.sku ? `${item.sku}|${city}` : "";
-        const offerKey = item.offerId ? `${item.offerId.toLowerCase()}|${city}` : "";
+        const stockSkuKey = item.sku ? `${item.sku}|${city}` : "";
+        const stockOfferKey = item.offerId ? `${item.offerId.toLowerCase()}|${city}` : "";
 
         const stockEntry =
-          (skuKey ? stockIndex.bySkuCity.get(skuKey) : null) ||
-          (offerKey ? stockIndex.byOfferIdCity.get(offerKey) : null) ||
+          (stockSkuKey ? stockIndex.bySkuCity.get(stockSkuKey) : null) ||
+          (stockOfferKey ? stockIndex.byOfferIdCity.get(stockOfferKey) : null) ||
           { available: 0, reserved: 0, present: 0 };
 
         const currentStock = stockEntry.available;
-        const salesPerDay = calculateSalesPerDay(item.quantitySold, days);
-        const salesPerDayCity = round2(salesPerDay * cityRatios[city]);
-        const targetStock = calculateTargetStock(salesPerDayCity, forecastDays, safetyDays);
-        const recommendedShipment = calculateRecommendedShipment(targetStock, currentStock, minShipment);
+        const citySalesQty = regionalEntry[city] || 0;
+        const salesPerDayCity = round2(calculateSalesPerDay(citySalesQty, days));
+
+        const cityLeadTimes = {
+          "Москва": 3,
+          "СПб": 5,
+          "Казань": 6
+        };
+        const leadTime = cityLeadTimes[city] || 0;
+        const targetStock = round2(salesPerDayCity * (leadTime + 30));
+
+        let recommendedShipment = targetStock - currentStock;
+        if (recommendedShipment <= 0) {
+          recommendedShipment = 0;
+        } else {
+          recommendedShipment = Math.ceil(recommendedShipment);
+        }
+
         const daysOfStock = calculateDaysOfStock(currentStock, salesPerDayCity);
 
         rows.push({
@@ -393,5 +466,6 @@ module.exports = {
   createReplenishmentService,
   getPriority,
   REPLENISHMENT_HEADERS,
-  indexStocksByCity
+  indexStocksByCity,
+  getCityForRegion
 };
