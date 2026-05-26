@@ -897,10 +897,36 @@ function formatFinanceDiagnostics(result) {
     lines.push("");
     lines.push("Commission classification:");
     lines.push(
-      ...result.diagnostics.commissionGroups.slice(0, 20).map(item =>
-        item.key + " | total=" + item.totalAmount
-      )
+      ...result.diagnostics.commissionGroups.slice(0, 20).map(item => {
+        const parts = [
+          item.key,
+          "count=" + (item.count ?? 1),
+          "total=" + item.totalAmount
+        ];
+        if (item.saleCommissionTotal !== undefined) {
+          parts.push("saleCommission=" + item.saleCommissionTotal);
+        }
+        if (item.accrualsForSaleTotal !== undefined) {
+          parts.push("accruals=" + item.accrualsForSaleTotal);
+        }
+        if (item.amountTotal !== undefined) {
+          parts.push("amount=" + item.amountTotal);
+        }
+        if (item.servicesRemainderTotal !== undefined) {
+          parts.push("remainder=" + item.servicesRemainderTotal);
+        }
+        return parts.join(" | ");
+      })
     );
+  }
+
+  if (result.diagnostics.reconciliation) {
+    lines.push("");
+    lines.push("Cabinet reconciliation candidates:");
+    lines.push("Commission: " + (result.diagnostics.reconciliation.commission ?? 0));
+    lines.push("Partner services: " + (result.diagnostics.reconciliation.partnerServices ?? 0));
+    lines.push("FBO services: " + (result.diagnostics.reconciliation.fboServices ?? 0));
+    lines.push("Other: " + (result.diagnostics.reconciliation.other ?? 0));
   }
 
   if (result.diagnostics.partnerServicesGroups?.length) {

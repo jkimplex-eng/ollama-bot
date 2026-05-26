@@ -503,6 +503,8 @@ function createOzonService({ clientId, apiKey }) {
 
   function classifyServiceBucket(name) {
     const haystack = buildTextHaystack(name);
+    
+    // 1. Advertising
     if (
       haystack.includes("продвиж") ||
       haystack.includes("реклам") ||
@@ -518,28 +520,46 @@ function createOzonService({ clientId, apiKey }) {
     ) {
       return "advertising";
     }
+    
+    // 2. Partner Services
     if (
       haystack.includes("партнер") ||
       haystack.includes("партн") ||
       haystack.includes("partner") ||
-      haystack.includes("services of partners")
+      haystack.includes("services of partners") ||
+      haystack.includes("storage") ||
+      haystack.includes("размещен") ||
+      haystack.includes("packageredistribution") ||
+      haystack.includes("packagematerial")
     ) {
       return "partnerServices";
     }
+    
+    // 3. FBO Services
     if (
       haystack.includes("fbo") ||
-      haystack.includes("услуги fbo")
+      haystack.includes("услуги fbo") ||
+      haystack.includes("supply") ||
+      haystack.includes("crossdocking") ||
+      haystack.includes("кросс-докинг") ||
+      haystack.includes("packagingatwarehouse") ||
+      haystack.includes("lastmilecourier")
     ) {
       return "fboServices";
     }
+    
+    // 4. Logistics
     if (
       haystack.includes("достав") ||
       haystack.includes("логист") ||
       haystack.includes("delivery") ||
-      haystack.includes("logistic")
+      haystack.includes("logistic") ||
+      haystack.includes("pvz")
     ) {
       return "logistics";
     }
+    
+    // 5. Commission
     if (
       haystack.includes("комисс") ||
       haystack.includes("вознагражд") ||
@@ -547,6 +567,7 @@ function createOzonService({ clientId, apiKey }) {
     ) {
       return "ozonCommission";
     }
+    
     return "otherServices";
   }
 
@@ -566,6 +587,7 @@ function createOzonService({ clientId, apiKey }) {
       return "otherServices";
     }
 
+    // 1. Advertising
     if (
       haystack.includes("продвиж") ||
       haystack.includes("реклам") ||
@@ -581,28 +603,48 @@ function createOzonService({ clientId, apiKey }) {
     ) {
       return "advertising";
     }
+    
+    // 2. Partner Services
     if (
       haystack.includes("партнер") ||
       haystack.includes("партн") ||
       haystack.includes("partner") ||
-      haystack.includes("services of partners")
+      haystack.includes("services of partners") ||
+      haystack.includes("storage") ||
+      haystack.includes("размещен") ||
+      haystack.includes("packageredistribution") ||
+      haystack.includes("packagematerial") ||
+      haystack.includes("failedtopickup") ||
+      haystack.includes("не забрали в срок")
     ) {
       return "partnerServices";
     }
+    
+    // 3. FBO Services
     if (
       haystack.includes("fbo") ||
-      haystack.includes("услуги fbo")
+      haystack.includes("услуги fbo") ||
+      haystack.includes("supply") ||
+      haystack.includes("crossdocking") ||
+      haystack.includes("кросс-докинг") ||
+      haystack.includes("packagingatwarehouse") ||
+      haystack.includes("lastmilecourier")
     ) {
       return "fboServices";
     }
+    
+    // 4. Logistics
     if (
       haystack.includes("достав") ||
       haystack.includes("логист") ||
       haystack.includes("delivery") ||
-      haystack.includes("logistic")
+      haystack.includes("logistic") ||
+      haystack.includes("pvz")
     ) {
       return "logistics";
     }
+    
+    // 5. Commission
     if (
       haystack.includes("комисс") ||
       haystack.includes("вознагражд") ||
@@ -610,6 +652,7 @@ function createOzonService({ clientId, apiKey }) {
     ) {
       return "ozonCommission";
     }
+    
     return "otherServices";
   }
 
@@ -653,38 +696,62 @@ function createOzonService({ clientId, apiKey }) {
       }
 
       if (transaction.saleCommission !== 0) {
-        row.ozonCommission += -Math.abs(transaction.saleCommission);
+        row.ozonCommission += transaction.saleCommission;
         const commKey = [
           transaction.operationType || "-",
-          transaction.operationTypeName || "-",
-          "(saleCommission)"
+          transaction.operationTypeName || "-"
         ].join(" | ");
-        const currentComm = bucketMaps.ozonCommission.get(commKey) || { key: commKey, totalAmount: 0 };
-        currentComm.totalAmount = Number((currentComm.totalAmount - Math.abs(transaction.saleCommission)).toFixed(2));
+        const currentComm = bucketMaps.ozonCommission.get(commKey) || {
+          key: commKey,
+          totalAmount: 0,
+          saleCommissionTotal: 0,
+          accrualsForSaleTotal: 0,
+          amountTotal: 0,
+          servicesRemainderTotal: 0,
+          count: 0
+        };
+        currentComm.totalAmount = Number((currentComm.totalAmount + transaction.saleCommission).toFixed(2));
+        currentComm.saleCommissionTotal = Number((currentComm.saleCommissionTotal + transaction.saleCommission).toFixed(2));
+        currentComm.accrualsForSaleTotal = Number((currentComm.accrualsForSaleTotal + transaction.accrualsForSale).toFixed(2));
+        currentComm.amountTotal = Number((currentComm.amountTotal + transaction.amount).toFixed(2));
+        
+        const servicesSum = transaction.services
+          .map(normalizeServiceEntry)
+          .reduce((sum, s) => sum + s.amount, 0);
+        const servicesRemainder = Number((
+          transaction.amount -
+          transaction.accrualsForSale -
+          transaction.saleCommission -
+          transaction.deliveryCharge -
+          transaction.returnDeliveryCharge -
+          servicesSum
+        ).toFixed(2));
+        currentComm.servicesRemainderTotal = Number((currentComm.servicesRemainderTotal + servicesRemainder).toFixed(2));
+        currentComm.count += 1;
         bucketMaps.ozonCommission.set(commKey, currentComm);
       }
 
       if (transaction.deliveryCharge !== 0) {
-        row.logistics += -Math.abs(transaction.deliveryCharge);
+        row.logistics += transaction.deliveryCharge;
         const logKey = [
           transaction.operationType || "-",
           transaction.operationTypeName || "-",
           "(deliveryCharge)"
         ].join(" | ");
         const currentLog = bucketMaps.logistics.get(logKey) || { key: logKey, totalAmount: 0 };
-        currentLog.totalAmount = Number((currentLog.totalAmount - Math.abs(transaction.deliveryCharge)).toFixed(2));
+        currentLog.totalAmount = Number((currentLog.totalAmount + transaction.deliveryCharge).toFixed(2));
         bucketMaps.logistics.set(logKey, currentLog);
       }
 
       if (transaction.returnDeliveryCharge !== 0) {
-        row.logistics += -Math.abs(transaction.returnDeliveryCharge);
+        row.logistics += transaction.returnDeliveryCharge;
         const logKey = [
           transaction.operationType || "-",
           transaction.operationTypeName || "-",
           "(returnDeliveryCharge)"
         ].join(" | ");
         const currentLog = bucketMaps.logistics.get(logKey) || { key: logKey, totalAmount: 0 };
-        currentLog.totalAmount = Number((currentLog.totalAmount - Math.abs(transaction.returnDeliveryCharge)).toFixed(2));
+        currentLog.totalAmount = Number((currentLog.totalAmount + transaction.returnDeliveryCharge).toFixed(2));
         bucketMaps.logistics.set(logKey, currentLog);
       }
 
@@ -695,7 +762,7 @@ function createOzonService({ clientId, apiKey }) {
         }
         serviceAmountTotal += service.amount;
         const bucket = classifyServiceBucket(service.name);
-        row[bucket] += service.amount > 0 ? -Math.abs(service.amount) : service.amount;
+        row[bucket] += service.amount;
 
         const groupKey = [
           transaction.operationType || "-",
@@ -713,9 +780,9 @@ function createOzonService({ clientId, apiKey }) {
       const remainderAmount =
         transaction.amount -
         transaction.accrualsForSale -
-        (transaction.saleCommission !== 0 ? -Math.abs(transaction.saleCommission) : 0) -
-        (transaction.deliveryCharge !== 0 ? -Math.abs(transaction.deliveryCharge) : 0) -
-        (transaction.returnDeliveryCharge !== 0 ? -Math.abs(transaction.returnDeliveryCharge) : 0) -
+        transaction.saleCommission -
+        transaction.deliveryCharge -
+        transaction.returnDeliveryCharge -
         serviceAmountTotal;
 
       if (Math.abs(remainderAmount) > 0.0001) {
@@ -758,6 +825,12 @@ function createOzonService({ clientId, apiKey }) {
       byDate.set(transaction.date, row);
     }
 
+    // Calculate total candidate sums for date range
+    const totalCommissionCandidate = Number(Array.from(bucketMaps.ozonCommission.values()).reduce((sum, item) => sum + item.totalAmount, 0).toFixed(2));
+    const totalPartnerCandidate = Number(Array.from(bucketMaps.partnerServices.values()).reduce((sum, item) => sum + item.totalAmount, 0).toFixed(2));
+    const totalFboCandidate = Number(Array.from(bucketMaps.fboServices.values()).reduce((sum, item) => sum + item.totalAmount, 0).toFixed(2));
+    const totalOtherCandidate = Number(Array.from(bucketMaps.otherServices.values()).reduce((sum, item) => sum + item.totalAmount, 0).toFixed(2));
+
     return {
       rows: Array.from(byDate.values())
         .sort((left, right) => left.date.localeCompare(right.date))
@@ -778,7 +851,13 @@ function createOzonService({ clientId, apiKey }) {
       commissionGroups: Array.from(bucketMaps.ozonCommission.values()).sort((left, right) => Math.abs(right.totalAmount) - Math.abs(left.totalAmount)),
       partnerServicesGroups: Array.from(bucketMaps.partnerServices.values()).sort((left, right) => Math.abs(right.totalAmount) - Math.abs(left.totalAmount)),
       fboServicesGroups: Array.from(bucketMaps.fboServices.values()).sort((left, right) => Math.abs(right.totalAmount) - Math.abs(left.totalAmount)),
-      otherServicesGroups: Array.from(bucketMaps.otherServices.values()).sort((left, right) => Math.abs(right.totalAmount) - Math.abs(left.totalAmount))
+      otherServicesGroups: Array.from(bucketMaps.otherServices.values()).sort((left, right) => Math.abs(right.totalAmount) - Math.abs(left.totalAmount)),
+      reconciliation: {
+        commission: totalCommissionCandidate,
+        partnerServices: totalPartnerCandidate,
+        fboServices: totalFboCandidate,
+        other: totalOtherCandidate
+      }
     };
   }
 
@@ -823,6 +902,7 @@ function createOzonService({ clientId, apiKey }) {
           logisticsGroups: aggregated.logisticsGroups,
           otherServicesGroups: aggregated.otherServicesGroups,
           groupedOperations: aggregated.groupedOperations,
+          reconciliation: aggregated.reconciliation,
           transactionCount: transactions.length
         },
         summary: {

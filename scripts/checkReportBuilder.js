@@ -1243,9 +1243,9 @@ async function run() {
                     operation_type: "orders",
                     operation_type_name: "Продажи",
                     accruals_for_sale: "396053",
-                    sale_commission: "158211",
+                    sale_commission: "-158211",
                     amount: "166855",
-                    delivery_charge: "14147",
+                    delivery_charge: "-14147",
                     return_delivery_charge: "0",
                     services: [
                       { name: "Продвижение и реклама", amount: "-39695" },
