@@ -22,6 +22,7 @@ function getHelpText() {
     "/daily control yesterday",
     "/daily control в таблицу 2026-05-14",
     "/management daily 2026-05-14",
+    "/management daily debug 2026-05-14",
     "/management daily в таблицу 2026-05-14",
     "/management backfill 2026-05-01 2026-05-14",
     "/management backfill в таблицу 2026-05-01 2026-05-14",
@@ -244,13 +245,15 @@ function parseDailyControlCommand(text) {
 function parseManagementCommand(text) {
   const normalized = text.trim().replace(/\s+/g, " ");
   const lower = normalized.toLowerCase();
-  
   const debugMatch = lower.match(
-    /^\/management\s+daily\s+debug\s+(\d{4}-\d{2}-\d{2})$/
+    /^\/management\s+daily\s+debug\s+(today|yesterday|сегодня|вчера|\d{4}-\d{2}-\d{2})$/
   );
+
   if (debugMatch) {
     return {
-      type: "daily_debug",
+      type: "daily",
+      toSheet: false,
+      debug: true,
       value: debugMatch[1]
     };
   }
@@ -279,6 +282,7 @@ function parseManagementCommand(text) {
   return {
     type: match[1],
     toSheet: lower.includes(" в таблицу "),
+    debug: false,
     value: match[2]
   };
 }
@@ -733,22 +737,39 @@ function formatManagementDailyResult(result) {
 }
 
 function formatManagementDailyDebug(debug) {
+  if (debug?.rawFinance || debug?.finalPayload) {
+    return [
+      "Management Daily Debug " + debug.date,
+      "",
+      "Raw Finance Facts on Disk:",
+      JSON.stringify(debug.rawFinance, null, 2),
+      "",
+      "Raw Sales Facts Aggregate:",
+      JSON.stringify(debug.salesFactsAggregate, null, 2),
+      "",
+      "COGS Total: " + debug.cogsTotal,
+      "",
+      "Final Daily Input Payload:",
+      JSON.stringify(debug.finalPayload, null, 2),
+      "",
+      "Write Columns:",
+      JSON.stringify(debug.writeColumns, null, 2)
+    ].join("\n");
+  }
+
   return [
     "Management Daily Debug " + debug.date,
-    "",
-    "Raw Finance Facts on Disk:",
-    JSON.stringify(debug.rawFinance, null, 2),
-    "",
-    "Raw Sales Facts Aggregate:",
-    JSON.stringify(debug.salesFactsAggregate, null, 2),
-    "",
-    "COGS Total: " + debug.cogsTotal,
-    "",
-    "Final Daily Input Payload:",
-    JSON.stringify(debug.finalPayload, null, 2),
-    "",
-    "Write Columns:",
-    JSON.stringify(debug.writeColumns, null, 2)
+    "Заказы: " + debug.metrics.orderedRevenue,
+    "Продажи: " + debug.metrics.sales,
+    "Реклама: " + debug.metrics.advertising,
+    "Услуги партнёров internal: " + debug.metrics.partnerServices,
+    "Услуги FBO internal: " + debug.metrics.fboServices,
+    "Услуги партнёров export: " + debug.metrics.partnerServicesExport,
+    "Услуги FBO export: " + debug.metrics.fboServicesExport,
+    "Себестоимость: " + debug.metrics.cogsTotal,
+    "ВП: " + debug.metrics.grossProfit,
+    "Статус: " + debug.metrics.status,
+    ...(debug.warnings || [])
   ].join("\n");
 }
 
@@ -975,6 +996,40 @@ function formatFinanceDiagnostics(result) {
     lines.push(
       ...result.diagnostics.otherServicesGroups.slice(0, 20).map(item =>
         item.key + " | total=" + item.totalAmount
+      )
+    );
+  }
+
+  if (result.diagnostics.partnerServiceEntries?.length) {
+    lines.push("");
+    lines.push("Partner services:");
+    lines.push(
+      ...result.diagnostics.partnerServiceEntries.slice(0, 30).map(item =>
+        [
+          item.operationType || "-",
+          item.operationTypeName || "-",
+          item.serviceName || "-",
+          item.serviceType || "-",
+          "amount=" + item.amount,
+          "bucket=" + item.bucket
+        ].join(" | ")
+      )
+    );
+  }
+
+  if (result.diagnostics.fboServiceEntries?.length) {
+    lines.push("");
+    lines.push("FBO services:");
+    lines.push(
+      ...result.diagnostics.fboServiceEntries.slice(0, 30).map(item =>
+        [
+          item.operationType || "-",
+          item.operationTypeName || "-",
+          item.serviceName || "-",
+          item.serviceType || "-",
+          "amount=" + item.amount,
+          "bucket=" + item.bucket
+        ].join(" | ")
       )
     );
   }
@@ -1335,7 +1390,11 @@ function startTelegramBot({
 
           const result = await managementWorkbookService.buildDailyInputRow(managementCommand.value);
           result.summaryText = managementWorkbookService.formatDailySummary(result);
-          await sendLongMessage(tgBot, chatId, formatManagementDailyResult(result));
+          await sendLongMessage(
+            tgBot,
+            chatId,
+            managementCommand.debug ? formatManagementDailyDebug(result) : formatManagementDailyResult(result)
+          );
           return;
         }
 

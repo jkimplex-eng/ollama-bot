@@ -308,20 +308,25 @@ async function run() {
   assert.deepStrictEqual(parseManagementCommand("/management daily 2026-05-14"), {
     type: "daily",
     toSheet: false,
+    debug: false,
     value: "2026-05-14"
   });
   assert.deepStrictEqual(parseManagementCommand("/management daily debug 2026-05-14"), {
-    type: "daily_debug",
+    type: "daily",
+    toSheet: false,
+    debug: true,
     value: "2026-05-14"
   });
   assert.deepStrictEqual(parseManagementCommand("/management month в таблицу 2026-05"), {
     type: "month",
     toSheet: true,
+    debug: false,
     value: "2026-05"
   });
   assert.deepStrictEqual(parseManagementCommand("/management dashboard 2026-05"), {
     type: "dashboard",
     toSheet: false,
+    debug: false,
     value: "2026-05"
   });
   assert.deepStrictEqual(parseManagementCommand("/management backfill 2026-05-01 2026-05-14"), {
@@ -735,6 +740,10 @@ async function run() {
     180645
   ]);
   assert.strictEqual(managementDaily.row[15], 5203.57);
+  assert.strictEqual(managementDaily.metrics.partnerServices, -30);
+  assert.strictEqual(managementDaily.metrics.fboServices, -20);
+  assert.strictEqual(managementDaily.metrics.partnerServicesExport, 30);
+  assert.strictEqual(managementDaily.metrics.fboServicesExport, 20);
 
   const managementExportDaily = await managementWorkbookService.exportDaily("2026-05-14");
   assert.strictEqual(managementExportDaily.dailyWrite.tabName, "Daily Input");
@@ -1380,6 +1389,177 @@ async function run() {
     );
   } finally {
     global.fetch = originalAdvertisingFinanceFetch;
+  }
+
+  const originalPartnerFboFinanceFetch = global.fetch;
+  global.fetch = async url => {
+    if (!url.endsWith("/v3/finance/transaction/list")) {
+      throw new Error("Unexpected finance fetch call: " + url);
+    }
+    return {
+      ok: true,
+      json: async () => ({
+        result: {
+          operations: [
+            {
+              operation_date: "2026-05-14T12:00:00Z",
+              operation_type: "orders",
+              operation_type_name: "Продажи",
+              accruals_for_sale: "396053",
+              sale_commission: "158211",
+              amount: "176477",
+              delivery_charge: "14147",
+              return_delivery_charge: "0",
+              services: [
+                { name: "Продвижение бренда", amount: "-3773" },
+                { name: "Продвижение с оплатой за заказ", amount: "-11494" },
+                { name: "Оплата за клик", amount: "-23257" },
+                { name: "Ускоренный сбор отзывов", amount: "-1171" },
+                { name: "Эквайринг", amount: "-3077" },
+                { name: "Упаковка товара партнёрами", amount: "-10" },
+                { name: "Доставка до места выдачи партнёрами", amount: "-535" },
+                { name: "Кросс-докинг", amount: "-47" },
+                { name: "Размещение товаров на складах", amount: "-1113" },
+                { name: "Дополнительная упаковка на складе", amount: "-56" },
+                { name: "Обработка срока годности", amount: "-14" },
+                { name: "Обработка товара в составе грузоместа", amount: "-395" }
+              ]
+            },
+            {
+              operation_date: "2026-05-14T15:00:00Z",
+              operation_type: "OperationItemReturn",
+              operation_type_name: "Доставка и обработка возврата, отмены, невыкупа",
+              accruals_for_sale: "-10173",
+              sale_commission: "0",
+              amount: "-10298",
+              delivery_charge: "0",
+              return_delivery_charge: "0",
+              services: [
+                { name: "Обработка возвратов, отмен и невыкупов партнёрами", amount: "-120" },
+                { name: "Обеспечение материалами для упаковки товара", amount: "-5" }
+              ]
+            }
+          ],
+          has_next_page: false
+        }
+      })
+    };
+  };
+
+  try {
+    const ozonFinanceService = createOzonService({
+      clientId: "test-client",
+      apiKey: "test-key"
+    });
+    const financeResult = await ozonFinanceService.getFinanceFacts({
+      dateFrom: "2026-05-14T00:00:00+03:00",
+      dateTo: "2026-05-14T23:59:59.999+03:00"
+    });
+    assert.ok(Math.abs(financeResult.rows[0].partnerServices - -3742) < 0.01);
+    assert.ok(Math.abs(financeResult.rows[0].fboServices - -1625) < 0.01);
+    assert.ok(financeResult.diagnostics.partnerServiceEntries.length >= 4);
+    assert.ok(financeResult.diagnostics.fboServiceEntries.length >= 5);
+
+    financeFactsService.clearFinanceRows();
+    financeFactsService.saveFinanceRows(financeResult.rows, { source: "test" });
+    salesFactsService.clearSalesRows();
+    salesFactsService.saveSalesRows(
+      [
+        {
+          date: "2026-05-14",
+          sku: "222",
+          offerId: "offer-222",
+          productName: "Товар 2",
+          quantity: 62,
+          revenue: 444711,
+          price: 7172.76,
+          postingNumber: "posting-cabinet"
+        }
+      ],
+      { source: "test" }
+    );
+    cogsService.clear();
+    cogsService.setSku("222", 0);
+
+    const cabinetManagementService = createManagementWorkbookService({
+      cogsService,
+      financeFactsService,
+      performanceService: {
+        getStoredRowsForDateRange: async () => []
+      },
+      salesFactsService,
+      sheetsService: {
+        updateMappedRowByDate: async () => ({ rowsWritten: 1, tabName: "Daily Input" })
+      },
+      planVpPerDay: 0
+    });
+    const cabinetDaily = await cabinetManagementService.buildDailyInputRow("2026-05-14");
+    assert.ok(Math.abs(cabinetDaily.metrics.partnerServices - -3742) < 0.01);
+    assert.ok(Math.abs(cabinetDaily.metrics.fboServices - -1625) < 0.01);
+    assert.ok(Math.abs(cabinetDaily.metrics.partnerServicesExport - 3742) < 0.01);
+    assert.ok(Math.abs(cabinetDaily.metrics.fboServicesExport - 1625) < 0.01);
+
+    salesFactsService.clearSalesRows();
+    financeFactsService.clearFinanceRows();
+    cogsService.clear();
+    cogsService.setSku("111", 100, { logisticsToMp: 10 });
+    cogsService.setSku("222", 50, { logisticsToMp: 5 });
+    salesFactsService.saveSalesRows(
+      [
+        {
+          date: "2026-05-13",
+          sku: "111",
+          offerId: "offer-111",
+          productName: "Товар 1",
+          quantity: 2,
+          revenue: 2000,
+          price: 1000,
+          postingNumber: "posting-a"
+        },
+        {
+          date: "2026-05-14",
+          sku: "222",
+          offerId: "offer-222",
+          productName: "Товар 2",
+          quantity: 3,
+          revenue: 3000,
+          price: 1000,
+          postingNumber: "posting-b"
+        }
+      ],
+      { source: "test" }
+    );
+    financeFactsService.saveFinanceRows(
+      [
+        {
+          date: "2026-05-13",
+          sales: 1800,
+          returns: -100,
+          ozonCommission: -200,
+          logistics: -50,
+          partnerServices: -20,
+          fboServices: -10,
+          advertising: -300,
+          otherServices: 0,
+          accruedTotal: 1120
+        },
+        {
+          date: "2026-05-14",
+          sales: 2600,
+          returns: -200,
+          ozonCommission: -300,
+          logistics: -70,
+          partnerServices: -30,
+          fboServices: -20,
+          advertising: -400,
+          otherServices: 0,
+          accruedTotal: 1580
+        }
+      ],
+      { source: "test" }
+    );
+  } finally {
+    global.fetch = originalPartnerFboFinanceFetch;
   }
 
   const ozonRequests = [];

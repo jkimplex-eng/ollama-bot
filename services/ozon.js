@@ -497,15 +497,13 @@ function createOzonService({ clientId, apiKey }) {
   function normalizeServiceEntry(service) {
     return {
       name: String(service?.name || service?.service_name || service?.title || service?.type || "").trim(),
+      type: String(service?.type || service?.service_type || service?.code || "").trim(),
       amount: toNumber(service?.price ?? service?.amount ?? service?.sum ?? service?.value ?? 0)
     };
   }
 
-  function classifyServiceBucket(name) {
-    const haystack = buildTextHaystack(name);
-    
-    // 1. Advertising
-    if (
+  function isAdvertisingText(haystack) {
+    return (
       haystack.includes("продвиж") ||
       haystack.includes("реклам") ||
       haystack.includes("оплата за клик") ||
@@ -517,54 +515,83 @@ function createOzonService({ clientId, apiKey }) {
       haystack.includes("advert") ||
       haystack.includes("promotion") ||
       haystack.includes("promo")
-    ) {
-      return "advertising";
-    }
-    
-    // 2. Partner Services
-    if (
+    );
+  }
+
+  function isPartnerServiceText(haystack) {
+    return (
+      haystack.includes("услуги партн") ||
       haystack.includes("партнер") ||
       haystack.includes("партн") ||
       haystack.includes("partner") ||
-      haystack.includes("services of partners") ||
-      haystack.includes("storage") ||
-      haystack.includes("размещен") ||
-      haystack.includes("packageredistribution") ||
-      haystack.includes("packagematerial")
-    ) {
-      return "partnerServices";
-    }
-    
-    // 3. FBO Services
-    if (
-      haystack.includes("fbo") ||
+      haystack.includes("эквайринг") ||
+      haystack.includes("acquiring") ||
+      haystack.includes("обработка возвратов, отмен и невыкупов партн") ||
+      haystack.includes("partner return processing") ||
+      haystack.includes("упаковка товара партн") ||
+      haystack.includes("package redistribution") ||
+      haystack.includes("доставка до места выдачи партн") ||
+      haystack.includes("partner delivery to pickup point")
+    );
+  }
+
+  function isFboServiceText(haystack) {
+    return (
       haystack.includes("услуги fbo") ||
-      haystack.includes("supply") ||
-      haystack.includes("crossdocking") ||
+      haystack.includes("fbo") ||
       haystack.includes("кросс-докинг") ||
-      haystack.includes("packagingatwarehouse") ||
-      haystack.includes("lastmilecourier")
-    ) {
-      return "fboServices";
-    }
-    
-    // 4. Logistics
-    if (
+      haystack.includes("crossdocking") ||
+      (haystack.includes("размещени") && haystack.includes("склад")) ||
+      haystack.includes("storage") ||
+      (haystack.includes("дополнительная упаковка") && haystack.includes("склад")) ||
+      haystack.includes("additional packaging at warehouse") ||
+      haystack.includes("обработка срока годности") ||
+      haystack.includes("expiration date processing") ||
+      haystack.includes("обработка товара в составе грузоместа") ||
+      haystack.includes("supply additional")
+    );
+  }
+
+  function isLogisticsText(haystack) {
+    return (
       haystack.includes("достав") ||
       haystack.includes("логист") ||
       haystack.includes("delivery") ||
-      haystack.includes("logistic") ||
-      haystack.includes("pvz")
-    ) {
-      return "logistics";
-    }
-    
-    // 5. Commission
-    if (
+      haystack.includes("logistic")
+    );
+  }
+
+  function isCommissionText(haystack) {
+    return (
       haystack.includes("комисс") ||
       haystack.includes("вознагражд") ||
       haystack.includes("commission")
-    ) {
+    );
+  }
+
+  function classifyServiceBucket(service, transaction = null) {
+    const hasOwnServiceText = Boolean(service?.name || service?.type);
+    const haystack = hasOwnServiceText
+      ? buildTextHaystack(service?.name, service?.type)
+      : buildTextHaystack(
+          service?.name,
+          service?.type,
+          transaction?.operationType,
+          transaction?.operationTypeName
+        );
+    if (isAdvertisingText(haystack)) {
+      return "advertising";
+    }
+    if (isPartnerServiceText(haystack)) {
+      return "partnerServices";
+    }
+    if (isFboServiceText(haystack) || haystack.includes("fbo")) {
+      return "fboServices";
+    }
+    if (isLogisticsText(haystack)) {
+      return "logistics";
+    }
+    if (isCommissionText(haystack)) {
       return "ozonCommission";
     }
     
@@ -573,8 +600,6 @@ function createOzonService({ clientId, apiKey }) {
 
   function classifyTransactionAmount(transaction) {
     const haystack = buildTextHaystack(transaction.operationType, transaction.operationTypeName);
-
-    // Exclusion: if the transaction is a payout/transfer, it must NOT be classified as any service or commission:
     if (
       haystack.includes("payout") ||
       haystack.includes("payment") ||
@@ -587,69 +612,19 @@ function createOzonService({ clientId, apiKey }) {
       return "otherServices";
     }
 
-    // 1. Advertising
-    if (
-      haystack.includes("продвиж") ||
-      haystack.includes("реклам") ||
-      haystack.includes("оплата за клик") ||
-      haystack.includes("ускоренный сбор отзывов") ||
-      haystack.includes("отзыв") ||
-      haystack.includes("бренд") ||
-      haystack.includes("brand") ||
-      haystack.includes("click") ||
-      haystack.includes("advert") ||
-      haystack.includes("promotion") ||
-      haystack.includes("promo")
-    ) {
+    if (isAdvertisingText(haystack)) {
       return "advertising";
     }
-    
-    // 2. Partner Services
-    if (
-      haystack.includes("партнер") ||
-      haystack.includes("партн") ||
-      haystack.includes("partner") ||
-      haystack.includes("services of partners") ||
-      haystack.includes("storage") ||
-      haystack.includes("размещен") ||
-      haystack.includes("packageredistribution") ||
-      haystack.includes("packagematerial") ||
-      haystack.includes("failedtopickup") ||
-      haystack.includes("не забрали в срок")
-    ) {
+    if (isPartnerServiceText(haystack)) {
       return "partnerServices";
     }
-    
-    // 3. FBO Services
-    if (
-      haystack.includes("fbo") ||
-      haystack.includes("услуги fbo") ||
-      haystack.includes("supply") ||
-      haystack.includes("crossdocking") ||
-      haystack.includes("кросс-докинг") ||
-      haystack.includes("packagingatwarehouse") ||
-      haystack.includes("lastmilecourier")
-    ) {
+    if (isFboServiceText(haystack) || haystack.includes("fbo")) {
       return "fboServices";
     }
-    
-    // 4. Logistics
-    if (
-      haystack.includes("достав") ||
-      haystack.includes("логист") ||
-      haystack.includes("delivery") ||
-      haystack.includes("logistic") ||
-      haystack.includes("pvz")
-    ) {
+    if (isLogisticsText(haystack)) {
       return "logistics";
     }
-    
-    // 5. Commission
-    if (
-      haystack.includes("комисс") ||
-      haystack.includes("вознагражд") ||
-      haystack.includes("commission")
-    ) {
+    if (isCommissionText(haystack)) {
       return "ozonCommission";
     }
     
@@ -674,6 +649,9 @@ function createOzonService({ clientId, apiKey }) {
   function aggregateFinanceFacts(transactions) {
     const byDate = new Map();
     const groupedTypes = new Map();
+    const advertisingGroups = new Map();
+    const partnerServiceEntries = [];
+    const fboServiceEntries = [];
     let uncategorizedLogged = 0;
 
     const bucketMaps = {
@@ -761,9 +739,8 @@ function createOzonService({ clientId, apiKey }) {
           continue;
         }
         serviceAmountTotal += service.amount;
-        const bucket = classifyServiceBucket(service.name);
-        row[bucket] += service.amount;
-
+        const bucket = classifyServiceBucket(service, transaction);
+        row[bucket] += service.amount > 0 ? -Math.abs(service.amount) : service.amount;
         const groupKey = [
           transaction.operationType || "-",
           transaction.operationTypeName || "-",
@@ -774,6 +751,31 @@ function createOzonService({ clientId, apiKey }) {
           const current = bucketMap.get(groupKey) || { key: groupKey, totalAmount: 0 };
           current.totalAmount = Number((current.totalAmount + service.amount).toFixed(2));
           bucketMap.set(groupKey, current);
+        }
+        if (bucket === "advertising") {
+          const currentAd = advertisingGroups.get(groupKey) || { key: groupKey, totalAmount: 0 };
+          currentAd.totalAmount = Number((currentAd.totalAmount + service.amount).toFixed(2));
+          advertisingGroups.set(groupKey, currentAd);
+        }
+        if (bucket === "partnerServices") {
+          partnerServiceEntries.push({
+            operationType: transaction.operationType,
+            operationTypeName: transaction.operationTypeName,
+            serviceName: service.name,
+            serviceType: service.type,
+            amount: Number(service.amount.toFixed(2)),
+            bucket
+          });
+        }
+        if (bucket === "fboServices") {
+          fboServiceEntries.push({
+            operationType: transaction.operationType,
+            operationTypeName: transaction.operationTypeName,
+            serviceName: service.name,
+            serviceType: service.type,
+            amount: Number(service.amount.toFixed(2)),
+            bucket
+          });
         }
       }
 
@@ -799,6 +801,11 @@ function createOzonService({ clientId, apiKey }) {
           const current = bucketMap.get(groupKey) || { key: groupKey, totalAmount: 0 };
           current.totalAmount = Number((current.totalAmount + remainderAmount).toFixed(2));
           bucketMap.set(groupKey, current);
+        }
+        if (bucket === "advertising") {
+          const currentAd = advertisingGroups.get(groupKey) || { key: groupKey, totalAmount: 0 };
+          currentAd.totalAmount = Number((currentAd.totalAmount + remainderAmount).toFixed(2));
+          advertisingGroups.set(groupKey, currentAd);
         }
 
         if (bucket === "otherServices" && uncategorizedLogged < 5) {
@@ -847,7 +854,7 @@ function createOzonService({ clientId, apiKey }) {
           accruedTotal: Number(item.accruedTotal.toFixed(2))
         })),
       groupedOperations: Array.from(groupedTypes.values()).sort((left, right) => Math.abs(right.totalAmount) - Math.abs(left.totalAmount)),
-      advertisingGroups: Array.from(bucketMaps.advertising.values()).sort((left, right) => Math.abs(right.totalAmount) - Math.abs(left.totalAmount)),
+      advertisingGroups: Array.from(advertisingGroups.values()).sort((left, right) => Math.abs(right.totalAmount) - Math.abs(left.totalAmount)),
       commissionGroups: Array.from(bucketMaps.ozonCommission.values()).sort((left, right) => Math.abs(right.totalAmount) - Math.abs(left.totalAmount)),
       partnerServicesGroups: Array.from(bucketMaps.partnerServices.values()).sort((left, right) => Math.abs(right.totalAmount) - Math.abs(left.totalAmount)),
       fboServicesGroups: Array.from(bucketMaps.fboServices.values()).sort((left, right) => Math.abs(right.totalAmount) - Math.abs(left.totalAmount)),
@@ -857,7 +864,9 @@ function createOzonService({ clientId, apiKey }) {
         partnerServices: totalPartnerCandidate,
         fboServices: totalFboCandidate,
         other: totalOtherCandidate
-      }
+      },
+      partnerServiceEntries,
+      fboServiceEntries
     };
   }
 
@@ -901,6 +910,8 @@ function createOzonService({ clientId, apiKey }) {
           fboServicesGroups: aggregated.fboServicesGroups,
           logisticsGroups: aggregated.logisticsGroups,
           otherServicesGroups: aggregated.otherServicesGroups,
+          partnerServiceEntries: aggregated.partnerServiceEntries,
+          fboServiceEntries: aggregated.fboServiceEntries,
           groupedOperations: aggregated.groupedOperations,
           reconciliation: aggregated.reconciliation,
           transactionCount: transactions.length
