@@ -391,6 +391,12 @@ async function run() {
     dateFrom: "2026-05-13",
     dateTo: "2026-05-14"
   });
+  assert.deepStrictEqual(parseReplenishmentCommand("/replenishment traffic debug 2026-05-01 2026-05-31"), {
+    type: "traffic_debug",
+    toSheet: false,
+    dateFrom: "2026-05-01",
+    dateTo: "2026-05-31"
+  });
   assert.strictEqual(calculateSalesPerDay(62, 2), 31);
   assert.strictEqual(calculateTargetStock(31, 21, 7), 868);
   assert.strictEqual(calculateRecommendedShipment(868, 200, 1), 668);
@@ -1036,18 +1042,20 @@ async function run() {
   assert.strictEqual(replenishmentForecast.rows[0][1], "Хоругвино/Пушкино");
   assert.strictEqual(replenishmentForecast.rows[0][5], 8.4); // Sales per day (14 * 0.6)
   assert.strictEqual(replenishmentForecast.rows[0][6], 20); // Current stock (20)
-  assert.strictEqual(replenishmentForecast.rows[0][8], 277.2); // Target stock (8.4 * 33)
-  assert.strictEqual(replenishmentForecast.rows[0][9], 258); // Recommended shipment (Math.ceil(277.2 - 20) = 258)
-  assert.strictEqual(replenishmentForecast.rows[0][10], "HIGH"); // Priority
+  assert.strictEqual(replenishmentForecast.rows[0][8], 260.4); // Target stock (8.4 * (21 + 7 + 3))
+  assert.strictEqual(replenishmentForecast.rows[0][9], 0); // External traffic demand
+  assert.strictEqual(replenishmentForecast.rows[0][12], 241); // Recommended shipment (Math.ceil(260.4 - 20) = 241)
+  assert.strictEqual(replenishmentForecast.rows[0][13], "HIGH"); // Priority
 
   // SKU 222 (SJ11) - Москва (row index 3)
   assert.strictEqual(replenishmentForecast.rows[3][0], "Москва");
   assert.strictEqual(replenishmentForecast.rows[3][1], "Хоругвино/Пушкино");
   assert.strictEqual(replenishmentForecast.rows[3][5], 1.2); // Sales per day (2 * 0.6)
   assert.strictEqual(replenishmentForecast.rows[3][6], 200); // Current stock (200)
-  assert.strictEqual(replenishmentForecast.rows[3][8], 39.6); // Target stock (1.2 * 33)
-  assert.strictEqual(replenishmentForecast.rows[3][9], 0); // Recommended shipment
-  assert.strictEqual(replenishmentForecast.rows[3][10], "LOW"); // Priority (daysOfStock = 166.7 >= 14)
+  assert.strictEqual(replenishmentForecast.rows[3][8], 37.2); // Target stock (1.2 * (21 + 7 + 3))
+  assert.strictEqual(replenishmentForecast.rows[3][9], 0); // External traffic demand
+  assert.strictEqual(replenishmentForecast.rows[3][12], 0); // Recommended shipment
+  assert.strictEqual(replenishmentForecast.rows[3][13], "LOW"); // Priority (daysOfStock = 166.7 >= 14)
 
   const replenishmentExport = await replenishmentService.exportForecast({
     dateFrom: "2026-05-13",
@@ -1056,6 +1064,7 @@ async function run() {
   assert.strictEqual(replenishmentExport.writeResult.tabName, "Replenishment Plan");
   assert.strictEqual(replenishmentWrites[0].mappingKey, "replenishment_plan");
   assert.strictEqual(replenishmentWrites[0].headers[0], "City");
+  assert.strictEqual(replenishmentWrites[0].headers[9], "External Traffic Demand ₽");
 
   const originalStocksFetch = global.fetch;
   global.fetch = async url => {

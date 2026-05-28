@@ -8,12 +8,14 @@ const { createCogsService } = require("./services/cogs");
 const { createDecisionEngine } = require("./services/decisionEngine");
 const { createDailySummaryService } = require("./services/dailySummary");
 const { createDailyControlService } = require("./services/dailyControl");
+const { createExternalTrafficPlanService } = require("./services/externalTrafficPlan");
 const { createFinanceFactsService } = require("./services/financeFacts");
 const { createJobsService } = require("./services/jobs");
 const { createManagementWorkbookService } = require("./services/managementWorkbook");
 const { createOllamaService } = require("./services/ollama");
 const { createOzonService } = require("./services/ozon");
 const { createPerformanceService } = require("./services/performance");
+const { createPrioritySkusService } = require("./services/prioritySkus");
 const { createReplenishmentService } = require("./services/replenishment");
 const { createReportBuilderService } = require("./services/reportBuilder");
 const { createSalesFactsService } = require("./services/salesFacts");
@@ -45,6 +47,14 @@ const sheetsService = createSheetsService({
 
 const cogsService = createCogsService({
   filePath: env.paths.cogsFile
+});
+
+const prioritySkusService = createPrioritySkusService({
+  filePath: env.paths.prioritySkusFile
+});
+
+const externalTrafficPlanService = createExternalTrafficPlanService({
+  filePath: env.paths.externalTrafficPlanFile
 });
 
 const performanceService = createPerformanceService({
@@ -94,12 +104,15 @@ const managementWorkbookService = createManagementWorkbookService({
 
 const replenishmentService = createReplenishmentService({
   cogsService,
+  externalTrafficPlanService,
   ozonService,
+  prioritySkusService,
   salesFactsService,
   sheetsService,
   forecastDays: env.replenishmentForecastDays,
   safetyDays: env.replenishmentSafetyDays,
-  minShipment: env.replenishmentMinShipment
+  minShipment: env.replenishmentMinShipment,
+  leadTimeDays: env.replenishmentLeadTimeDays
 });
 
 const jobsService = createJobsService({
@@ -179,9 +192,11 @@ const activeTelegramService = startTelegramBot({
   financeFactsService,
   managementWorkbookService,
   performanceService,
+  prioritySkusService,
   replenishmentService,
   reportBuilderService,
   salesFactsService,
+  externalTrafficPlanService,
   token: env.telegramBotToken,
   jobsService,
   ollamaService,

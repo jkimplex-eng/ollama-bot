@@ -75,10 +75,18 @@ function getHelpText() {
     "/sales fetch 2026-05-13 2026-05-14",
     "/sales status",
     "/sales clear",
+    "/priority sku add 2026-05 SJ11 1 Москва",
+    "/priority sku list 2026-05",
+    "/priority sku debug 2026-05",
+    "/priority sku clear 2026-05",
+    "/traffic plan set 2026-05 200000 2 Москва",
+    "/traffic plan status 2026-05",
+    "/traffic plan clear 2026-05",
     "/stocks debug",
     "/replenishment forecast 2026-05-13 2026-05-14",
     "/replenishment forecast в таблицу 2026-05-13 2026-05-14",
     "/replenishment debug 2026-05-13 2026-05-14",
+    "/replenishment traffic debug 2026-05-01 2026-05-31",
     "/finance status",
     "/finance clear",
     "/finance fetch 2026-05-13 2026-05-14",
@@ -687,6 +695,19 @@ function parseFinanceCommand(text) {
 
 function parseReplenishmentCommand(text) {
   const normalized = text.trim().replace(/\s+/g, " ");
+  const trafficDebugMatch = normalized.match(
+    /^\/replenishment\s+traffic\s+debug\s+(\d{4}-\d{2}-\d{2})\s+(\d{4}-\d{2}-\d{2})$/i
+  );
+
+  if (trafficDebugMatch) {
+    return {
+      type: "traffic_debug",
+      toSheet: false,
+      dateFrom: trafficDebugMatch[1],
+      dateTo: trafficDebugMatch[2]
+    };
+  }
+
   const match = normalized.match(
     /^\/replenishment\s+(forecast|debug)(?:\s+в\s+таблицу)?\s+(\d{4}-\d{2}-\d{2})\s+(\d{4}-\d{2}-\d{2})$/i
   );
@@ -701,6 +722,56 @@ function parseReplenishmentCommand(text) {
     dateFrom: match[2],
     dateTo: match[3]
   };
+}
+
+function parsePrioritySkuCommand(text) {
+  const normalized = text.trim().replace(/\s+/g, " ");
+  let match = normalized.match(/^\/priority\s+sku\s+list\s+(\d{4}-\d{2})$/i);
+  if (match) {
+    return { type: "list", month: match[1] };
+  }
+  match = normalized.match(/^\/priority\s+sku\s+debug\s+(\d{4}-\d{2})$/i);
+  if (match) {
+    return { type: "debug", month: match[1] };
+  }
+  match = normalized.match(/^\/priority\s+sku\s+clear\s+(\d{4}-\d{2})$/i);
+  if (match) {
+    return { type: "clear", month: match[1] };
+  }
+  match = normalized.match(/^\/priority\s+sku\s+add\s+(\d{4}-\d{2})\s+(\S+)(?:\s+([0-9.,]+))?(?:\s+(.+))?$/i);
+  if (match) {
+    return {
+      type: "add",
+      month: match[1],
+      offerId: match[2],
+      weight: match[3] || "1",
+      city: match[4] || "Москва"
+    };
+  }
+  return null;
+}
+
+function parseTrafficPlanCommand(text) {
+  const normalized = text.trim().replace(/\s+/g, " ");
+  let match = normalized.match(/^\/traffic\s+plan\s+status\s+(\d{4}-\d{2})$/i);
+  if (match) {
+    return { type: "status", month: match[1] };
+  }
+  match = normalized.match(/^\/traffic\s+plan\s+clear\s+(\d{4}-\d{2})$/i);
+  if (match) {
+    return { type: "clear", month: match[1] };
+  }
+  match = normalized.match(/^\/traffic\s+plan\s+set\s+(\d{4}-\d{2})\s+([0-9.,]+)(?:\s+([0-9.,]+))?(?:\s+(.+))?$/i);
+  if (match) {
+    return {
+      type: "set",
+      month: match[1],
+      budget: match[2],
+      coefficient: match[3] || "2",
+      city: match[4] || "Москва"
+    };
+  }
+  return null;
 }
 
 function formatStoredRowsStatus(status) {
@@ -873,6 +944,97 @@ function formatSalesStatus(status) {
     "Max date: " + (status.maxDate || "-"),
     "Unique SKUs: " + status.uniqueSkus
   ].join("\n");
+}
+
+function formatPrioritySkuList(items, month) {
+  if (!items.length) {
+    return "Priority SKUs " + month + "\nНет настроенных SKU.";
+  }
+  return [
+    "Priority SKUs " + month,
+    "Total: " + items.length,
+    "",
+    ...items.slice(0, 30).map(item =>
+      [
+        item.offerId,
+        "weight=" + item.weight,
+        "city=" + item.targetCity,
+        "sku=" + (item.sku || "-")
+      ].join(" | ")
+    )
+  ].join("\n");
+}
+
+function formatPrioritySkuDebug(items, month, lookups) {
+  if (!items.length) {
+    return "Priority SKU debug " + month + "\nНет настроенных SKU.";
+  }
+  const lines = ["Priority SKU debug " + month, ""];
+  items.forEach(item => {
+    const info = lookups.get(item.offerId.toLowerCase()) || {};
+    lines.push(
+      [
+        item.offerId,
+        "weight=" + item.weight,
+        "city=" + item.targetCity,
+        "salesPrice=" + (info.salesPrice || 0),
+        "productPrice=" + (info.productPrice || 0),
+        "priceSource=" + (info.priceSource || "none"),
+        "warnings=" + ((info.warnings || []).join("; ") || "-")
+      ].join(" | ")
+    );
+  });
+  return lines.join("\n");
+}
+
+function formatTrafficPlanStatus(plan, month) {
+  if (!plan) {
+    return "Traffic plan " + month + "\nНе настроен.";
+  }
+  return [
+    "Traffic plan " + month,
+    "Budget: " + plan.budget,
+    "Coefficient: " + plan.coefficient,
+    "Demand value: " + (plan.budget * plan.coefficient),
+    "City: " + plan.targetCity
+  ].join("\n");
+}
+
+function formatReplenishmentTrafficDebug(result) {
+  const lines = [
+    "Replenishment traffic debug",
+    "Month: " + result.month,
+    "Budget: " + (result.trafficPlan?.budget || 0),
+    "Coefficient: " + (result.trafficPlan?.coefficient || 0),
+    "External demand value: " + result.externalDemandValue,
+    "Target city: " + (result.trafficPlan?.targetCity || "Москва"),
+    ""
+  ];
+
+  if (!result.allocations.length) {
+    lines.push("Нет allocation data.");
+  } else {
+    lines.push("Allocations:");
+    lines.push(
+      ...result.allocations.map(item =>
+        [
+          item.offerId,
+          "weight=" + item.weight,
+          "allocated=" + item.allocatedDemandValue,
+          "estimatedPrice=" + item.estimatedUnitPrice,
+          "externalUnits=" + item.externalTrafficUnits,
+          "city=" + item.targetCity
+        ].join(" | ")
+      )
+    );
+  }
+
+  if (result.warnings?.length) {
+    lines.push("");
+    lines.push(...result.warnings);
+  }
+
+  return lines.join("\n");
 }
 
 function formatFinanceStatus(status) {
@@ -1107,15 +1269,17 @@ function formatReplenishmentForecast(result) {
       const offerId = row[3];
       const salesPerDay = row[5];
       const stock = row[6];
-      const recommended = row[9];
-      const priority = row[10];
+      const externalUnits = row[10];
+      const recommended = row[12];
+      const priority = row[13];
+      const demandSource = row[14];
 
       const pLabel = priorityLabels[priority] || priority;
 
       if (recommended > 0) {
-        lines.push(`• ${offerId || sku}: Скорость ${salesPerDay} шт/день → Доступно: ${stock} шт → Рекомендация: Привезти ${recommended} шт. (Приоритет: ${pLabel})`);
+        lines.push(`• ${offerId || sku}: Organic ${salesPerDay} шт/день → Доступно: ${stock} шт → External: ${externalUnits} шт → Рекомендация: Привезти ${recommended} шт. (Приоритет: ${pLabel}, source: ${demandSource})`);
       } else {
-        lines.push(`• ${offerId || sku}: Скорость ${salesPerDay} шт/день → Доступно: ${stock} шт → Рекомендация: Поставка не нужна`);
+        lines.push(`• ${offerId || sku}: Organic ${salesPerDay} шт/день → Доступно: ${stock} шт → External: ${externalUnits} шт → Рекомендация: Поставка не нужна`);
       }
       activeShipmentsCount++;
     }
@@ -1173,9 +1337,11 @@ function startTelegramBot({
   dailyControlService,
   dailySummaryService,
   decisionEngine,
+  externalTrafficPlanService,
   financeFactsService,
   managementWorkbookService,
   performanceService,
+  prioritySkusService,
   replenishmentService,
   reportBuilderService,
   salesFactsService,
@@ -2217,23 +2383,117 @@ function startTelegramBot({
       }
     }
 
+    const prioritySkuCommand = parsePrioritySkuCommand(text);
+
+    if (prioritySkuCommand) {
+      try {
+        if (prioritySkuCommand.type === "add") {
+          const item = prioritySkusService.addOrUpdate({
+            month: prioritySkuCommand.month,
+            offerId: prioritySkuCommand.offerId,
+            weight: prioritySkuCommand.weight,
+            city: prioritySkuCommand.city
+          });
+          await tgBot.sendMessage(chatId, `Priority SKU saved: ${item.month} | ${item.offerId} | weight=${item.weight} | city=${item.targetCity}`);
+          return;
+        }
+        if (prioritySkuCommand.type === "list") {
+          await sendLongMessage(tgBot, chatId, formatPrioritySkuList(prioritySkusService.list(prioritySkuCommand.month), prioritySkuCommand.month));
+          return;
+        }
+        if (prioritySkuCommand.type === "clear") {
+          prioritySkusService.clear(prioritySkuCommand.month);
+          await tgBot.sendMessage(chatId, "Priority SKUs cleared for " + prioritySkuCommand.month);
+          return;
+        }
+        if (prioritySkuCommand.type === "debug") {
+          const items = prioritySkusService.list(prioritySkuCommand.month);
+          const salesRows = salesFactsService.getSalesRowsForDateRange(prioritySkuCommand.month + "-01", prioritySkuCommand.month + "-31");
+          const aggregated = salesFactsService.aggregateSalesBySku(salesRows);
+          const products = await ozonService.getProducts(1000);
+          const aggregatedByOfferId = new Map(
+            aggregated.map(item => [String(item.offerId || "").toLowerCase(), item])
+          );
+          const productsByOfferId = new Map(
+            products.map(item => [String(item.offerId || "").toLowerCase(), item])
+          );
+          const lookups = new Map();
+          items.forEach(item => {
+            const sales = aggregatedByOfferId.get(item.offerIdKey);
+            const product = productsByOfferId.get(item.offerIdKey);
+            const salesPrice = sales && sales.quantity > 0 ? Number((sales.revenue / sales.quantity).toFixed(2)) : 0;
+            const productPrice = product ? Number(product.price || 0) || 0 : 0;
+            const priceSource = salesPrice > 0 ? "sales" : productPrice > 0 ? "product" : "none";
+            const warnings = [];
+            if (priceSource === "none") {
+              warnings.push("missing price");
+            }
+            lookups.set(item.offerIdKey, { salesPrice, productPrice, priceSource, warnings });
+          });
+          await sendLongMessage(tgBot, chatId, formatPrioritySkuDebug(items, prioritySkuCommand.month, lookups));
+          return;
+        }
+      } catch (err) {
+        await tgBot.sendMessage(chatId, "Ошибка priority sku: " + err.message);
+        return;
+      }
+    }
+
+    const trafficPlanCommand = parseTrafficPlanCommand(text);
+
+    if (trafficPlanCommand) {
+      try {
+        if (trafficPlanCommand.type === "set") {
+          const plan = externalTrafficPlanService.setPlan({
+            month: trafficPlanCommand.month,
+            budget: trafficPlanCommand.budget,
+            coefficient: trafficPlanCommand.coefficient,
+            city: trafficPlanCommand.city
+          });
+          await tgBot.sendMessage(chatId, `Traffic plan saved: ${plan.month} | budget=${plan.budget} | coefficient=${plan.coefficient} | city=${plan.targetCity}`);
+          return;
+        }
+        if (trafficPlanCommand.type === "status") {
+          await sendLongMessage(tgBot, chatId, formatTrafficPlanStatus(externalTrafficPlanService.getPlan(trafficPlanCommand.month), trafficPlanCommand.month));
+          return;
+        }
+        if (trafficPlanCommand.type === "clear") {
+          externalTrafficPlanService.clear(trafficPlanCommand.month);
+          await tgBot.sendMessage(chatId, "Traffic plan cleared for " + trafficPlanCommand.month);
+          return;
+        }
+      } catch (err) {
+        await tgBot.sendMessage(chatId, "Ошибка traffic plan: " + err.message);
+        return;
+      }
+    }
+
     const replenishmentCommand = parseReplenishmentCommand(text);
 
     if (replenishmentCommand) {
       try {
+        if (replenishmentCommand.type === "traffic_debug") {
+          const trafficDebug = await replenishmentService.buildTrafficDebug({
+            dateFrom: replenishmentCommand.dateFrom,
+            dateTo: replenishmentCommand.dateTo
+          });
+          await sendLongMessage(tgBot, chatId, formatReplenishmentTrafficDebug(trafficDebug));
+          return;
+        }
+
         if (replenishmentCommand.type === "debug") {
           const debugData = await replenishmentService.buildDebug({
             dateFrom: replenishmentCommand.dateFrom,
             dateTo: replenishmentCommand.dateTo
           });
           
-          let response = "offerId | sku | quantity | currentStock | matched COGS | COGS match source | recommended shipment | priority\n";
-          response += "----------------------------------------------------------------------------------------------------------------\n";
+          let response = "offerId | sku | quantity | matched COGS | match source | externalDemand ₽ | estimatedPrice | externalUnits | city | priority\n";
+          response += "---------------------------------------------------------------------------------------------------------------------------------\n";
           if (debugData.length === 0) {
             response += "Нет данных по продажам за этот период.";
           } else {
             for (const row of debugData) {
-              response += `${row.offerId || "-"} | ${row.sku || "-"} | ${row.quantity} | ${row.currentStock} | ${row.matchedCogs} | ${row.cogsSource} | ${row.recommendedShipment} | ${row.priority}\n`;
+              response += `${row.offerId || "-"} | ${row.sku || "-"} | ${row.quantity} | ${row.matchedCogs} | ${row.cogsSource} | ${row.externalDemandValue} | ${row.estimatedUnitPrice} | ${row.externalTrafficUnits} | ${row.targetCity || "-"} | ${row.priority || "-"}\n`;
             }
           }
           await sendLongMessage(tgBot, chatId, response);
@@ -2429,7 +2689,9 @@ module.exports = {
   parseAnalyticsCommand,
   parseCogsCommand,
   parseFinanceCommand,
+  parsePrioritySkuCommand,
   parseReplenishmentCommand,
+  parseTrafficPlanCommand,
   parseDailyControlCommand,
   parseManagementCommand,
   parseSalesCommand,

@@ -281,12 +281,16 @@ const sheetsMap = {
       "SKU",
       "Offer ID",
       "Product Name",
-      "Sales Per Day",
+      "Organic Sales Per Day",
       "Current Stock",
       "Days Of Stock",
-      "Target Stock",
+      "Organic Target Stock",
+      "External Traffic Demand ₽",
+      "External Traffic Units",
+      "Total Target Stock",
       "Recommended Shipment",
       "Priority",
+      "Demand Source",
       "Comment"
     ],
     formatting: {
@@ -295,7 +299,7 @@ const sheetsMap = {
       autoResizeColumns: true,
       headerBackground: "#000000",
       headerFontColor: "#ffffff",
-      currencyColumns: [],
+      currencyColumns: ["External Traffic Demand ₽"],
       percentColumns: [],
       conditionalColumns: []
     },
