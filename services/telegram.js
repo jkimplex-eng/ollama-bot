@@ -83,6 +83,9 @@ function getHelpText() {
     "/traffic plan status 2026-05",
     "/traffic plan clear 2026-05",
     "/stocks debug",
+    "/warehouse mapping set <warehouseNameOrId> <city> <cluster> <leadTimeDays>",
+    "/warehouse mapping list",
+    "/warehouse mapping clear",
     "/replenishment forecast 2026-05-13 2026-05-14",
     "/replenishment forecast в таблицу 2026-05-13 2026-05-14",
     "/replenishment debug 2026-05-13 2026-05-14",
@@ -774,6 +777,29 @@ function parseTrafficPlanCommand(text) {
   return null;
 }
 
+function parseWarehouseMappingCommand(text) {
+  const normalized = text.trim().replace(/\s+/g, " ");
+  let match = normalized.match(/^\/warehouse\s+mapping\s+list$/i);
+  if (match) {
+    return { type: "list" };
+  }
+  match = normalized.match(/^\/warehouse\s+mapping\s+clear$/i);
+  if (match) {
+    return { type: "clear" };
+  }
+  match = normalized.match(/^\/warehouse\s+mapping\s+set\s+(\S+)\s+(\S+)\s+(\S+)\s+([0-9.,]+)$/i);
+  if (match) {
+    return {
+      type: "set",
+      warehouseNameOrId: match[1],
+      city: match[2],
+      cluster: match[3],
+      leadTimeDays: match[4]
+    };
+  }
+  return null;
+}
+
 function formatStoredRowsStatus(status) {
   return [
     "Performance rows status",
@@ -1032,6 +1058,54 @@ function formatReplenishmentTrafficDebug(result) {
   if (result.warnings?.length) {
     lines.push("");
     lines.push(...result.warnings);
+  }
+
+  return lines.join("\n");
+}
+
+function formatWarehouseMappings(items) {
+  if (!items.length) {
+    return "Warehouse mappings are empty.";
+  }
+  return [
+    "Warehouse mappings",
+    ...items.slice(0, 50).map(item =>
+      [
+        item.warehouseId || item.warehouseName || "-",
+        "city=" + (item.city || "unknown"),
+        "cluster=" + (item.cluster || "unknown"),
+        "leadTimeDays=" + (item.leadTimeDays ?? 0)
+      ].join(" | ")
+    )
+  ].join("\n");
+}
+
+function formatStocksDebug(result) {
+  const lines = [
+    "Stocks debug",
+    "Endpoint used: " + (result.endpointUsed || "none"),
+    "Rows count: " + (result.rowsCount || 0),
+    ""
+  ];
+
+  if (!result.rows?.length) {
+    lines.push("No normalized stock rows.");
+    return lines.join("\n");
+  }
+
+  for (const row of result.rows.slice(0, 20)) {
+    lines.push([
+      "sku=" + (row.sku || "-"),
+      "offerId=" + (row.offerId || "-"),
+      "productId=" + (row.productId || "-"),
+      "warehouseId=" + (row.warehouseId || "-"),
+      "warehouseName=" + (row.warehouseName || "unknown"),
+      "present=" + (row.present ?? 0),
+      "reserved=" + (row.reserved ?? 0),
+      "available=" + (row.available ?? 0),
+      "city=" + (row.city || "unknown"),
+      "cluster=" + (row.cluster || "")
+    ].join(" | "));
   }
 
   return lines.join("\n");
@@ -1350,6 +1424,7 @@ function startTelegramBot({
   ollamaService,
   ozonService,
   sheetsService,
+  warehouseMappingService,
   logger = console
 }) {
   if (!token) {
@@ -2312,37 +2387,9 @@ function startTelegramBot({
 
     if (text.toLowerCase() === "/stocks debug") {
       try {
-        await tgBot.sendMessage(chatId, "Запрашиваю остатки Ozon (Stocks API)...");
-        const stocks = await ozonService.getStocks(1000);
-        
-        if (!stocks.length) {
-          await tgBot.sendMessage(chatId, "Остатки не найдены.");
-          return;
-        }
-
-        let response = "SKU | Offer ID | Warehouse (City) | Available | Reserved | Present\n";
-        response += "--------------------------------------------------------------------\n";
-        for (const stock of stocks.slice(0, 30)) {
-          const warehouseEntries = Array.isArray(stock.stocks) ? stock.stocks : [];
-          if (warehouseEntries.length === 0) {
-            response += `${stock.sku || "-"} | ${stock.offerId || "-"} | (unknown) | 0 | 0 | 0\n`;
-          } else {
-            for (const item of warehouseEntries) {
-              const city = ozonService.getCityForWarehouse(item.warehouse_id, item.warehouse_name);
-              const present = item.present ?? item.stock ?? 0;
-              const reserved = item.reserved ?? 0;
-              const available = item.available !== undefined ? item.available : Math.max(0, present - reserved);
-              
-              response += `${stock.sku || "-"} | ${stock.offerId || "-"} | ${item.warehouse_name || "unknown"} (${city}) | ${available} | ${reserved} | ${present}\n`;
-            }
-          }
-        }
-        
-        if (stocks.length > 30) {
-          response += `\n...Показано первых 30 записей из ${stocks.length}.`;
-        }
-
-        await sendLongMessage(tgBot, chatId, response);
+        await tgBot.sendMessage(chatId, "Запрашиваю normalized Ozon stocks...");
+        const result = await ozonService.getStocksDebugData(1000);
+        await sendLongMessage(tgBot, chatId, formatStocksDebug(result));
         return;
       } catch (err) {
         await tgBot.sendMessage(chatId, "Ошибка Stocks API: " + err.message);
@@ -2464,6 +2511,38 @@ function startTelegramBot({
         }
       } catch (err) {
         await tgBot.sendMessage(chatId, "Ошибка traffic plan: " + err.message);
+        return;
+      }
+    }
+
+    const warehouseMappingCommand = parseWarehouseMappingCommand(text);
+
+    if (warehouseMappingCommand) {
+      try {
+        if (warehouseMappingCommand.type === "set") {
+          const item = warehouseMappingService.setMapping(
+            warehouseMappingCommand.warehouseNameOrId,
+            warehouseMappingCommand.city,
+            warehouseMappingCommand.cluster,
+            warehouseMappingCommand.leadTimeDays
+          );
+          await tgBot.sendMessage(
+            chatId,
+            `Warehouse mapping saved: ${item.warehouseId || item.warehouseName} | city=${item.city} | cluster=${item.cluster} | leadTimeDays=${item.leadTimeDays}`
+          );
+          return;
+        }
+        if (warehouseMappingCommand.type === "list") {
+          await sendLongMessage(tgBot, chatId, formatWarehouseMappings(warehouseMappingService.listMappings()));
+          return;
+        }
+        if (warehouseMappingCommand.type === "clear") {
+          warehouseMappingService.clearMappings();
+          await tgBot.sendMessage(chatId, "Warehouse mappings cleared.");
+          return;
+        }
+      } catch (err) {
+        await tgBot.sendMessage(chatId, "Ошибка warehouse mapping: " + err.message);
         return;
       }
     }
@@ -2699,6 +2778,7 @@ module.exports = {
   parseOzonProductsCommand,
   parseReportCommand,
   parsePerformanceCommand,
+  parseWarehouseMappingCommand,
   productToSheetRow,
   sendLongMessage,
   startTelegramBot

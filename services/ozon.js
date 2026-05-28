@@ -210,6 +210,224 @@ function createOzonService({ clientId, apiKey }) {
     });
   }
 
+  function buildProductDetailMaps(details) {
+    return {
+      byProductId: new Map(
+        details
+          .filter(product => product.product_id !== undefined && product.product_id !== null)
+          .map(product => [String(product.product_id), product])
+      ),
+      byOfferId: new Map(
+        details
+          .filter(product => product.offer_id !== undefined && product.offer_id !== null)
+          .map(product => [String(product.offer_id), product])
+      ),
+      bySku: new Map(
+        details
+          .filter(product => product.sku !== undefined && product.sku !== null)
+          .map(product => [String(product.sku), product])
+      )
+    };
+  }
+
+  function extractArray(value) {
+    if (Array.isArray(value)) {
+      return value;
+    }
+    return [];
+  }
+
+  function firstNonEmptyArray(...candidates) {
+    for (const candidate of candidates) {
+      if (Array.isArray(candidate) && candidate.length) {
+        return candidate;
+      }
+    }
+    for (const candidate of candidates) {
+      if (Array.isArray(candidate)) {
+        return candidate;
+      }
+    }
+    return [];
+  }
+
+  function extractStockItemsFromV4(payload) {
+    return firstNonEmptyArray(
+      payload?.result?.items,
+      payload?.items,
+      payload?.result?.stocks,
+      payload?.stocks
+    );
+  }
+
+  function extractStockItemsFromWarehouseResponse(payload) {
+    return firstNonEmptyArray(
+      payload?.result?.rows,
+      payload?.result?.items,
+      payload?.result?.stocks,
+      payload?.rows,
+      payload?.items,
+      payload?.stocks
+    );
+  }
+
+  function extractWarehouseList(payload) {
+    return firstNonEmptyArray(
+      payload?.result,
+      payload?.result?.warehouses,
+      payload?.warehouses,
+      payload?.items
+    );
+  }
+
+  function normalizeWarehouseReference(item) {
+    return {
+      warehouseId: String(item?.warehouse_id ?? item?.id ?? item?.warehouseId ?? ""),
+      warehouseName: String(item?.name ?? item?.warehouse_name ?? item?.warehouseName ?? ""),
+      city: String(item?.city ?? item?.address?.city ?? item?.location?.city ?? "").trim(),
+      cluster: String(item?.cluster ?? item?.cluster_name ?? item?.region ?? "").trim()
+    };
+  }
+
+  function normalizeStockValue(value) {
+    return toNumber(value);
+  }
+
+  function normalizeStockRow(stockItem, warehouseRefs, detailMaps, source) {
+    const productId = String(
+      stockItem?.product_id ??
+        stockItem?.productId ??
+        stockItem?.item?.product_id ??
+        ""
+    );
+    const sku = String(
+      stockItem?.sku ??
+        stockItem?.item?.sku ??
+        stockItem?.product?.sku ??
+        ""
+    ).trim();
+    const offerId = String(
+      stockItem?.offer_id ??
+        stockItem?.offerId ??
+        stockItem?.item?.offer_id ??
+        stockItem?.product?.offer_id ??
+        ""
+    ).trim();
+    const warehouseId = String(
+      stockItem?.warehouse_id ??
+        stockItem?.warehouseId ??
+        stockItem?.warehouse?.warehouse_id ??
+        stockItem?.warehouse?.id ??
+        ""
+    ).trim();
+    const warehouseNameRaw =
+      stockItem?.warehouse_name ??
+      stockItem?.warehouseName ??
+      stockItem?.warehouse?.name ??
+      "";
+    const present = normalizeStockValue(
+      stockItem?.present ??
+        stockItem?.stock ??
+        stockItem?.stocks?.present ??
+        stockItem?.item?.present ??
+        0
+    );
+    const reserved = normalizeStockValue(
+      stockItem?.reserved ??
+        stockItem?.stocks?.reserved ??
+        stockItem?.item?.reserved ??
+        0
+    );
+    const availableRaw =
+      stockItem?.available ??
+      stockItem?.stocks?.available ??
+      stockItem?.item?.available;
+    const available =
+      availableRaw === undefined || availableRaw === null || availableRaw === ""
+        ? present - reserved
+        : normalizeStockValue(availableRaw);
+
+    const details =
+      detailMaps.byProductId.get(productId) ||
+      detailMaps.byOfferId.get(offerId) ||
+      detailMaps.bySku.get(sku) ||
+      {};
+    const warehouseRef =
+      warehouseRefs.byId.get(warehouseId) ||
+      warehouseRefs.byName.get(String(warehouseNameRaw).trim().toLowerCase()) ||
+      null;
+    const warehouseName = String(
+      warehouseNameRaw || warehouseRef?.warehouseName || ""
+    ).trim();
+
+    return {
+      sku: sku || String(details.sku || "").trim(),
+      offerId: offerId || String(details.offer_id || "").trim(),
+      productId: productId || String(details.product_id || ""),
+      warehouseId,
+      warehouseName,
+      present: Number(present.toFixed(2)),
+      reserved: Number(reserved.toFixed(2)),
+      available: Number(Math.max(0, available).toFixed(2)),
+      city: warehouseRef?.city || "unknown",
+      cluster: warehouseRef?.cluster || "",
+      source
+    };
+  }
+
+  function aggregateNormalizedStocks(rows, detailMaps) {
+    const grouped = new Map();
+
+    for (const row of rows) {
+      const key = [
+        row.productId || "",
+        row.offerId || "",
+        row.sku || ""
+      ].join("|");
+      const current = grouped.get(key) || {
+        sku: row.sku || "",
+        offerId: row.offerId || "",
+        productId: row.productId || "",
+        stocks: [],
+        stock: 0,
+        price: "",
+        name: ""
+      };
+      current.stocks.push({
+        warehouse_id: row.warehouseId,
+        warehouse_name: row.warehouseName,
+        present: row.present,
+        reserved: row.reserved,
+        available: row.available,
+        city: row.city,
+        cluster: row.cluster
+      });
+      current.stock += row.available;
+      const details =
+        detailMaps.byProductId.get(current.productId) ||
+        detailMaps.byOfferId.get(current.offerId) ||
+        detailMaps.bySku.get(current.sku) ||
+        null;
+      if (details) {
+        current.price = current.price || details.price || details.marketing_price || details.old_price || "";
+        current.name = current.name || details.name || details.title || "";
+        current.sku = current.sku || String(details.sku || "").trim();
+        current.offerId = current.offerId || String(details.offer_id || "").trim();
+      }
+      grouped.set(key, current);
+    }
+
+    return Array.from(grouped.values()).map(item => ({
+      name: item.name,
+      sku: item.sku,
+      price: item.price,
+      stock: Number(item.stock.toFixed(2)),
+      productId: item.productId,
+      offerId: item.offerId,
+      stocks: item.stocks
+    }));
+  }
+
   function formatDate(value) {
     const normalized = String(value || "").trim();
     const isoMatch = normalized.match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -441,18 +659,93 @@ function createOzonService({ clientId, apiKey }) {
       details = await getProductInfo(stocks);
     } catch {}
 
-    const detailsByProductId = new Map(
-      details
-        .filter(product => product.product_id !== undefined && product.product_id !== null)
-        .map(product => [String(product.product_id), product])
-    );
-    const detailsByOfferId = new Map(
-      details
-        .filter(product => product.offer_id !== undefined && product.offer_id !== null)
-        .map(product => [String(product.offer_id), product])
+    const detailMaps = buildProductDetailMaps(details);
+
+    return stocks.map(stock => normalizeStock(stock, detailMaps.byProductId, detailMaps.byOfferId));
+  }
+
+  async function getWarehouseList() {
+    const data = await requestOzon("/v1/warehouse/list", {});
+    return extractWarehouseList(data).map(normalizeWarehouseReference);
+  }
+
+  async function getNormalizedStockRows(limit = 1000) {
+    const normalizedLimit = clampOzonLimit(limit, 1000);
+    let details = [];
+    try {
+      details = await getProducts(normalizedLimit);
+    } catch {}
+    const detailMaps = buildProductDetailMaps(
+      details.map(item => ({
+        product_id: item.productId,
+        offer_id: item.offerId,
+        sku: item.sku,
+        price: item.price,
+        name: item.name
+      }))
     );
 
-    return stocks.map(stock => normalizeStock(stock, detailsByProductId, detailsByOfferId));
+    let warehouses = [];
+    try {
+      warehouses = await getWarehouseList();
+    } catch {}
+    const warehouseRefs = {
+      byId: new Map(warehouses.filter(item => item.warehouseId).map(item => [item.warehouseId, item])),
+      byName: new Map(
+        warehouses
+          .filter(item => item.warehouseName)
+          .map(item => [String(item.warehouseName).trim().toLowerCase(), item])
+      )
+    };
+
+    const rows = [];
+    const endpointsUsed = [];
+
+    try {
+      const data = await requestOzon("/v4/product/info/stocks", {
+        filter: { visibility: "ALL" },
+        limit: normalizedLimit
+      });
+      endpointsUsed.push("/v4/product/info/stocks");
+      for (const item of extractStockItemsFromV4(data)) {
+        rows.push(normalizeStockRow(item, warehouseRefs, detailMaps, "/v4/product/info/stocks"));
+      }
+    } catch (error) {
+      console.log("[ozon] v4 stocks fetch failed", {
+        preview: safeBodyPreview(error?.message || error)
+      });
+    }
+
+    if (!rows.length) {
+      try {
+        const data = await requestOzon("/v1/product/info/stocks-by-warehouse/fbs", {
+          limit: normalizedLimit
+        });
+        endpointsUsed.push("/v1/product/info/stocks-by-warehouse/fbs");
+        for (const item of extractStockItemsFromWarehouseResponse(data)) {
+          rows.push(normalizeStockRow(item, warehouseRefs, detailMaps, "/v1/product/info/stocks-by-warehouse/fbs"));
+        }
+      } catch (error) {
+        console.log("[ozon] fbs warehouse stocks fetch failed", {
+          preview: safeBodyPreview(error?.message || error)
+        });
+      }
+    }
+
+    return {
+      endpointUsed: endpointsUsed[0] || "none",
+      endpointsUsed,
+      rows
+    };
+  }
+
+  async function getStocksDebugData(limit = 1000) {
+    const normalized = await getNormalizedStockRows(limit);
+    return {
+      endpointUsed: normalized.endpointUsed,
+      rowsCount: normalized.rows.length,
+      rows: normalized.rows.slice(0, 20)
+    };
   }
 
   async function getFinanceTransactions({ dateFrom, dateTo, page = 1, pageSize = 1000 }) {
@@ -1187,9 +1480,12 @@ function createOzonService({ clientId, apiKey }) {
     getFbsPostings,
     getFinanceFacts,
     getFinanceTransactions,
+    getNormalizedStockRows,
     getProducts,
     getSalesFacts,
     getStocks,
+    getStocksDebugData,
+    getWarehouseList,
     getCityForWarehouse
   };
 }

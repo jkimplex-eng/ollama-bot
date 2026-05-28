@@ -57,6 +57,7 @@ module.exports = {
     cogsFile: path.join(rootDir, "data", "cogs.json"),
     prioritySkusFile: path.join(rootDir, "data", "priority-skus.json"),
     externalTrafficPlanFile: path.join(rootDir, "data", "external-traffic-plan.json"),
+    warehouseMappingFile: path.join(rootDir, "data", "warehouse-mapping.json"),
     salesRowsFile: path.join(rootDir, "data", "sales-rows.json"),
     financeRowsFile: path.join(rootDir, "data", "finance-rows.json"),
     performanceReportsFile: path.join(rootDir, "data", "performance-reports.json"),

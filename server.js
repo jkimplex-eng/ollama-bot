@@ -21,6 +21,7 @@ const { createReportBuilderService } = require("./services/reportBuilder");
 const { createSalesFactsService } = require("./services/salesFacts");
 const { createSheetsService } = require("./services/sheets");
 const { startTelegramBot } = require("./services/telegram");
+const { createWarehouseMappingService } = require("./services/warehouseMapping");
 
 const app = express();
 const state = createFileState(env.paths);
@@ -55,6 +56,10 @@ const prioritySkusService = createPrioritySkusService({
 
 const externalTrafficPlanService = createExternalTrafficPlanService({
   filePath: env.paths.externalTrafficPlanFile
+});
+
+const warehouseMappingService = createWarehouseMappingService({
+  filePath: env.paths.warehouseMappingFile
 });
 
 const performanceService = createPerformanceService({
@@ -109,6 +114,7 @@ const replenishmentService = createReplenishmentService({
   prioritySkusService,
   salesFactsService,
   sheetsService,
+  warehouseMappingService,
   forecastDays: env.replenishmentForecastDays,
   safetyDays: env.replenishmentSafetyDays,
   minShipment: env.replenishmentMinShipment,
@@ -197,6 +203,7 @@ const activeTelegramService = startTelegramBot({
   reportBuilderService,
   salesFactsService,
   externalTrafficPlanService,
+  warehouseMappingService,
   token: env.telegramBotToken,
   jobsService,
   ollamaService,

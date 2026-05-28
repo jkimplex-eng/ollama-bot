@@ -960,31 +960,14 @@ async function run() {
         { name: "Товар 1", sku: "111", offerId: "SJ10" },
         { name: "Товар 2", sku: "222", offerId: "SJ11" }
       ],
-      getStocks: async () => [
-        {
-          sku: "111",
-          offerId: "SJ10",
-          stocks: [
-            { warehouse_id: "1", warehouse_name: "Хоругвино", present: 20, reserved: 0 }
-          ]
-        },
-        {
-          sku: "222",
-          offerId: "SJ11",
-          stocks: [
-            { warehouse_id: "2", warehouse_name: "Хоругвино", present: 200, reserved: 0 },
-            { warehouse_id: "3", warehouse_name: "Шушары", present: 50, reserved: 0 },
-            { warehouse_id: "4", warehouse_name: "Зеленодольск", present: 50, reserved: 0 }
-          ]
-        }
-      ],
-      getCityForWarehouse: (id, name) => {
-        const lower = String(name || "").toLowerCase();
-        if (lower.includes("хоругвино") || lower.includes("пушкино") || lower.includes("москва")) return "Москва";
-        if (lower.includes("шушары")) return "СПб";
-        if (lower.includes("зеленодольск")) return "Казань";
-        return "unknown";
-      }
+      getNormalizedStockRows: async () => ({
+        rows: [
+          { sku: "111", offerId: "SJ10", warehouseId: "1", warehouseName: "Хоругвино", present: 20, reserved: 0, available: 20, city: "Москва", cluster: "Central" },
+          { sku: "222", offerId: "SJ11", warehouseId: "2", warehouseName: "Хоругвино", present: 200, reserved: 0, available: 200, city: "Москва", cluster: "Central" },
+          { sku: "222", offerId: "SJ11", warehouseId: "3", warehouseName: "Шушары", present: 50, reserved: 0, available: 50, city: "СПб", cluster: "NorthWest" },
+          { sku: "222", offerId: "SJ11", warehouseId: "4", warehouseName: "Зеленодольск", present: 50, reserved: 0, available: 50, city: "Казань", cluster: "Volga" }
+        ]
+      })
     },
     salesFactsService: {
       getSalesRowsForDateRange: () => [
@@ -1028,6 +1011,21 @@ async function run() {
         return { rowsWritten: rows.length, tabName: "Replenishment Plan" };
       }
     },
+    warehouseMappingService: {
+      resolveMapping({ warehouseId, warehouseName }) {
+        const key = String(warehouseId || warehouseName || "");
+        if (key === "1" || key === "2" || String(warehouseName).includes("Хоругвино")) {
+          return { warehouseId: String(warehouseId), warehouseName: warehouseName || "Хоругвино", city: "Москва", cluster: "Central", leadTimeDays: 3 };
+        }
+        if (key === "3" || String(warehouseName).includes("Шушары")) {
+          return { warehouseId: String(warehouseId), warehouseName: warehouseName || "Шушары", city: "СПб", cluster: "NorthWest", leadTimeDays: 5 };
+        }
+        if (key === "4" || String(warehouseName).includes("Зеленодольск")) {
+          return { warehouseId: String(warehouseId), warehouseName: warehouseName || "Зеленодольск", city: "Казань", cluster: "Volga", leadTimeDays: 6 };
+        }
+        return null;
+      }
+    },
     forecastDays: 21,
     safetyDays: 7,
     minShipment: 1
@@ -1039,7 +1037,7 @@ async function run() {
   });
   // SKU 111 (SJ10) - Москва (row index 0)
   assert.strictEqual(replenishmentForecast.rows[0][0], "Москва");
-  assert.strictEqual(replenishmentForecast.rows[0][1], "Хоругвино/Пушкино");
+  assert.strictEqual(replenishmentForecast.rows[0][1], "Хоругвино");
   assert.strictEqual(replenishmentForecast.rows[0][5], 8.4); // Sales per day (14 * 0.6)
   assert.strictEqual(replenishmentForecast.rows[0][6], 20); // Current stock (20)
   assert.strictEqual(replenishmentForecast.rows[0][8], 260.4); // Target stock (8.4 * (21 + 7 + 3))
@@ -1049,7 +1047,7 @@ async function run() {
 
   // SKU 222 (SJ11) - Москва (row index 3)
   assert.strictEqual(replenishmentForecast.rows[3][0], "Москва");
-  assert.strictEqual(replenishmentForecast.rows[3][1], "Хоругвино/Пушкино");
+  assert.strictEqual(replenishmentForecast.rows[3][1], "Хоругвино");
   assert.strictEqual(replenishmentForecast.rows[3][5], 1.2); // Sales per day (2 * 0.6)
   assert.strictEqual(replenishmentForecast.rows[3][6], 200); // Current stock (200)
   assert.strictEqual(replenishmentForecast.rows[3][8], 37.2); // Target stock (1.2 * (21 + 7 + 3))
@@ -1201,7 +1199,7 @@ async function run() {
   });
   assert.strictEqual(replenishmentWithoutStocksForecast.rows[0][6], 0);
   assert.strictEqual(replenishmentWithoutStocksForecast.rows[0][0], "Москва");
-  assert.strictEqual(replenishmentWithoutStocksForecast.rows[0][1], "Хоругвино/Пушкино");
+  assert.strictEqual(replenishmentWithoutStocksForecast.rows[0][1], "unknown");
   assert.deepStrictEqual(replenishmentWithoutStocksForecast.warnings, [
     "Stocks unavailable, forecast uses zero stock."
   ]);

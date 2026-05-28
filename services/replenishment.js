@@ -233,72 +233,83 @@ function indexProducts(products) {
   return { bySku, byOfferId };
 }
 
-function indexStocksByCity(stocks, ozonService) {
+function indexStockRows(stockRows, warehouseMappingService) {
   const bySkuCity = new Map();
   const byOfferIdCity = new Map();
+  const warnings = new Set();
 
-  for (const productStock of stocks || []) {
-    const sku = String(productStock.sku || "").trim();
-    const offerId = normalizeOfferId(productStock.offerId);
-    const warehouseEntries = Array.isArray(productStock.stocks) ? productStock.stocks : [];
+  for (const stockRow of stockRows || []) {
+    const sku = String(stockRow.sku || "").trim();
+    const offerId = normalizeOfferId(stockRow.offerId);
+    const mapping = warehouseMappingService?.resolveMapping
+      ? warehouseMappingService.resolveMapping({
+          warehouseId: stockRow.warehouseId,
+          warehouseName: stockRow.warehouseName
+        })
+      : null;
+    const city = normalizeOfferId(mapping?.city || stockRow.city || "unknown");
+    const cluster = normalizeOfferId(mapping?.cluster || stockRow.cluster || "");
+    const warehouseName = normalizeOfferId(
+      stockRow.warehouseName || mapping?.warehouseName || "unknown"
+    );
+    const warehouseId = normalizeOfferId(stockRow.warehouseId || mapping?.warehouseId || "");
+    const present = toNumber(stockRow.present);
+    const reserved = toNumber(stockRow.reserved);
+    const available = toNumber(stockRow.available);
 
-    if (warehouseEntries.length === 0) {
-      const city = "unknown";
-      const skuKey = sku ? `${sku}|${city}` : "";
-      const offerKey = offerId ? `${normalizeOfferIdKey(offerId)}|${city}` : "";
-      const entry = { available: 0, reserved: 0, present: 0 };
-      if (skuKey) bySkuCity.set(skuKey, entry);
-      if (offerKey) byOfferIdCity.set(offerKey, entry);
-    } else {
-      for (const item of warehouseEntries) {
-        const city = ozonService?.getCityForWarehouse
-          ? ozonService.getCityForWarehouse(item.warehouse_id, item.warehouse_name)
-          : "unknown";
+    if (!mapping && city === "unknown") {
+      warnings.add("Warehouse mapping missing. Using unknown city/warehouse for some stock rows.");
+    }
 
-        const present = toNumber(item.present ?? item.stock ?? 0);
-        const reserved = toNumber(item.reserved ?? 0);
-        const available = item.available !== undefined ? toNumber(item.available) : Math.max(0, present - reserved);
+    const skuKey = sku ? `${sku}|${city}` : "";
+    const offerKey = offerId ? `${normalizeOfferIdKey(offerId)}|${city}` : "";
+    const nextEntry = current => {
+      const entry = current || {
+        available: 0,
+        reserved: 0,
+        present: 0,
+        city,
+        cluster,
+        leadTimeDays: mapping?.leadTimeDays,
+        warehouses: new Set()
+      };
+      entry.available += available;
+      entry.reserved += reserved;
+      entry.present += present;
+      entry.warehouses.add(warehouseName || warehouseId || "unknown");
+      return entry;
+    };
 
-        const skuKey = sku ? `${sku}|${city}` : "";
-        const offerKey = offerId ? `${normalizeOfferIdKey(offerId)}|${city}` : "";
-
-        if (skuKey) {
-          const current = bySkuCity.get(skuKey) || { available: 0, reserved: 0, present: 0 };
-          current.available += available;
-          current.reserved += reserved;
-          current.present += present;
-          bySkuCity.set(skuKey, current);
-        }
-        if (offerKey) {
-          const current = byOfferIdCity.get(offerKey) || { available: 0, reserved: 0, present: 0 };
-          current.available += available;
-          current.reserved += reserved;
-          current.present += present;
-          byOfferIdCity.set(offerKey, current);
-        }
-      }
+    if (skuKey) {
+      bySkuCity.set(skuKey, nextEntry(bySkuCity.get(skuKey)));
+    }
+    if (offerKey) {
+      byOfferIdCity.set(offerKey, nextEntry(byOfferIdCity.get(offerKey)));
     }
   }
 
-  return { bySkuCity, byOfferIdCity };
+  return { bySkuCity, byOfferIdCity, warnings: Array.from(warnings) };
 }
 
-function getWarehouseForCity(city) {
-  const map = {
-    "Москва": "Хоругвино/Пушкино",
-    "СПб": "Шушары",
-    "Казань": "Зеленодольск"
-  };
-  return map[city] || "unknown";
+function getWarehouseLabel(stockEntry, fallbackCity) {
+  if (!stockEntry) {
+    return fallbackCity === "Москва" ? "unknown" : "unknown";
+  }
+  const names = Array.from(stockEntry.warehouses || []);
+  if (!names.length) {
+    return "unknown";
+  }
+  if (names.length === 1) {
+    return names[0];
+  }
+  return "multiple";
 }
 
-function getLeadTimeDaysForCity(city, defaultLeadTimeDays = 0) {
-  const cityLeadTimes = {
-    "Москва": 3,
-    "СПб": 5,
-    "Казань": 6
-  };
-  return cityLeadTimes[city] !== undefined ? cityLeadTimes[city] : toNumber(defaultLeadTimeDays);
+function getLeadTimeDaysForCity(city, stockEntry, defaultLeadTimeDays = 0) {
+  if (stockEntry?.leadTimeDays !== undefined && stockEntry?.leadTimeDays !== null) {
+    return toNumber(stockEntry.leadTimeDays);
+  }
+  return toNumber(defaultLeadTimeDays);
 }
 
 function calculateExternalDemandValue(budget, coefficient) {
@@ -474,6 +485,7 @@ function createReplenishmentService({
   prioritySkusService,
   salesFactsService,
   sheetsService,
+  warehouseMappingService,
   forecastDays = 21,
   safetyDays = 7,
   minShipment = 1,
@@ -486,20 +498,22 @@ function createReplenishmentService({
     const salesRows = salesFactsService.getSalesRowsForDateRange(dateFrom, dateTo);
     const aggregatedSales = aggregateSalesBySku(salesRows);
     const products = await ozonService.getProducts(1000);
-    let stocks = [];
+    let stockRows = [];
     const warnings = [];
     let stocksUnavailable = false;
 
     try {
-      stocks = await ozonService.getStocks(1000);
+      const normalizedStocks = await ozonService.getNormalizedStockRows(1000);
+      stockRows = normalizedStocks.rows || [];
     } catch (error) {
       warnings.push("Stocks unavailable, forecast uses zero stock.");
-      stocks = [];
+      stockRows = [];
       stocksUnavailable = true;
     }
 
     const productIndex = indexProducts(products);
-    const stockIndex = indexStocksByCity(stocks, ozonService);
+    const stockIndex = indexStockRows(stockRows, warehouseMappingService);
+    warnings.push(...stockIndex.warnings);
     const regionalSales = getRegionalSalesQuantity(salesRows);
     const prioritySkus = prioritySkusService ? prioritySkusService.list(month) : [];
     const trafficPlan = externalTrafficPlanService ? externalTrafficPlanService.getPlan(month) : null;
@@ -522,6 +536,7 @@ function createReplenishmentService({
       productIndex,
       regionalSales,
       stockIndex,
+      stockRows,
       stocksUnavailable,
       trafficContext,
       warnings
@@ -541,7 +556,7 @@ function createReplenishmentService({
     stocksUnavailable
   }) {
     const organicSalesPerDay = round2(calculateSalesPerDay(citySalesQty, this.days));
-    const appliedLeadTime = getLeadTimeDaysForCity(city, leadTimeDays);
+    const appliedLeadTime = getLeadTimeDaysForCity(city, stockEntry, leadTimeDays);
     const organicTargetStock = calculateTargetStock(organicSalesPerDay, forecastDays, safetyDays, appliedLeadTime);
     const externalDemandValue =
       externalAllocation && city === targetCity ? round2(externalAllocation.allocatedDemandValue) : 0;
@@ -558,16 +573,14 @@ function createReplenishmentService({
           : "organic";
 
     const commentParts = [];
-    if (stocksUnavailable) {
-      commentParts.push("Stocks fallback active.");
-    } else {
+    if (!stocksUnavailable && stockEntry) {
       commentParts.push(`Остатки ${city}: доступно ${round2(stockEntry.available)}, резерв ${round2(stockEntry.reserved)}.`);
     }
     if (!cogsEntry) {
       commentParts.push("COGS не задан.");
     }
     if (externalAllocation && city === targetCity) {
-      if (getWarehouseForCity(city) === "unknown") {
+      if (getWarehouseLabel(stockEntry, city) === "unknown") {
         commentParts.push("External traffic assigned to Moscow; warehouse mapping missing.");
       } else {
         commentParts.push(`Priority SKU ${externalAllocation.offerId}; external traffic allocated to ${city}.`);
@@ -579,7 +592,7 @@ function createReplenishmentService({
 
     return [
       city,
-      getWarehouseForCity(city),
+      getWarehouseLabel(stockEntry, city),
       item.sku || String(product?.sku || ""),
       item.offerId || String(product?.offerId || ""),
       item.productName || product?.name || "",
@@ -600,7 +613,6 @@ function createReplenishmentService({
   async function buildForecast({ dateFrom, dateTo }) {
     const context = await loadContext({ dateFrom, dateTo });
     const rows = [];
-    const targetCities = ["Москва", "СПб", "Казань"];
 
     for (const item of context.mergedItems) {
       const product =
@@ -614,14 +626,30 @@ function createReplenishmentService({
       const regionalEntry = context.regionalSales.get(skuKey) || { "Москва": 0, "СПб": 0, "Казань": 0 };
       const externalAllocation = context.trafficContext.allocationMap.get(item.offerIdKey || normalizeOfferIdKey(item.offerId)) || null;
       const allocationCity = externalAllocation?.targetCity || context.trafficContext.trafficPlan?.targetCity || "Москва";
+      const targetCities = new Set(["Москва", "СПб", "Казань"]);
+      if (allocationCity) {
+        targetCities.add(allocationCity);
+      }
+      for (const mapEntry of context.stockIndex.bySkuCity.keys()) {
+        const [mapSku, mapCity] = mapEntry.split("|");
+        if (mapSku === item.sku && mapCity) {
+          targetCities.add(mapCity);
+        }
+      }
+      for (const mapEntry of context.stockIndex.byOfferIdCity.keys()) {
+        const [mapOfferKey, mapCity] = mapEntry.split("|");
+        if (mapOfferKey === normalizeOfferIdKey(item.offerId) && mapCity) {
+          targetCities.add(mapCity);
+        }
+      }
 
-      for (const city of targetCities) {
+      for (const city of Array.from(targetCities)) {
         const stockSkuKey = item.sku ? `${item.sku}|${city}` : "";
         const stockOfferKey = item.offerId ? `${normalizeOfferIdKey(item.offerId)}|${city}` : "";
         const stockEntry =
           (stockSkuKey ? context.stockIndex.bySkuCity.get(stockSkuKey) : null) ||
           (stockOfferKey ? context.stockIndex.byOfferIdCity.get(stockOfferKey) : null) ||
-          { available: 0, reserved: 0, present: 0 };
+          { available: 0, reserved: 0, present: 0, city, cluster: "", warehouses: new Set(["unknown"]) };
         const currentStock = toNumber(stockEntry.available);
         const citySalesQty = toNumber(regionalEntry[city] || 0);
 
@@ -729,7 +757,7 @@ module.exports = {
   getEstimatedUnitPrice,
   getPriority,
   REPLENISHMENT_HEADERS,
-  indexStocksByCity,
+  indexStockRows,
   getCityForRegion,
   getRegionalSalesQuantity
 };
