@@ -10,8 +10,10 @@ const {
   createReportBuilderService,
   SKU_DASHBOARD_HEADERS
 } = require("../services/reportBuilder");
+const { createAlertsService } = require("../services/alerts");
 const { createDailyControlService } = require("../services/dailyControl");
 const { createDailySyncService } = require("../services/dailySync");
+const { createJobsService } = require("../services/jobs");
 const {
   createManagementWorkbookService,
   DAILY_INPUT_WRITE_COLUMNS,
@@ -1177,14 +1179,27 @@ async function run() {
 
   const originalStocksFetch = global.fetch;
   global.fetch = async url => {
-    if (url.endsWith("/v2/product/info/stocks")) {
+    if (url.endsWith("/v4/product/info/stocks")) {
       return {
         ok: true,
         json: async () => ({
           result: {
-            items: [{ sku: "111", offer_id: "SJ10", stocks: [{ present: 12 }] }]
+            items: [{
+              sku: "111",
+              offer_id: "SJ10",
+              warehouse_id: "1",
+              warehouse_name: "Москва",
+              present: 12,
+              reserved: 0
+            }]
           }
         })
+      };
+    }
+    if (url.endsWith("/v1/warehouse/list")) {
+      return {
+        ok: true,
+        json: async () => ({ result: [{ warehouse_id: "1", name: "Москва", city: "Москва", cluster: "Central" }] })
       };
     }
     if (url.endsWith("/v3/product/info/list")) {
@@ -1208,7 +1223,15 @@ async function run() {
       stock: 12,
       productId: "",
       offerId: "SJ10",
-      stocks: [{ present: 12 }]
+      stocks: [{
+        warehouse_id: "1",
+        warehouse_name: "Москва",
+        present: 12,
+        reserved: 0,
+        available: 12,
+        city: "Москва",
+        cluster: "Central"
+      }]
     });
   } finally {
     global.fetch = originalStocksFetch;
@@ -1216,14 +1239,27 @@ async function run() {
 
   const originalStocksStringFetch = global.fetch;
   global.fetch = async url => {
-    if (url.endsWith("/v2/product/info/stocks")) {
+    if (url.endsWith("/v4/product/info/stocks")) {
       return {
         ok: true,
         text: async () => JSON.stringify({
           result: {
-            items: [{ sku: "222", offer_id: "SJ11", stocks: [{ present: 7 }] }]
+            items: [{
+              sku: "222",
+              offer_id: "SJ11",
+              warehouse_id: "2",
+              warehouse_name: "СПб",
+              present: 8,
+              reserved: 1
+            }]
           }
         })
+      };
+    }
+    if (url.endsWith("/v1/warehouse/list")) {
+      return {
+        ok: true,
+        json: async () => ({ result: [{ warehouse_id: "2", name: "СПб", city: "СПб", cluster: "Northwest" }] })
       };
     }
     if (url.endsWith("/v3/product/info/list")) {
@@ -1248,10 +1284,28 @@ async function run() {
 
   const originalInvalidStocksFetch = global.fetch;
   global.fetch = async url => {
-    if (url.endsWith("/v2/product/info/stocks")) {
+    if (url.endsWith("/v4/product/info/stocks")) {
       return {
         ok: true,
         text: async () => "<html>broken response</html>"
+      };
+    }
+    if (url.endsWith("/v1/product/info/stocks-by-warehouse/fbs")) {
+      return {
+        ok: false,
+        text: async () => "404 page not found"
+      };
+    }
+    if (url.endsWith("/v1/warehouse/list")) {
+      return {
+        ok: true,
+        json: async () => ({ result: [] })
+      };
+    }
+    if (url.endsWith("/v3/product/info/list")) {
+      return {
+        ok: true,
+        json: async () => ({ result: { items: [] } })
       };
     }
     throw new Error("Unexpected invalid stocks fetch call: " + url);
@@ -1261,13 +1315,59 @@ async function run() {
       clientId: "test-client",
       apiKey: "test-key"
     });
-    await assert.rejects(
-      () => ozonStocksService.getStocks(100),
-      error => error.message.includes("invalid JSON")
-    );
+    const stocks = await ozonStocksService.getStocks(100);
+    assert.deepStrictEqual(stocks, []);
   } finally {
     global.fetch = originalInvalidStocksFetch;
   }
+
+  const alertsTempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ollama-bot-alerts-"));
+  const alertsMessages = [];
+  const alertsService = createAlertsService({
+    intervalMs: 1000,
+    jobsService: null,
+    lowStockThreshold: 5,
+    logFile: path.join(alertsTempDir, "alerts.log"),
+    onAlert: async message => alertsMessages.push(message),
+    performanceService: {
+      isConfigured: () => true
+    },
+    productsLimit: 10,
+    stateFile: path.join(alertsTempDir, "alerts-state.json"),
+    logger: { log() {}, warn() {}, error() {} },
+    ozonService: {
+      getProducts: async () => [
+        { name: "Товар 1", sku: "111", offerId: "SJ10", stock: 2, price: 1000 }
+      ]
+    }
+  });
+  const alertRun = await alertsService.runChecks();
+  assert.strictEqual(alertRun.error, undefined);
+  assert.ok(Array.isArray(alertRun.alerts));
+
+  const jobsTempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ollama-bot-jobs-"));
+  const jobWrites = [];
+  const jobsService = createJobsService({
+    ozonService: {
+      getProducts: async () => [],
+      getStocks: async () => {
+        throw new Error("Ozon returned invalid JSON for /v4/product/info/stocks. Preview: 404 page not found");
+      }
+    },
+    sheetsService: {
+      clearAndWriteMappedRows: async (mappingKey, rows) => {
+        jobWrites.push({ mappingKey, rows });
+        return { rowsWritten: rows.length };
+      }
+    },
+    logFile: path.join(jobsTempDir, "jobs.log"),
+    logger: { log() {}, warn() {}, error() {} }
+  });
+  const stocksJobResult = await jobsService.syncStocks();
+  assert.strictEqual(stocksJobResult.job, "stocks");
+  assert.strictEqual(stocksJobResult.rows, 0);
+  assert.ok(stocksJobResult.warning.includes("Ozon returned invalid JSON"));
+  assert.strictEqual(jobWrites.length, 0);
 
   const replenishmentWithoutStocks = createReplenishmentService({
     cogsService,

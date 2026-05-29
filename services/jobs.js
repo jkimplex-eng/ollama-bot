@@ -185,8 +185,10 @@ function createJobsService({
         await sheetsService.clearAndWriteMappedRows(STOCKS_SHEET, rows);
         return { rows: stocks.length };
       } catch (error) {
-        console.error(error.stack || error);
-        return { rows: 0, error: error.message };
+        writeLog("info", "stocks", "Stocks unavailable, job continued", {
+          error: error.message
+        });
+        return { rows: 0, warning: error.message };
       }
     });
   }

@@ -32,6 +32,28 @@ function signatureForAlerts(alerts) {
     .digest("hex");
 }
 
+async function loadPerformanceAlertStats(performanceService, logger = console) {
+  if (!performanceService || typeof performanceService.isConfigured !== "function" || !performanceService.isConfigured()) {
+    return [];
+  }
+
+  if (typeof performanceService.getCampaignStats === "function") {
+    try {
+      return await performanceService.getCampaignStats();
+    } catch {
+      return [];
+    }
+  }
+
+  if (logger && typeof logger.warn === "function") {
+    logger.warn("[alerts] performanceService.getCampaignStats is unavailable, skipping performance alerts");
+  } else if (logger && typeof logger.log === "function") {
+    logger.log("[alerts] performanceService.getCampaignStats is unavailable, skipping performance alerts");
+  }
+
+  return [];
+}
+
 function createAlertsService({
   intervalMs = 60 * 60 * 1000,
   jobsService,
@@ -86,9 +108,7 @@ function createAlertsService({
   async function collectAlerts() {
     const [productsRaw, performanceStats] = await Promise.all([
       ozonService.getProducts(productsLimit),
-      performanceService && performanceService.isConfigured()
-        ? performanceService.getCampaignStats().catch(() => [])
-        : Promise.resolve([])
+      loadPerformanceAlertStats(performanceService, logger)
     ]);
 
     const products = productsRaw.map(compactProduct);

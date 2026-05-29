@@ -210,6 +210,36 @@ function createOzonService({ clientId, apiKey }) {
     });
   }
 
+  function aggregateNormalizedStocks(rows) {
+    const map = new Map();
+
+    for (const row of rows) {
+      const key = String(row.sku || row.offerId || row.productId || "");
+      const current = map.get(key) || {
+        name: row.productName || "",
+        sku: row.sku || "",
+        price: "",
+        stock: 0,
+        productId: row.productId || "",
+        offerId: row.offerId || "",
+        stocks: []
+      };
+      current.stock += toNumber(row.available) || 0;
+      current.stocks.push({
+        warehouseId: row.warehouseId || "",
+        warehouseName: row.warehouseName || "",
+        present: toNumber(row.present) || 0,
+        reserved: toNumber(row.reserved) || 0,
+        available: toNumber(row.available) || 0,
+        city: row.city || "unknown",
+        cluster: row.cluster || ""
+      });
+      map.set(key, current);
+    }
+
+    return Array.from(map.values());
+  }
+
   function buildProductDetailMaps(details) {
     return {
       byProductId: new Map(
@@ -645,23 +675,21 @@ function createOzonService({ clientId, apiKey }) {
 
   async function getStocks(limit = 100) {
     const normalizedLimit = normalizeLimit(limit);
-    const data = await requestOzon("/v2/product/info/stocks", {
-      filter: {
-        visibility: "ALL"
-      },
-      limit: normalizedLimit
-    });
-
-    const stocks = data.result?.items || data.items || [];
+    const normalized = await getNormalizedStockRows(normalizedLimit);
     let details = [];
-
     try {
-      details = await getProductInfo(stocks);
+      details = await getProducts(normalizedLimit);
     } catch {}
-
-    const detailMaps = buildProductDetailMaps(details);
-
-    return stocks.map(stock => normalizeStock(stock, detailMaps.byProductId, detailMaps.byOfferId));
+    const detailMaps = buildProductDetailMaps(
+      details.map(item => ({
+        product_id: item.productId,
+        offer_id: item.offerId,
+        sku: item.sku,
+        price: item.price,
+        name: item.name
+      }))
+    );
+    return aggregateNormalizedStocks(normalized.rows, detailMaps);
   }
 
   async function getWarehouseList() {
