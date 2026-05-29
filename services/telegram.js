@@ -14,6 +14,11 @@ function getHelpText() {
     "/daily вчера",
     "/daily today",
     "/daily 2026-05-13",
+    "/daily в таблицу yesterday",
+    "/daily в таблицу today",
+    "/daily в таблицу 2026-05-13",
+    "/день вчера",
+    "/день 2026-05-13",
     "/daily 2026-05-13 2026-05-14",
     "/daily debug 2026-05-13",
     "/daily raw 2026-05-13",
@@ -1409,6 +1414,7 @@ function startTelegramBot({
   alertsService,
   cogsService,
   dailyControlService,
+  dailySyncService,
   dailySummaryService,
   decisionEngine,
   externalTrafficPlanService,
@@ -1706,6 +1712,16 @@ function startTelegramBot({
       }
 
       try {
+        if (dailyCommand.kind === "sync") {
+          await tgBot.sendMessage(chatId, "Обновляю sales, finance и Daily Input...");
+          const result = await dailySyncService.syncDaily({
+            dateInput: dailyCommand.dateInput,
+            toSheet: Boolean(dailyCommand.toSheet)
+          });
+          await sendLongMessage(tgBot, chatId, result.summaryText);
+          return;
+        }
+
         if (dailyCommand.kind === "debug" || dailyCommand.kind === "raw") {
           await tgBot.sendMessage(chatId, "Собираю diagnostics по Ozon...");
           const result = await dailySummaryService.generateDiagnosticsReport(

@@ -11,6 +11,7 @@ const {
   SKU_DASHBOARD_HEADERS
 } = require("../services/reportBuilder");
 const { createDailyControlService } = require("../services/dailyControl");
+const { createDailySyncService } = require("../services/dailySync");
 const { createManagementWorkbookService, DAILY_INPUT_WRITE_COLUMNS, MAX_BACKFILL_DAYS } = require("../services/managementWorkbook");
 const { parseCogsCommand, parseDailyControlCommand, parseFinanceCommand, parseManagementCommand, parseReplenishmentCommand, parseReportCommand, parseSalesCommand } = require("../services/telegram");
 const { createCogsService, parseBulkImportText } = require("../services/cogs");
@@ -25,6 +26,7 @@ const {
 } = require("../services/replenishment");
 const { createSalesFactsService } = require("../services/salesFacts");
 const { clampOzonLimit, createOzonService, getPageSignature, getPostingIdentity } = require("../services/ozon");
+const { parseDailyCommand } = require("../services/dailySummary");
 
 async function run() {
   const performanceRows = [
@@ -294,6 +296,31 @@ async function run() {
     dateTo: "2026-05-14"
   });
   assert.deepStrictEqual(parseDailyControlCommand("/daily control 2026-05-14"), {
+    toSheet: false,
+    dateInput: "2026-05-14"
+  });
+  assert.deepStrictEqual(parseDailyCommand("/daily yesterday"), {
+    kind: "sync",
+    toSheet: false,
+    dateInput: "yesterday"
+  });
+  assert.deepStrictEqual(parseDailyCommand("/daily в таблицу yesterday"), {
+    kind: "sync",
+    toSheet: true,
+    dateInput: "yesterday"
+  });
+  assert.deepStrictEqual(parseDailyCommand("/daily 2026-05-14"), {
+    kind: "sync",
+    toSheet: false,
+    dateInput: "2026-05-14"
+  });
+  assert.deepStrictEqual(parseDailyCommand("/день вчера"), {
+    kind: "sync",
+    toSheet: false,
+    dateInput: "yesterday"
+  });
+  assert.deepStrictEqual(parseDailyCommand("/день 2026-05-14"), {
+    kind: "sync",
     toSheet: false,
     dateInput: "2026-05-14"
   });
@@ -2279,6 +2306,152 @@ async function run() {
   assert.strictEqual(dailyDebugResult.salesFactsAggregate.totalQuantity, 2);
   assert.strictEqual(dailyDebugResult.salesFactsAggregate.rowsCount, 1);
   console.log("buildDailyInputDebug tests passed successfully!");
+
+  const syncCalls = [];
+  let writeCallCount = 0;
+  const dailySyncWorkbookService = {
+    async buildDailyInputRow(date) {
+      syncCalls.push("build:" + date);
+      return {
+        date,
+        metrics: {
+          orderedRevenue: 444711,
+          sales: 396053,
+          ozonCommission: -158211,
+          advertising: -39695,
+          cogsTotal: 240,
+          logisticsActual: -14147,
+          partnerServices: -3742,
+          fboServices: -1625,
+          grossProfit: 166855,
+          status: "OK"
+        }
+      };
+    },
+    async exportDaily(date) {
+      syncCalls.push("export:" + date);
+      writeCallCount += 1;
+      return {
+        dailyInput: {
+          date,
+          metrics: {
+            orderedRevenue: 444711,
+            sales: 396053,
+            ozonCommission: -158211,
+            advertising: -39695,
+            cogsTotal: 240,
+            logisticsActual: -14147,
+            partnerServices: -3742,
+            fboServices: -1625,
+            grossProfit: 166855,
+            status: "OK"
+          }
+        },
+        dailyWrite: {
+          matchedRow: 14,
+          appended: false
+        }
+      };
+    }
+  };
+
+  const syncSalesFile = path.join(tempDir, "sync-sales.json");
+  const syncFinanceFile = path.join(tempDir, "sync-finance.json");
+  const syncSalesFactsService = createSalesFactsService({ filePath: syncSalesFile });
+  const syncFinanceFactsService = createFinanceFactsService({ filePath: syncFinanceFile });
+  const syncOzonCalls = [];
+  const dailySyncService = createDailySyncService({
+    salesFactsService: syncSalesFactsService,
+    financeFactsService: syncFinanceFactsService,
+    managementWorkbookService: dailySyncWorkbookService,
+    ozonService: {
+      async getSalesFacts({ dateFrom, dateTo }) {
+        syncOzonCalls.push({ step: "sales", dateFrom, dateTo });
+        return {
+          rows: [
+            {
+              date: "2026-05-14",
+              sku: "111",
+              offerId: "SJ11",
+              productName: "Товар 1",
+              quantity: 2,
+              revenue: 2000,
+              price: 1000,
+              postingNumber: "sync-posting-1"
+            }
+          ]
+        };
+      },
+      async getFinanceFacts({ dateFrom, dateTo }) {
+        syncOzonCalls.push({ step: "finance", dateFrom, dateTo });
+        return {
+          rows: [
+            {
+              date: "2026-05-14",
+              sales: 396053,
+              returns: -10173,
+              ozonCommission: -158211,
+              logistics: -14147,
+              partnerServices: -3742,
+              fboServices: -1625,
+              advertising: -39695,
+              otherServices: 0,
+              accruedTotal: 166855
+            }
+          ]
+        };
+      }
+    }
+  });
+
+  const dailySyncPreview = await dailySyncService.syncDaily({
+    dateInput: "2026-05-14",
+    toSheet: false
+  });
+  assert.deepStrictEqual(syncOzonCalls.map(item => item.step), ["sales", "finance"]);
+  assert.ok(dailySyncPreview.summaryText.includes("Daily 2026-05-14"));
+  assert.ok(dailySyncPreview.summaryText.includes("Комиссия: 158211"));
+  assert.ok(dailySyncPreview.summaryText.includes("Услуги партнёров: 3742"));
+  assert.ok(dailySyncPreview.summaryText.includes("Услуги FBO: 1625"));
+  assert.deepStrictEqual(syncCalls, ["build:2026-05-14"]);
+
+  const dailySyncWrite = await dailySyncService.syncDaily({
+    dateInput: "2026-05-14",
+    toSheet: true
+  });
+  assert.strictEqual(writeCallCount, 1);
+  assert.ok(dailySyncWrite.summaryText.includes("Обновил Daily Input, строка 14"));
+  assert.deepStrictEqual(syncCalls.slice(-1), ["export:2026-05-14"]);
+
+  const repeatStatusBefore = syncSalesFactsService.getSalesRowsStatus();
+  await dailySyncService.syncDaily({
+    dateInput: "2026-05-14",
+    toSheet: false
+  });
+  const repeatStatusAfter = syncSalesFactsService.getSalesRowsStatus();
+  assert.deepStrictEqual(repeatStatusAfter, repeatStatusBefore);
+
+  const partialFailureService = createDailySyncService({
+    salesFactsService: createSalesFactsService({ filePath: path.join(tempDir, "partial-sales.json") }),
+    financeFactsService: createFinanceFactsService({ filePath: path.join(tempDir, "partial-finance.json") }),
+    managementWorkbookService: dailySyncWorkbookService,
+    ozonService: {
+      async getSalesFacts() {
+        return { rows: [] };
+      },
+      async getFinanceFacts() {
+        throw new Error("finance down");
+      }
+    }
+  });
+  const partialFailureResult = await partialFailureService.syncDaily({
+    dateInput: "2026-05-14",
+    toSheet: false
+  });
+  assert.strictEqual(partialFailureResult.errors.length, 1);
+  assert.strictEqual(partialFailureResult.errors[0].step, "finance fetch");
+  assert.ok(partialFailureResult.summaryText.includes("Partial failures:"));
+  assert.ok(partialFailureResult.summaryText.includes("finance fetch: finance down"));
 
   console.log("New positive signs and Daily Input finance mapping tests passed!");
 

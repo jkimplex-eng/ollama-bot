@@ -46,10 +46,24 @@ function isSameDay(dateFrom, dateTo) {
 
 function parseDailyCommand(text) {
   const normalized = text.trim().replace(/\s+/g, " ");
-  if (!/^\/daily(\s|$)/i.test(normalized)) return null;
+  if (!/^\/(?:daily|день)(\s|$)/i.test(normalized)) return null;
 
   const parts = normalized.split(" ").slice(1);
   const first = (parts[0] || "").toLowerCase();
+  const isDayAlias = /^\/день(\s|$)/i.test(normalized);
+
+  if (isDayAlias) {
+    if (!parts.length || /^(вчера|yesterday)$/i.test(parts[0])) {
+      return { kind: "sync", toSheet: false, dateInput: "yesterday" };
+    }
+    if (/^(today|сегодня)$/i.test(parts[0])) {
+      return { kind: "sync", toSheet: false, dateInput: "today" };
+    }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(parts[0])) {
+      return { kind: "sync", toSheet: false, dateInput: parts[0] };
+    }
+    return { kind: "invalid", error: "Формат: /день вчера или /день YYYY-MM-DD" };
+  }
 
   if (first === "debug" || first === "raw") {
     if (parts.length < 2 || !/^\d{4}-\d{2}-\d{2}$/.test(parts[1])) {
@@ -68,26 +82,41 @@ function parseDailyCommand(text) {
     return { kind: "summary", mode: "yesterday" };
   }
 
+  if (
+    parts.length >= 2 &&
+    parts[0].toLowerCase() === "в" &&
+    parts[1].toLowerCase() === "таблицу"
+  ) {
+    const dateInput = parts.slice(2).join(" ");
+    if (/^(вчера|yesterday)$/i.test(dateInput)) {
+      return { kind: "sync", toSheet: true, dateInput: "yesterday" };
+    }
+    if (/^(today|сегодня)$/i.test(dateInput)) {
+      return { kind: "sync", toSheet: true, dateInput: "today" };
+    }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateInput)) {
+      return { kind: "sync", toSheet: true, dateInput };
+    }
+    return { kind: "invalid", error: "Формат: /daily в таблицу yesterday|today|YYYY-MM-DD" };
+  }
+
   if (parts.length === 1 && /^(вчера|yesterday)$/i.test(parts[0])) {
-    return { kind: "summary", mode: "yesterday" };
+    return { kind: "sync", toSheet: false, dateInput: "yesterday" };
   }
 
   if (parts.length === 1 && /^(today|сегодня)$/i.test(parts[0])) {
-    const today = formatMoscowDate(new Date());
     return {
-      kind: "summary",
-      mode: "single",
-      dateFrom: today,
-      dateTo: today
+      kind: "sync",
+      toSheet: false,
+      dateInput: "today"
     };
   }
 
   if (parts.length === 1 && /^\d{4}-\d{2}-\d{2}$/.test(parts[0])) {
     return {
-      kind: "summary",
-      mode: "single",
-      dateFrom: parts[0],
-      dateTo: parts[0]
+      kind: "sync",
+      toSheet: false,
+      dateInput: parts[0]
     };
   }
 
