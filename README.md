@@ -54,6 +54,11 @@ Daily summary / cron:
 - `CRON_SECRET`
 - `DAILY_SUMMARY_CHAT_ID`
 - `DAILY_CONTROL_PLAN_VP=180645`
+- `DAILY_AUTO_ENABLED=true`
+- `DAILY_AUTO_HOUR=8`
+- `DAILY_AUTO_MINUTE=30`
+- `DAILY_AUTO_CHAT_ID=<telegram chat id>`
+- `DAILY_AUTO_TIMEZONE=Europe/Moscow`
 - `REPLENISHMENT_FORECAST_DAYS=21`
 - `REPLENISHMENT_SAFETY_DAYS=7`
 - `REPLENISHMENT_MIN_SHIPMENT=1`
@@ -108,6 +113,8 @@ Alerts:
 - `/daily control в таблицу today`
 - `/management daily 2026-05-14`
 - `/management daily в таблицу 2026-05-14`
+- `/management month init 2026-06`
+- `/management month status 2026-06`
 - `/management backfill 2026-05-01 2026-05-14`
 - `/management backfill в таблицу 2026-05-01 2026-05-14`
 - `/management month 2026-05`
@@ -268,7 +275,9 @@ Daily P&L:
 
 - `Dashboard`, `Unit Economics`, `Month Review` и `Settings` считаются формулами внутри шаблона
 - бот не делает `clearAndWrite` в эти листы
-- `/management daily в таблицу ...` обновляет только строку нужной даты в `Daily Input`
+- бот пишет только в monthly sheets вида `Daily Input YYYY-MM`
+- если monthly sheet отсутствует, бот создаёт его копированием `Daily Input Template`
+- `/management daily в таблицу ...` обновляет только строку нужной даты в нужном `Daily Input YYYY-MM`
 - остальные `/management ... в таблицу` команды возвращают подсказку, что этот лист считается формулами в шаблоне
 
 ## External cron
@@ -453,6 +462,15 @@ Apps Script должен принимать JSON:
     "headerFontColor": "#ffffff"
   },
   "row": ["2026-05-14", "ср"]
+}
+```
+
+```json
+{
+  "action": "createMonthlySheet",
+  "templateSheet": "Daily Input Template",
+  "targetSheet": "Daily Input 2026-06",
+  "month": "2026-06"
 }
 ```
 
@@ -693,6 +711,84 @@ function doPost(e) {
       });
     }
 
+    if (payload.action === "createMonthlySheet") {
+      var templateSheetName = String(payload.templateSheet || "");
+      var targetSheetName = String(payload.targetSheet || "");
+      var targetMonth = String(payload.month || "");
+      var checkOnly = Boolean(payload.checkOnly);
+      var templateSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(templateSheetName);
+
+      if (!templateSheet) {
+        return jsonResponse({ ok: false, error: "Template sheet not found: " + templateSheetName });
+      }
+
+      var existingSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(targetSheetName);
+      if (existingSheet) {
+        return jsonResponse({
+          ok: true,
+          action: payload.action,
+          created: false,
+          exists: true,
+          targetSheet: targetSheetName,
+          month: targetMonth
+        });
+      }
+
+      if (checkOnly) {
+        return jsonResponse({
+          ok: true,
+          action: payload.action,
+          created: false,
+          exists: false,
+          targetSheet: targetSheetName,
+          month: targetMonth
+        });
+      }
+
+      var copiedSheet = templateSheet.copyTo(SpreadsheetApp.getActiveSpreadsheet());
+      copiedSheet.setName(targetSheetName);
+
+      var dataRange = copiedSheet.getDataRange();
+      var formulas = dataRange.getFormulas();
+      var formulasChanged = false;
+      for (var rowIndex = 0; rowIndex < formulas.length; rowIndex += 1) {
+        for (var colIndex = 0; colIndex < formulas[rowIndex].length; colIndex += 1) {
+          if (!formulas[rowIndex][colIndex]) continue;
+          var refreshedFormula = formulas[rowIndex][colIndex].replace(/Daily Input \d{4}-\d{2}/g, targetSheetName);
+          if (refreshedFormula !== formulas[rowIndex][colIndex]) {
+            formulas[rowIndex][colIndex] = refreshedFormula;
+            formulasChanged = true;
+          }
+        }
+      }
+      if (formulasChanged) {
+        dataRange.setFormulas(formulas);
+      }
+
+      var targetHeaders = copiedSheet.getRange(1, 1, 1, copiedSheet.getLastColumn()).getValues()[0];
+      var dateHeaderIndex = targetHeaders.indexOf("Дата");
+      if (dateHeaderIndex !== -1 && /^\d{4}-\d{2}$/.test(targetMonth)) {
+        var monthParts = targetMonth.split("-");
+        var year = Number(monthParts[0]);
+        var month = Number(monthParts[1]);
+        var daysInMonth = new Date(year, month, 0).getDate();
+        for (var day = 1; day <= daysInMonth; day += 1) {
+          copiedSheet.getRange(day + 1, dateHeaderIndex + 1).setValue(
+            Utilities.formatDate(new Date(year, month - 1, day), Session.getScriptTimeZone(), "yyyy-MM-dd")
+          );
+        }
+      }
+
+      return jsonResponse({
+        ok: true,
+        action: payload.action,
+        created: true,
+        exists: true,
+        targetSheet: targetSheetName,
+        month: targetMonth
+      });
+    }
+
     return jsonResponse({ ok: false, error: "Unknown action: " + payload.action });
   } catch (error) {
     return jsonResponse({ ok: false, error: error.message });
@@ -708,9 +804,14 @@ function jsonResponse(data) {
 
 Важно:
 
-- Apps Script не должен создавать sheets автоматически
+- Apps Script может создавать только monthly `Daily Input YYYY-MM` листы и только копированием `Daily Input Template`
 - `clearAndWrite` и `replaceRows` должны очищать sheet, писать headers в строку 1 и данные со строки 2
 - `updateByDate` должен сохранять headers, искать строку по колонке `Дата`, обновлять найденную строку и добавлять новую только если дата не найдена
+- `createMonthlySheet` должен:
+  - проверить наличие `Daily Input Template`
+  - не дублировать уже существующий `Daily Input YYYY-MM`
+  - обновлять даты месяца в колонке `Дата`
+  - не выполнять запись данных, если создание листа не удалось
 - для `Daily Input` допустимо матчить даты как `DD.MM`, `DD.MM.YYYY`, `YYYY-MM-DD` и Google Sheets Date object
 - рекомендуется helper `normalizeDateKey(value)`, который приводит все форматы к `MM-DD` для monthly-шаблона
 - если передан `writeColumns`, Apps Script должен обновлять только эти колонки и не перетирать формулы, dropdowns и validations в остальных ячейках строки

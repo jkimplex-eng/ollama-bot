@@ -23,6 +23,8 @@ const MOSCOW_TIMEZONE = "Europe/Moscow";
 const MANAGEMENT_TEMPLATE_ONLY_MESSAGE =
   "Этот лист считается формулами в шаблоне. Бот заполняет только Daily Input.";
 const MAX_BACKFILL_DAYS = 31;
+const DAILY_INPUT_TEMPLATE_SHEET = "Daily Input Template";
+const DAILY_INPUT_SHEET_PREFIX = "Daily Input";
 const DAILY_INPUT_WRITE_COLUMNS = [
   "Дата",
   "День",
@@ -105,6 +107,18 @@ function getDaysInMonth(dateOrMonth) {
   const month = String(dateOrMonth).length === 7 ? dateOrMonth : formatDate(dateOrMonth).slice(0, 7);
   const [year, mon] = month.split("-").map(Number);
   return new Date(Date.UTC(year, mon, 0)).getUTCDate();
+}
+
+function resolveMonthInput(value) {
+  const normalized = String(value || "").trim();
+  if (/^\d{4}-\d{2}$/.test(normalized)) {
+    return normalized;
+  }
+  return resolveDateInput(normalized).slice(0, 7);
+}
+
+function getDailyInputSheetName(monthInput) {
+  return DAILY_INPUT_SHEET_PREFIX + " " + resolveMonthInput(monthInput);
 }
 
 function getRussianWeekday(date) {
@@ -323,6 +337,37 @@ function createManagementWorkbookService({
     };
   }
 
+  async function ensureDailyInputMonthSheet(dateOrMonth, options = {}) {
+    const month = resolveMonthInput(dateOrMonth);
+    const targetSheet = getDailyInputSheetName(month);
+
+    if (!sheetsService || typeof sheetsService.createMonthlySheet !== "function") {
+      return {
+        month,
+        targetSheet,
+        templateSheet: DAILY_INPUT_TEMPLATE_SHEET,
+        checked: false,
+        exists: null,
+        created: false
+      };
+    }
+
+    const result = await sheetsService.createMonthlySheet("daily_input", {
+      templateSheet: DAILY_INPUT_TEMPLATE_SHEET,
+      targetSheet,
+      month,
+      checkOnly: Boolean(options.checkOnly)
+    });
+
+    return {
+      month,
+      targetSheet,
+      templateSheet: DAILY_INPUT_TEMPLATE_SHEET,
+      checked: Boolean(options.checkOnly),
+      ...result
+    };
+  }
+
   async function buildDailyInputRow(dateInput) {
     const date = resolveDateInput(dateInput);
     const monthStart = date.slice(0, 8) + "01";
@@ -419,6 +464,8 @@ function createManagementWorkbookService({
 
     return {
       date,
+      month: date.slice(0, 7),
+      sheetName: getDailyInputSheetName(date),
       headers: DAILY_INPUT_HEADERS,
       row,
       metrics: {
@@ -448,12 +495,14 @@ function createManagementWorkbookService({
 
   async function exportDaily(dateInput) {
     const dailyInput = await buildDailyInputRow(dateInput);
+    const monthSheet = await ensureDailyInputMonthSheet(dailyInput.date);
     const dailyWrite = await sheetsService.updateMappedRowByDate("daily_input", dailyInput.date, dailyInput.row, {
       headers: DAILY_INPUT_HEADERS,
       dateColumn: "Дата",
-      writeColumns: DAILY_INPUT_WRITE_COLUMNS
+      writeColumns: DAILY_INPUT_WRITE_COLUMNS,
+      sheetName: monthSheet.targetSheet
     });
-    return { dailyInput, dailyWrite };
+    return { dailyInput, dailyWrite, monthSheet };
   }
 
   async function backfillDailyInput({ dateFrom, dateTo, fetchSalesForDay, fetchFinanceForDay }) {
@@ -495,11 +544,13 @@ function createManagementWorkbookService({
         }
 
         const dailyInput = await buildDailyInputRow(date);
+        const monthSheet = await ensureDailyInputMonthSheet(date);
 
         await sheetsService.updateMappedRowByDate("daily_input", date, dailyInput.row, {
           headers: DAILY_INPUT_HEADERS,
           dateColumn: "Дата",
-          writeColumns: DAILY_INPUT_WRITE_COLUMNS
+          writeColumns: DAILY_INPUT_WRITE_COLUMNS,
+          sheetName: monthSheet.targetSheet
         });
 
         daysUpdated += 1;
@@ -522,6 +573,7 @@ function createManagementWorkbookService({
   async function buildDailyInputDebug(dateInput) {
     const date = resolveDateInput(dateInput);
     const dailyInput = await buildDailyInputRow(date);
+    const monthSheet = await ensureDailyInputMonthSheet(date, { checkOnly: true });
     
     const rawFinance = financeFactsService ? financeFactsService.getFinanceRowsForDateRange(date, date) : [];
     const rawSales = salesFactsService ? salesFactsService.getSalesRowsForDateRange(date, date) : [];
@@ -547,6 +599,7 @@ function createManagementWorkbookService({
     
     return {
       date,
+      monthSheet,
       rawFinance,
       salesFactsAggregate: {
         totalRevenue: round2(salesRows.reduce((sum, row) => sum + toNumber(row.revenue), 0)),
@@ -563,9 +616,12 @@ function createManagementWorkbookService({
     backfillDailyInput,
     buildDailyInputDebug,
     buildDailyInputRow,
+    ensureDailyInputMonthSheet,
     exportDaily,
     formatDailySummary,
+    getDailyInputMonthStatus: monthInput => ensureDailyInputMonthSheet(monthInput, { checkOnly: true }),
     getSettingsDefaults: () => getSettingsDefaults(planVpPerDay),
+    initDailyInputMonth: monthInput => ensureDailyInputMonthSheet(monthInput),
     templateOnlyMessage: MANAGEMENT_TEMPLATE_ONLY_MESSAGE
   };
 }
@@ -573,7 +629,9 @@ function createManagementWorkbookService({
 module.exports = {
   createManagementWorkbookService,
   DAILY_INPUT_HEADERS,
+  DAILY_INPUT_TEMPLATE_SHEET,
   DAILY_INPUT_WRITE_COLUMNS,
+  getDailyInputSheetName,
   MAX_BACKFILL_DAYS,
   getSettingsDefaults,
   MANAGEMENT_TEMPLATE_ONLY_MESSAGE

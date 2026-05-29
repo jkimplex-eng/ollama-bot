@@ -32,6 +32,8 @@ function getHelpText() {
     "/management daily 2026-05-14",
     "/management daily debug 2026-05-14",
     "/management daily в таблицу 2026-05-14",
+    "/management month init 2026-06",
+    "/management month status 2026-06",
     "/management backfill 2026-05-01 2026-05-14",
     "/management backfill в таблицу 2026-05-01 2026-05-14",
     "/management month 2026-05",
@@ -264,6 +266,22 @@ function parseDailyControlCommand(text) {
 function parseManagementCommand(text) {
   const normalized = text.trim().replace(/\s+/g, " ");
   const lower = normalized.toLowerCase();
+  const monthInitMatch = lower.match(/^\/management\s+month\s+init\s+(\d{4}-\d{2})$/);
+  if (monthInitMatch) {
+    return {
+      type: "month_init",
+      value: monthInitMatch[1]
+    };
+  }
+
+  const monthStatusMatch = lower.match(/^\/management\s+month\s+status\s+(\d{4}-\d{2})$/);
+  if (monthStatusMatch) {
+    return {
+      type: "month_status",
+      value: monthStatusMatch[1]
+    };
+  }
+
   const debugMatch = lower.match(
     /^\/management\s+daily\s+debug\s+(today|yesterday|сегодня|вчера|\d{4}-\d{2}-\d{2})$/
   );
@@ -898,6 +916,21 @@ function formatManagementDashboardResult(result) {
 
 function formatManagementTemplateOnlyMessage() {
   return "Этот лист считается формулами в шаблоне. Бот заполняет только Daily Input.";
+}
+
+function formatManagementMonthSheetResult(result, mode = "status") {
+  if (mode === "status") {
+    if (result.exists) {
+      return `Лист ${result.targetSheet} готов. Шаблон: ${result.templateSheet}.`;
+    }
+    return `Лист ${result.targetSheet} ещё не создан. Используй /management month init ${result.month}.`;
+  }
+
+  if (result.created) {
+    return `Создал лист ${result.targetSheet} из шаблона ${result.templateSheet}.`;
+  }
+
+  return `Лист ${result.targetSheet} уже существует.`;
 }
 
 function formatSkuReport(report) {
@@ -1655,6 +1688,18 @@ function startTelegramBot({
           }
 
           await sendLongMessage(tgBot, chatId, formatManagementTemplateOnlyMessage());
+          return;
+        }
+
+        if (managementCommand.type === "month_init") {
+          const result = await managementWorkbookService.initDailyInputMonth(managementCommand.value);
+          await sendLongMessage(tgBot, chatId, formatManagementMonthSheetResult(result, "init"));
+          return;
+        }
+
+        if (managementCommand.type === "month_status") {
+          const result = await managementWorkbookService.getDailyInputMonthStatus(managementCommand.value);
+          await sendLongMessage(tgBot, chatId, formatManagementMonthSheetResult(result, "status"));
           return;
         }
 

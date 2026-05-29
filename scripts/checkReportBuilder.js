@@ -12,7 +12,12 @@ const {
 } = require("../services/reportBuilder");
 const { createDailyControlService } = require("../services/dailyControl");
 const { createDailySyncService } = require("../services/dailySync");
-const { createManagementWorkbookService, DAILY_INPUT_WRITE_COLUMNS, MAX_BACKFILL_DAYS } = require("../services/managementWorkbook");
+const {
+  createManagementWorkbookService,
+  DAILY_INPUT_WRITE_COLUMNS,
+  getDailyInputSheetName,
+  MAX_BACKFILL_DAYS
+} = require("../services/managementWorkbook");
 const { parseCogsCommand, parseDailyControlCommand, parseFinanceCommand, parseManagementCommand, parseReplenishmentCommand, parseReportCommand, parseSalesCommand } = require("../services/telegram");
 const { createCogsService, parseBulkImportText } = require("../services/cogs");
 const { createFinanceFactsService } = require("../services/financeFacts");
@@ -357,6 +362,14 @@ async function run() {
     toSheet: true,
     debug: false,
     value: "2026-05"
+  });
+  assert.deepStrictEqual(parseManagementCommand("/management month init 2026-06"), {
+    type: "month_init",
+    value: "2026-06"
+  });
+  assert.deepStrictEqual(parseManagementCommand("/management month status 2026-06"), {
+    type: "month_status",
+    value: "2026-06"
   });
   assert.deepStrictEqual(parseManagementCommand("/management dashboard 2026-05"), {
     type: "dashboard",
@@ -740,6 +753,8 @@ async function run() {
   assert.strictEqual(dailyControlWrites[0].headers[0], "Дата");
 
   const managementWrites = [];
+  const managementMonthCreates = [];
+  const createdManagementSheets = new Set();
   const managementWorkbookService = createManagementWorkbookService({
     cogsService,
     financeFactsService,
@@ -756,13 +771,34 @@ async function run() {
     },
     salesFactsService,
     sheetsService: {
+      createMonthlySheet: async (mappingKey, options = {}) => {
+        managementMonthCreates.push({ mappingKey, ...options });
+        const alreadyExists = createdManagementSheets.has(options.targetSheet);
+        if (!options.checkOnly && !alreadyExists) {
+          createdManagementSheets.add(options.targetSheet);
+        }
+        return {
+          created: !options.checkOnly && !alreadyExists,
+          exists: alreadyExists || options.checkOnly
+        };
+      },
       updateMappedRowByDate: async (mappingKey, date, row, options = {}) => {
-        managementWrites.push({ kind: "update", mappingKey, date, row, headers: options.headers, writeColumns: options.writeColumns });
-        return { rowsWritten: 1, tabName: "Daily Input", matchedRow: 14, dateMatchedAs: "05-14", appended: false };
+        managementWrites.push({
+          kind: "update",
+          mappingKey,
+          date,
+          row,
+          headers: options.headers,
+          writeColumns: options.writeColumns,
+          sheetName: options.sheetName
+        });
+        return { rowsWritten: 1, tabName: options.sheetName || "Daily Input", matchedRow: 14, dateMatchedAs: "05-14", appended: false };
       }
     },
     planVpPerDay: 180645
   });
+
+  assert.strictEqual(getDailyInputSheetName("2026-06-01"), "Daily Input 2026-06");
 
   const managementDaily = await managementWorkbookService.buildDailyInputRow("2026-05-14");
   assert.deepStrictEqual(managementDaily.row.slice(0, 13), [
@@ -787,12 +823,18 @@ async function run() {
   assert.strictEqual(managementDaily.metrics.fboServicesExport, 20);
 
   const managementExportDaily = await managementWorkbookService.exportDaily("2026-05-14");
-  assert.strictEqual(managementExportDaily.dailyWrite.tabName, "Daily Input");
+  assert.strictEqual(managementExportDaily.dailyWrite.tabName, "Daily Input 2026-05");
   assert.strictEqual(managementWrites[0].mappingKey, "daily_input");
   assert.strictEqual(managementWrites.length, 1);
+  assert.strictEqual(managementWrites[0].sheetName, "Daily Input 2026-05");
   assert.strictEqual(managementExportDaily.dailyWrite.matchedRow, 14);
   assert.strictEqual(managementExportDaily.dailyWrite.dateMatchedAs, "05-14");
   assert.strictEqual(managementExportDaily.dailyWrite.appended, false);
+  assert.strictEqual(managementExportDaily.monthSheet.targetSheet, "Daily Input 2026-05");
+  assert.strictEqual(managementExportDaily.monthSheet.created, true);
+  assert.strictEqual(managementMonthCreates.length, 1);
+  assert.strictEqual(managementMonthCreates[0].targetSheet, "Daily Input 2026-05");
+  assert.strictEqual(managementMonthCreates[0].month, "2026-05");
   assert.deepStrictEqual(managementWrites[0].writeColumns, DAILY_INPUT_WRITE_COLUMNS);
   assert.strictEqual(managementWrites[0].row.length, 18);
   assert.deepStrictEqual(managementWrites[0].headers, [
@@ -815,6 +857,15 @@ async function run() {
     "Статус",
     "Комментарий"
   ]);
+  const monthStatus = await managementWorkbookService.getDailyInputMonthStatus("2026-05");
+  assert.strictEqual(monthStatus.month, "2026-05");
+  assert.strictEqual(monthStatus.targetSheet, "Daily Input 2026-05");
+  assert.strictEqual(monthStatus.checked, true);
+  assert.strictEqual(monthStatus.exists, true);
+
+  const initExisting = await managementWorkbookService.initDailyInputMonth("2026-05");
+  assert.strictEqual(initExisting.targetSheet, "Daily Input 2026-05");
+  assert.strictEqual(initExisting.created, false);
 
   salesFactsService.clearSalesRows();
   financeFactsService.clearFinanceRows();
@@ -889,9 +940,10 @@ async function run() {
       saveSalesRows: rows => backfillSalesSaved.push(...rows)
     },
     sheetsService: {
+      createMonthlySheet: async (mappingKey, options = {}) => ({ created: false, exists: true, targetSheet: options.targetSheet }),
       updateMappedRowByDate: async (mappingKey, date, row, options = {}) => {
-        backfillWrites.push({ mappingKey, date, row, writeColumns: options.writeColumns });
-        return { rowsWritten: 1, tabName: "Daily Input", matchedRow: 7, appended: false };
+        backfillWrites.push({ mappingKey, date, row, writeColumns: options.writeColumns, sheetName: options.sheetName });
+        return { rowsWritten: 1, tabName: options.sheetName || "Daily Input", matchedRow: 7, appended: false };
       }
     },
     planVpPerDay: 0
@@ -935,6 +987,7 @@ async function run() {
   });
   assert.strictEqual(backfillWrites.length, 2);
   assert.deepStrictEqual(backfillWrites[0].writeColumns, DAILY_INPUT_WRITE_COLUMNS);
+  assert.strictEqual(backfillWrites[0].sheetName, "Daily Input 2026-05");
   assert.strictEqual(backfillSalesSaved.length, 2);
   assert.strictEqual(backfillFinanceSaved.length, 2);
 
@@ -977,6 +1030,29 @@ async function run() {
   assert.strictEqual(partialFailureBackfill.daysUpdated, 1);
   assert.strictEqual(partialFailureBackfill.daysFailed, 1);
   assert.strictEqual(partialFailureBackfill.failures[0].date, "2026-05-14");
+
+  const failingMonthInitService = createManagementWorkbookService({
+    cogsService,
+    financeFactsService,
+    performanceService: {
+      getStoredRowsForDateRange: async () => []
+    },
+    salesFactsService,
+    sheetsService: {
+      createMonthlySheet: async () => {
+        throw new Error("Template sheet not found: Daily Input Template");
+      },
+      updateMappedRowByDate: async () => {
+        throw new Error("write should not run");
+      }
+    },
+    planVpPerDay: 0
+  });
+
+  await assert.rejects(
+    async () => failingMonthInitService.exportDaily("2026-06-01"),
+    /Template sheet not found: Daily Input Template/
+  );
 
   await assert.rejects(
     () =>

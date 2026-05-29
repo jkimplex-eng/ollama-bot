@@ -87,6 +87,10 @@ function parseAppsScriptError(text, tabName) {
   }
 }
 
+function resolveSheetName(mapping, options = {}) {
+  return options.sheetName || mapping.tabName;
+}
+
 function createSheetsService({ webappUrl }) {
   function ensureConfigured() {
     if (!webappUrl) {
@@ -122,6 +126,7 @@ function createSheetsService({ webappUrl }) {
 
   function prepareRows(mappingKey, rows, options = {}) {
     const mapping = getSheetMapping(mappingKey);
+    const sheetName = resolveSheetName(mapping, options);
     const headers = Array.isArray(options.headers) && options.headers.length
       ? options.headers
       : mapping.columns;
@@ -129,53 +134,53 @@ function createSheetsService({ webappUrl }) {
     const formatting = options.formatting === false
       ? null
       : mergeFormatting(mergeFormatting(DEFAULT_FORMATTING, mapping.formatting), options.formatting);
-    return { mapping, normalizedRows, headers, formatting };
+    return { mapping, normalizedRows, headers, formatting, sheetName };
   }
 
   async function appendMappedRows(mappingKey, rows, options = {}) {
-    const { mapping, normalizedRows } = prepareRows(mappingKey, rows, options);
+    const { mapping, normalizedRows, sheetName } = prepareRows(mappingKey, rows, options);
 
     for (const chunk of chunkRows(normalizedRows)) {
       const result = await postAction(
         {
           action: "appendRows",
-          sheet: mapping.tabName,
+          sheet: sheetName,
           rows: chunk
         },
-        mapping.tabName
+        sheetName
       );
 
       if (result && result.ok === false) {
-        throw new Error(parseAppsScriptError(JSON.stringify(result), mapping.tabName));
+        throw new Error(parseAppsScriptError(JSON.stringify(result), sheetName));
       }
     }
 
     return {
       mappingKey,
-      tabName: mapping.tabName,
+      tabName: sheetName,
       rowsWritten: normalizedRows.length
     };
   }
 
   async function replaceMappedRows(mappingKey, rows, options = {}) {
-    const { mapping, normalizedRows, headers, formatting } = prepareRows(mappingKey, rows, options);
+    const { mapping, normalizedRows, headers, formatting, sheetName } = prepareRows(mappingKey, rows, options);
     const chunks = chunkRows(normalizedRows);
 
     if (!chunks.length) {
       await postAction(
         {
           action: "replaceRows",
-          sheet: mapping.tabName,
+          sheet: sheetName,
           headers,
           formatting,
           rows: []
         },
-        mapping.tabName
+        sheetName
       );
 
       return {
         mappingKey,
-        tabName: mapping.tabName,
+        tabName: sheetName,
         rowsWritten: 0
       };
     }
@@ -183,72 +188,72 @@ function createSheetsService({ webappUrl }) {
     await postAction(
       {
         action: "replaceRows",
-        sheet: mapping.tabName,
+        sheet: sheetName,
         headers,
         formatting,
         rows: chunks[0]
       },
-      mapping.tabName
+      sheetName
     );
 
     for (let index = 1; index < chunks.length; index += 1) {
       await postAction(
         {
           action: "appendRows",
-          sheet: mapping.tabName,
+          sheet: sheetName,
           rows: chunks[index]
         },
-        mapping.tabName
+        sheetName
       );
     }
 
     return {
       mappingKey,
-      tabName: mapping.tabName,
+      tabName: sheetName,
       rowsWritten: normalizedRows.length
     };
   }
 
   async function clearAndWriteMappedRows(mappingKey, rows, options = {}) {
-    const { mapping, normalizedRows, headers, formatting } = prepareRows(mappingKey, rows, options);
+    const { mapping, normalizedRows, headers, formatting, sheetName } = prepareRows(mappingKey, rows, options);
     const chunks = chunkRows(normalizedRows);
 
     await postAction(
       {
         action: "clearAndWrite",
-        sheet: mapping.tabName,
+        sheet: sheetName,
         headers,
         formatting,
         rows: chunks[0] || []
       },
-      mapping.tabName
+      sheetName
     );
 
     for (let index = 1; index < chunks.length; index += 1) {
       await postAction(
         {
           action: "appendRows",
-          sheet: mapping.tabName,
+          sheet: sheetName,
           rows: chunks[index]
         },
-        mapping.tabName
+        sheetName
       );
     }
 
     return {
       mappingKey,
-      tabName: mapping.tabName,
+      tabName: sheetName,
       rowsWritten: normalizedRows.length
     };
   }
 
   async function updateMappedRowByDate(mappingKey, date, row, options = {}) {
-    const { mapping, normalizedRows, headers, formatting } = prepareRows(mappingKey, [row], options);
+    const { mapping, normalizedRows, headers, formatting, sheetName } = prepareRows(mappingKey, [row], options);
     const normalizedDate = String(date || "").trim();
     const result = await postAction(
       {
         action: "updateByDate",
-        sheet: mapping.tabName,
+        sheet: sheetName,
         headers,
         formatting,
         dateColumn: options.dateColumn || "Дата",
@@ -256,16 +261,48 @@ function createSheetsService({ webappUrl }) {
         row: normalizedRows[0],
         writeColumns: Array.isArray(options.writeColumns) ? options.writeColumns : undefined
       },
-      mapping.tabName
+      sheetName
     );
 
     return {
       mappingKey,
-      tabName: mapping.tabName,
+      tabName: sheetName,
       rowsWritten: 1,
       matchedRow: result?.matchedRow ?? result?.rowIndex ?? null,
       dateMatchedAs: result?.dateMatchedAs ?? "",
       appended: Boolean(result?.appended)
+    };
+  }
+
+  async function createMonthlySheet(mappingKey, options = {}) {
+    const mapping = getSheetMapping(mappingKey);
+    const targetSheet = options.targetSheet || mapping.tabName;
+    const payload = {
+      action: "createMonthlySheet",
+      templateSheet: options.templateSheet,
+      targetSheet,
+      month: options.month
+    };
+
+    if (options.checkOnly) {
+      payload.checkOnly = true;
+    }
+
+    const result = await postAction(payload, targetSheet);
+
+    if (result && result.ok === false) {
+      throw new Error(parseAppsScriptError(JSON.stringify(result), targetSheet));
+    }
+
+    return {
+      mappingKey,
+      tabName: targetSheet,
+      targetSheet,
+      month: options.month || "",
+      templateSheet: options.templateSheet || "",
+      created: Boolean(result?.created),
+      exists: result?.exists === undefined ? !result?.created : Boolean(result.exists),
+      checked: Boolean(options.checkOnly)
     };
   }
 
@@ -282,6 +319,7 @@ function createSheetsService({ webappUrl }) {
     addRows,
     appendMappedRows,
     clearAndWriteMappedRows,
+    createMonthlySheet,
     replaceMappedRows,
     updateMappedRowByDate
   };
