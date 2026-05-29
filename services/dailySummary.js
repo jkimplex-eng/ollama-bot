@@ -78,6 +78,20 @@ function parseDailyCommand(text) {
     };
   }
 
+  if (first === "summary") {
+    const summaryInput = parts.slice(1).join(" ");
+    if (/^(вчера|yesterday)$/i.test(summaryInput)) {
+      return { kind: "summary_preview", dateInput: "yesterday" };
+    }
+    if (/^(today|сегодня)$/i.test(summaryInput)) {
+      return { kind: "summary_preview", dateInput: "today" };
+    }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(summaryInput)) {
+      return { kind: "summary_preview", dateInput: summaryInput };
+    }
+    return { kind: "invalid", error: "Формат: /daily summary yesterday|today|YYYY-MM-DD" };
+  }
+
   if (!parts.length) {
     return { kind: "summary", mode: "yesterday" };
   }

@@ -17,6 +17,9 @@ function getHelpText() {
     "/daily в таблицу yesterday",
     "/daily в таблицу today",
     "/daily в таблицу 2026-05-13",
+    "/daily summary yesterday",
+    "/daily summary 2026-05-13",
+    "/daily debug 2026-05-13",
     "/день вчера",
     "/день 2026-05-13",
     "/daily 2026-05-13 2026-05-14",
@@ -1718,11 +1721,23 @@ function startTelegramBot({
             dateInput: dailyCommand.dateInput,
             toSheet: Boolean(dailyCommand.toSheet)
           });
-          await sendLongMessage(tgBot, chatId, result.summaryText);
+          await sendLongMessage(tgBot, chatId, result.clientSummaryText);
           return;
         }
 
-        if (dailyCommand.kind === "debug" || dailyCommand.kind === "raw") {
+        if (dailyCommand.kind === "summary_preview") {
+          const result = await dailySyncService.buildSummaryForDate(dailyCommand.dateInput);
+          await sendLongMessage(tgBot, chatId, result.clientSummaryText);
+          return;
+        }
+
+        if (dailyCommand.kind === "debug") {
+          const result = await dailySyncService.buildDebugForDate(dailyCommand.dateFrom);
+          await sendLongMessage(tgBot, chatId, dailySyncService.formatDebugResult(result));
+          return;
+        }
+
+        if (dailyCommand.kind === "raw") {
           await tgBot.sendMessage(chatId, "Собираю diagnostics по Ozon...");
           const result = await dailySummaryService.generateDiagnosticsReport(
             dailyCommand.dateFrom,

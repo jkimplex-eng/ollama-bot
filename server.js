@@ -99,13 +99,6 @@ const dailyControlService = createDailyControlService({
   planVpPerDay: env.dailyControlPlanVp
 });
 
-const dailySyncService = createDailySyncService({
-  financeFactsService,
-  managementWorkbookService,
-  ozonService,
-  salesFactsService
-});
-
 const managementWorkbookService = createManagementWorkbookService({
   cogsService,
   financeFactsService,
@@ -113,6 +106,21 @@ const managementWorkbookService = createManagementWorkbookService({
   salesFactsService,
   sheetsService,
   planVpPerDay: env.dailyControlPlanVp
+});
+
+const dailySyncService = createDailySyncService({
+  financeFactsService,
+  managementWorkbookService,
+  ozonService,
+  salesFactsService,
+  auto: {
+    enabled: env.dailyAutoEnabled,
+    hour: env.dailyAutoHour,
+    minute: env.dailyAutoMinute,
+    chatId: env.dailyAutoChatId,
+    timezone: env.dailyAutoTimezone,
+    stateFile: env.paths.dailyAutoStateFile
+  }
 });
 
 const replenishmentService = createReplenishmentService({
@@ -224,6 +232,21 @@ if (activeTelegramService) {
   telegramService.getPrimaryChatId = activeTelegramService.getPrimaryChatId;
   telegramService.sendText = activeTelegramService.sendText;
   telegramService.sendDocument = activeTelegramService.sendDocument;
+  createDailySyncService({
+    financeFactsService,
+    managementWorkbookService,
+    ozonService,
+    salesFactsService,
+    telegramService,
+    auto: {
+      enabled: env.dailyAutoEnabled,
+      hour: env.dailyAutoHour,
+      minute: env.dailyAutoMinute,
+      chatId: env.dailyAutoChatId,
+      timezone: env.dailyAutoTimezone,
+      stateFile: env.paths.dailyAutoStateFile
+    }
+  }).startAutoSync();
 }
 
 if (env.jobs.enabled) {

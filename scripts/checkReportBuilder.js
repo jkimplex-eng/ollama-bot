@@ -314,6 +314,14 @@ async function run() {
     toSheet: false,
     dateInput: "2026-05-14"
   });
+  assert.deepStrictEqual(parseDailyCommand("/daily summary yesterday"), {
+    kind: "summary_preview",
+    dateInput: "yesterday"
+  });
+  assert.deepStrictEqual(parseDailyCommand("/daily summary 2026-05-14"), {
+    kind: "summary_preview",
+    dateInput: "2026-05-14"
+  });
   assert.deepStrictEqual(parseDailyCommand("/день вчера"), {
     kind: "sync",
     toSheet: false,
@@ -2409,10 +2417,16 @@ async function run() {
     toSheet: false
   });
   assert.deepStrictEqual(syncOzonCalls.map(item => item.step), ["sales", "finance"]);
-  assert.ok(dailySyncPreview.summaryText.includes("Daily 2026-05-14"));
-  assert.ok(dailySyncPreview.summaryText.includes("Комиссия: 158211"));
-  assert.ok(dailySyncPreview.summaryText.includes("Услуги партнёров: 3742"));
-  assert.ok(dailySyncPreview.summaryText.includes("Услуги FBO: 1625"));
+  assert.ok(dailySyncPreview.clientSummaryText.includes("📊 Daily Summary · 2026-05-14"));
+  assert.ok(dailySyncPreview.clientSummaryText.includes("Комиссия Ozon ₽: 158211"));
+  assert.ok(dailySyncPreview.clientSummaryText.includes("Услуги партнёров ₽: 3742"));
+  assert.ok(dailySyncPreview.clientSummaryText.includes("Услуги FBO ₽: 1625"));
+  assert.ok(dailySyncPreview.clientSummaryText.includes("Что хорошо:"));
+  assert.ok(dailySyncPreview.clientSummaryText.includes("Что плохо:"));
+  assert.ok(dailySyncPreview.clientSummaryText.includes("На что обратить внимание:"));
+  assert.ok(dailySyncPreview.clientSummaryText.includes("sales fetch: OK"));
+  assert.ok(dailySyncPreview.clientSummaryText.includes("finance fetch: OK"));
+  assert.ok(dailySyncPreview.clientSummaryText.includes("sheet update: SKIP"));
   assert.deepStrictEqual(syncCalls, ["build:2026-05-14"]);
 
   const dailySyncWrite = await dailySyncService.syncDaily({
@@ -2420,8 +2434,27 @@ async function run() {
     toSheet: true
   });
   assert.strictEqual(writeCallCount, 1);
-  assert.ok(dailySyncWrite.summaryText.includes("Обновил Daily Input, строка 14"));
+  assert.ok(dailySyncWrite.clientSummaryText.includes("Обновил Daily Input, строка 14"));
+  assert.ok(dailySyncWrite.clientSummaryText.includes("sheet update: OK"));
   assert.deepStrictEqual(syncCalls.slice(-1), ["export:2026-05-14"]);
+
+  const summaryPreview = await dailySyncService.buildSummaryForDate("2026-05-14");
+  assert.ok(summaryPreview.clientSummaryText.includes("📊 Daily Summary · 2026-05-14"));
+
+  const debugPreview = await dailySyncService.buildDebugForDate("2026-05-14");
+  const debugText = dailySyncService.formatDebugResult(debugPreview);
+  assert.ok(debugText.includes("Daily debug 2026-05-14"));
+  assert.ok(debugText.includes("Final summary payload:"));
+
+  const scheduleSnapshot = dailySyncService.getScheduleSnapshot(
+    new Date("2026-05-29T05:30:00Z"),
+    "Europe/Moscow"
+  );
+  assert.deepStrictEqual(scheduleSnapshot, {
+    date: "2026-05-29",
+    hour: 8,
+    minute: 30
+  });
 
   const repeatStatusBefore = syncSalesFactsService.getSalesRowsStatus();
   await dailySyncService.syncDaily({
@@ -2450,8 +2483,10 @@ async function run() {
   });
   assert.strictEqual(partialFailureResult.errors.length, 1);
   assert.strictEqual(partialFailureResult.errors[0].step, "finance fetch");
-  assert.ok(partialFailureResult.summaryText.includes("Partial failures:"));
-  assert.ok(partialFailureResult.summaryText.includes("finance fetch: finance down"));
+  assert.ok(partialFailureResult.clientSummaryText.includes("finance fetch: FAIL"));
+  assert.ok(partialFailureResult.clientSummaryText.includes("sheet update: SKIP"));
+  assert.ok(partialFailureResult.clientSummaryText.includes("Ошибки:"));
+  assert.ok(partialFailureResult.clientSummaryText.includes("finance fetch: finance down"));
 
   console.log("New positive signs and Daily Input finance mapping tests passed!");
 
