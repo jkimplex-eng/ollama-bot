@@ -12,7 +12,14 @@ const {
 } = require("../services/reportBuilder");
 const { createAlertsService } = require("../services/alerts");
 const { createDailyControlService } = require("../services/dailyControl");
-const { createDailySyncService } = require("../services/dailySync");
+const {
+  createDailySyncService,
+  getDateContext,
+  getLocalToday,
+  getLocalYesterday,
+  resolveAutoConfigWarnings,
+  resolveDateInput
+} = require("../services/dailySync");
 const { createJobsService } = require("../services/jobs");
 const {
   createManagementWorkbookService,
@@ -329,6 +336,12 @@ async function run() {
     kind: "summary_preview",
     dateInput: "2026-05-14"
   });
+  assert.deepStrictEqual(parseDailyCommand("/daily debug yesterday"), {
+    kind: "debug",
+    mode: "single",
+    dateFrom: "yesterday",
+    dateTo: "yesterday"
+  });
   assert.deepStrictEqual(parseDailyCommand("/день вчера"), {
     kind: "sync",
     toSheet: false,
@@ -343,6 +356,45 @@ async function run() {
     toSheet: false,
     dateInput: "today"
   });
+  assert.strictEqual(
+    getLocalYesterday(new Date("2026-05-30T05:30:00Z"), "Europe/Moscow"),
+    "2026-05-29"
+  );
+  assert.strictEqual(
+    getLocalYesterday(new Date("2026-05-30T00:30:00Z"), "Europe/Moscow"),
+    "2026-05-29"
+  );
+  assert.strictEqual(
+    getLocalToday(new Date("2026-05-30T00:30:00Z"), "Europe/Moscow"),
+    "2026-05-30"
+  );
+  assert.strictEqual(
+    resolveDateInput("today", {
+      now: new Date("2026-05-30T00:30:00Z"),
+      timezone: "Europe/Moscow"
+    }),
+    "2026-05-30"
+  );
+  assert.deepStrictEqual(
+    getDateContext({
+      input: "yesterday",
+      now: new Date("2026-05-30T05:30:00Z"),
+      timezone: "Europe/Moscow"
+    }),
+    {
+      serverNow: "2026-05-30T05:30:00.000Z",
+      timezone: "Europe/Moscow",
+      localToday: "2026-05-30",
+      resolvedYesterday: "2026-05-29",
+      commandDate: "2026-05-29"
+    }
+  );
+  assert.deepStrictEqual(resolveAutoConfigWarnings({ chatId: "" }), [
+    "DAILY_AUTO_CHAT_ID is missing. Daily auto Telegram send is disabled."
+  ]);
+  assert.deepStrictEqual(resolveAutoConfigWarnings({ chatId: "<telegram chat id>" }), [
+    "DAILY_AUTO_CHAT_ID looks like a placeholder with angle brackets. Check .env before relying on daily auto."
+  ]);
   assert.deepStrictEqual(parseDailyControlCommand("/daily control в таблицу yesterday"), {
     toSheet: true,
     dateInput: "yesterday"
@@ -2620,7 +2672,11 @@ async function run() {
   const debugPreview = await dailySyncService.buildDebugForDate("2026-05-14");
   const debugText = dailySyncService.formatDebugResult(debugPreview);
   assert.ok(debugText.includes("Daily debug 2026-05-14"));
+  assert.ok(debugText.includes("Date resolver:"));
   assert.ok(debugText.includes("Final summary payload:"));
+
+  const debugYesterday = await dailySyncService.buildDebugForDate("yesterday");
+  assert.strictEqual(debugYesterday.dateContext.commandDate, debugYesterday.date);
 
   const scheduleSnapshot = dailySyncService.getScheduleSnapshot(
     new Date("2026-05-29T05:30:00Z"),
@@ -2631,6 +2687,13 @@ async function run() {
     hour: 8,
     minute: 30
   });
+  assert.strictEqual(
+    dailySyncService.resolveDateInput("yesterday", {
+      now: new Date("2026-05-30T05:30:00Z"),
+      timezone: "Europe/Moscow"
+    }),
+    "2026-05-29"
+  );
 
   const repeatStatusBefore = syncSalesFactsService.getSalesRowsStatus();
   await dailySyncService.syncDaily({

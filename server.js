@@ -7,7 +7,7 @@ const { createCalendarService } = require("./services/calendar");
 const { createCogsService } = require("./services/cogs");
 const { createDecisionEngine } = require("./services/decisionEngine");
 const { createDailySummaryService } = require("./services/dailySummary");
-const { createDailySyncService } = require("./services/dailySync");
+const { createDailySyncService, resolveAutoConfigWarnings } = require("./services/dailySync");
 const { createDailyControlService } = require("./services/dailyControl");
 const { createExternalTrafficPlanService } = require("./services/externalTrafficPlan");
 const { createFinanceFactsService } = require("./services/financeFacts");
@@ -26,6 +26,14 @@ const { createWarehouseMappingService } = require("./services/warehouseMapping")
 
 const app = express();
 const state = createFileState(env.paths);
+
+if (env.dailyAutoEnabled) {
+  for (const warning of resolveAutoConfigWarnings({
+    chatId: env.dailyAutoChatId
+  })) {
+    console.warn("[startup] " + warning);
+  }
+}
 
 const ollamaService = createOllamaService({
   chatUrl: env.ollamaChatUrl,

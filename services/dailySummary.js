@@ -1,5 +1,6 @@
 const fs = require("fs");
 const path = require("path");
+const { getLocalYesterday } = require("./dailySync");
 
 const MOSCOW_TIMEZONE = "Europe/Moscow";
 const FINANCE_RAW_SHEET = "Ozon_Finance_Raw";
@@ -27,11 +28,7 @@ function formatMoscowDate(date) {
 }
 
 function getYesterdayRange() {
-  const now = new Date();
-  const moscowToday = formatMoscowDate(now);
-  const startOfMoscowToday = new Date(moscowToday + "T00:00:00+03:00");
-  const yesterday = new Date(startOfMoscowToday.getTime() - 24 * 60 * 60 * 1000);
-  const label = formatDate(yesterday);
+  const label = getLocalYesterday(new Date(), MOSCOW_TIMEZONE);
 
   return {
     dateFrom: label + "T00:00:00+03:00",
@@ -66,8 +63,11 @@ function parseDailyCommand(text) {
   }
 
   if (first === "debug" || first === "raw") {
-    if (parts.length < 2 || !/^\d{4}-\d{2}-\d{2}$/.test(parts[1])) {
-      return { kind: "invalid", error: "Формат: /daily debug YYYY-MM-DD или /daily raw YYYY-MM-DD" };
+    if (
+      parts.length < 2 ||
+      !(/^\d{4}-\d{2}-\d{2}$/.test(parts[1]) || /^(today|yesterday|сегодня|вчера)$/i.test(parts[1]))
+    ) {
+      return { kind: "invalid", error: "Формат: /daily debug YYYY-MM-DD|yesterday|today или /daily raw YYYY-MM-DD|yesterday|today" };
     }
 
     return {

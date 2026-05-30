@@ -3,13 +3,17 @@ const path = require("path");
 
 const MOSCOW_TIMEZONE = "Europe/Moscow";
 
-function formatMoscowDate(date) {
+function formatDateInTimezone(date, timezone = MOSCOW_TIMEZONE) {
   return new Intl.DateTimeFormat("en-CA", {
-    timeZone: MOSCOW_TIMEZONE,
+    timeZone: timezone,
     year: "numeric",
     month: "2-digit",
     day: "2-digit"
   }).format(date);
+}
+
+function formatMoscowDate(date) {
+  return formatDateInTimezone(date, MOSCOW_TIMEZONE);
 }
 
 function formatDate(value) {
@@ -26,17 +30,87 @@ function formatDate(value) {
   return Number.isNaN(parsed.getTime()) ? normalized.slice(0, 10) : parsed.toISOString().slice(0, 10);
 }
 
-function resolveDateInput(input) {
+function getTimezoneDateParts(date, timezone = MOSCOW_TIMEZONE) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(date);
+  const partMap = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return {
+    year: Number(partMap.year),
+    month: Number(partMap.month),
+    day: Number(partMap.day)
+  };
+}
+
+function shiftTimezoneDate(date, days, timezone = MOSCOW_TIMEZONE) {
+  const parts = getTimezoneDateParts(date, timezone);
+  const shifted = new Date(Date.UTC(parts.year, parts.month - 1, parts.day + days));
+  return shifted.toISOString().slice(0, 10);
+}
+
+function getLocalToday(now = new Date(), timezone = MOSCOW_TIMEZONE) {
+  return formatDateInTimezone(now, timezone);
+}
+
+function getLocalYesterday(now = new Date(), timezone = MOSCOW_TIMEZONE) {
+  return shiftTimezoneDate(now, -1, timezone);
+}
+
+function getDateContext({ input, now = new Date(), timezone = MOSCOW_TIMEZONE } = {}) {
   const normalized = String(input || "").trim().toLowerCase();
+  const localToday = getLocalToday(now, timezone);
+  const localYesterday = getLocalYesterday(now, timezone);
+
   if (!normalized || normalized === "today" || normalized === "сегодня") {
-    return formatMoscowDate(new Date());
+    return {
+      serverNow: now.toISOString(),
+      timezone,
+      localToday,
+      resolvedYesterday: localYesterday,
+      commandDate: localToday
+    };
   }
+
   if (normalized === "yesterday" || normalized === "вчера") {
-    const today = new Date(formatMoscowDate(new Date()) + "T00:00:00+03:00");
-    const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000);
-    return yesterday.toISOString().slice(0, 10);
+    return {
+      serverNow: now.toISOString(),
+      timezone,
+      localToday,
+      resolvedYesterday: localYesterday,
+      commandDate: localYesterday
+    };
   }
-  return formatDate(normalized);
+
+  return {
+    serverNow: now.toISOString(),
+    timezone,
+    localToday,
+    resolvedYesterday: localYesterday,
+    commandDate: formatDate(normalized)
+  };
+}
+
+function resolveDateInput(input, options = {}) {
+  const context = getDateContext({
+    input,
+    now: options.now || new Date(),
+    timezone: options.timezone || MOSCOW_TIMEZONE
+  });
+  return context.commandDate;
+}
+
+function resolveAutoConfigWarnings(autoConfig) {
+  const warnings = [];
+  const chatId = String(autoConfig.chatId || "").trim();
+  if (!chatId) {
+    warnings.push("DAILY_AUTO_CHAT_ID is missing. Daily auto Telegram send is disabled.");
+  } else if (/[<>]/.test(chatId)) {
+    warnings.push("DAILY_AUTO_CHAT_ID looks like a placeholder with angle brackets. Check .env before relying on daily auto.");
+  }
+  return warnings;
 }
 
 function toNumber(value) {
@@ -183,6 +257,7 @@ function createDailySyncService({
     stateFile: auto.stateFile || "",
     logger: auto.logger || console
   };
+  const autoWarnings = resolveAutoConfigWarnings(autoConfig);
 
   function ensureAutoStateFile() {
     if (!autoConfig.stateFile) {
@@ -217,19 +292,8 @@ function createDailySyncService({
     fs.writeFileSync(autoConfig.stateFile, JSON.stringify(state, null, 2), "utf8");
   }
 
-  function formatDateInTimezone(date, timezone) {
-    return new Intl.DateTimeFormat("en-CA", {
-      timeZone: timezone,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit"
-    }).format(date);
-  }
-
-  function getYesterdayInTimezone(timezone) {
-    const today = new Date(formatDateInTimezone(new Date(), timezone) + "T00:00:00+03:00");
-    const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000);
-    return yesterday.toISOString().slice(0, 10);
+  function getYesterdayInTimezone(now, timezone) {
+    return getLocalYesterday(now || new Date(), timezone);
   }
 
   function getScheduleSnapshot(now = new Date(), timezone = autoConfig.timezone) {
@@ -276,7 +340,7 @@ function createDailySyncService({
   }
 
   async function syncDaily({ dateInput, toSheet = false }) {
-    const date = resolveDateInput(dateInput);
+    const date = resolveDateInput(dateInput, { timezone: autoConfig.timezone });
     const errors = [];
     let salesResult = null;
     let financeResult = null;
@@ -330,7 +394,7 @@ function createDailySyncService({
   }
 
   async function buildSummaryForDate(dateInput) {
-    const date = resolveDateInput(dateInput);
+    const date = resolveDateInput(dateInput, { timezone: autoConfig.timezone });
     const dailyInput = await managementWorkbookService.buildDailyInputRow(date);
     return {
       date,
@@ -345,7 +409,11 @@ function createDailySyncService({
   }
 
   async function buildDebugForDate(dateInput) {
-    const date = resolveDateInput(dateInput);
+    const dateContext = getDateContext({
+      input: dateInput,
+      timezone: autoConfig.timezone
+    });
+    const date = dateContext.commandDate;
     const dailyInput = await managementWorkbookService.buildDailyInputRow(date);
     const debug =
       typeof managementWorkbookService.buildDailyInputDebug === "function"
@@ -358,6 +426,7 @@ function createDailySyncService({
           };
     return {
       date,
+      dateContext,
       debug,
       summaryPayload: {
         orderedRevenue: dailyInput.metrics.orderedRevenue,
@@ -385,6 +454,9 @@ function createDailySyncService({
     return [
       "Daily debug " + result.date,
       "",
+      "Date resolver:",
+      JSON.stringify(result.dateContext || {}, null, 2),
+      "",
       "Raw values:",
       JSON.stringify(result.debug, null, 2),
       "",
@@ -397,12 +469,16 @@ function createDailySyncService({
 
   function startAutoSync() {
     if (!autoConfig.enabled || !telegramService || !autoConfig.chatId) {
+      for (const warning of autoWarnings) {
+        autoConfig.logger.warn("[daily-auto] " + warning);
+      }
       return { started: false };
     }
 
     let lastTickKey = "";
     const timer = setInterval(async () => {
-      const snapshot = getScheduleSnapshot(new Date(), autoConfig.timezone);
+      const now = new Date();
+      const snapshot = getScheduleSnapshot(now, autoConfig.timezone);
       const tickKey = snapshot.date + " " + snapshot.hour + ":" + snapshot.minute;
       if (tickKey === lastTickKey) {
         return;
@@ -413,7 +489,7 @@ function createDailySyncService({
         return;
       }
 
-      const targetDate = getYesterdayInTimezone(autoConfig.timezone);
+      const targetDate = getYesterdayInTimezone(now, autoConfig.timezone);
       const state = readAutoState();
       if (state.lastRunDate === targetDate) {
         return;
@@ -446,10 +522,14 @@ function createDailySyncService({
   return {
     buildClientSummary,
     buildDebugForDate,
-    buildDailySyncSummary,
+      buildDailySyncSummary,
     buildSummaryForDate,
     formatDebugResult,
+    getDateContext,
+    getLocalToday,
+    getLocalYesterday,
     resolveDateInput,
+    resolveAutoConfigWarnings,
     startAutoSync,
     getScheduleSnapshot,
     syncDaily
@@ -460,5 +540,9 @@ module.exports = {
   buildClientSummary,
   buildDailySyncSummary,
   createDailySyncService,
+  getDateContext,
+  getLocalToday,
+  getLocalYesterday,
+  resolveAutoConfigWarnings,
   resolveDateInput
 };
