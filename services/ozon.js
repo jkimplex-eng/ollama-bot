@@ -971,6 +971,7 @@ function createOzonService({ clientId, apiKey }) {
     const byDate = new Map();
     const groupedTypes = new Map();
     const advertisingGroups = new Map();
+    const advertisingGroupsByDate = new Map();
     const partnerServiceEntries = [];
     const fboServiceEntries = [];
     let uncategorizedLogged = 0;
@@ -1074,9 +1075,28 @@ function createOzonService({ clientId, apiKey }) {
           bucketMap.set(groupKey, current);
         }
         if (bucket === "advertising") {
-          const currentAd = advertisingGroups.get(groupKey) || { key: groupKey, totalAmount: 0 };
+          const currentAd = advertisingGroups.get(groupKey) || {
+            key: groupKey,
+            operationType: transaction.operationType,
+            operationTypeName: transaction.operationTypeName,
+            serviceName: service.name || "",
+            totalAmount: 0
+          };
           currentAd.totalAmount = Number((currentAd.totalAmount + service.amount).toFixed(2));
           advertisingGroups.set(groupKey, currentAd);
+
+          const byDateMap = advertisingGroupsByDate.get(transaction.date) || new Map();
+          const currentByDate = byDateMap.get(groupKey) || {
+            key: groupKey,
+            date: transaction.date,
+            operationType: transaction.operationType,
+            operationTypeName: transaction.operationTypeName,
+            serviceName: service.name || "",
+            totalAmount: 0
+          };
+          currentByDate.totalAmount = Number((currentByDate.totalAmount + service.amount).toFixed(2));
+          byDateMap.set(groupKey, currentByDate);
+          advertisingGroupsByDate.set(transaction.date, byDateMap);
         }
         if (bucket === "partnerServices") {
           partnerServiceEntries.push({
@@ -1124,9 +1144,28 @@ function createOzonService({ clientId, apiKey }) {
           bucketMap.set(groupKey, current);
         }
         if (bucket === "advertising") {
-          const currentAd = advertisingGroups.get(groupKey) || { key: groupKey, totalAmount: 0 };
+          const currentAd = advertisingGroups.get(groupKey) || {
+            key: groupKey,
+            operationType: transaction.operationType,
+            operationTypeName: transaction.operationTypeName,
+            serviceName: "(remainder)",
+            totalAmount: 0
+          };
           currentAd.totalAmount = Number((currentAd.totalAmount + remainderAmount).toFixed(2));
           advertisingGroups.set(groupKey, currentAd);
+
+          const byDateMap = advertisingGroupsByDate.get(transaction.date) || new Map();
+          const currentByDate = byDateMap.get(groupKey) || {
+            key: groupKey,
+            date: transaction.date,
+            operationType: transaction.operationType,
+            operationTypeName: transaction.operationTypeName,
+            serviceName: "(remainder)",
+            totalAmount: 0
+          };
+          currentByDate.totalAmount = Number((currentByDate.totalAmount + remainderAmount).toFixed(2));
+          byDateMap.set(groupKey, currentByDate);
+          advertisingGroupsByDate.set(transaction.date, byDateMap);
         }
 
         if (bucket === "otherServices" && uncategorizedLogged < 5) {
@@ -1176,6 +1215,12 @@ function createOzonService({ clientId, apiKey }) {
         })),
       groupedOperations: Array.from(groupedTypes.values()).sort((left, right) => Math.abs(right.totalAmount) - Math.abs(left.totalAmount)),
       advertisingGroups: Array.from(advertisingGroups.values()).sort((left, right) => Math.abs(right.totalAmount) - Math.abs(left.totalAmount)),
+      advertisingGroupsByDate: Array.from(advertisingGroupsByDate.entries())
+        .sort((left, right) => left[0].localeCompare(right[0]))
+        .map(([date, groups]) => ({
+          date,
+          groups: Array.from(groups.values()).sort((left, right) => Math.abs(right.totalAmount) - Math.abs(left.totalAmount))
+        })),
       commissionGroups: Array.from(bucketMaps.ozonCommission.values()).sort((left, right) => Math.abs(right.totalAmount) - Math.abs(left.totalAmount)),
       partnerServicesGroups: Array.from(bucketMaps.partnerServices.values()).sort((left, right) => Math.abs(right.totalAmount) - Math.abs(left.totalAmount)),
       fboServicesGroups: Array.from(bucketMaps.fboServices.values()).sort((left, right) => Math.abs(right.totalAmount) - Math.abs(left.totalAmount)),

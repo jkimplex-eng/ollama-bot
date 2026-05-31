@@ -60,7 +60,15 @@ function getReconciliationStatus(adsCabinetSpend, financeAdvertisingSpend) {
       ? 100
       : 0;
 
-  return difference <= 10 || differencePercent <= 1 ? "OK" : "WARNING";
+  if (difference <= 10 || differencePercent <= 1) {
+    return "OK";
+  }
+
+  if (hasAds && hasFinance && financeAdvertisingSpend > adsCabinetSpend) {
+    return "PARTIAL_COVERAGE";
+  }
+
+  return "WARNING";
 }
 
 function listDates(dateFrom, dateTo) {
@@ -237,6 +245,13 @@ function buildReconciliationRows({ dateFrom, dateTo, performanceRows, financeRow
     const difference = round2(adsCabinetSpend - financeAdvertisingSpend);
     const denominator = adsCabinetSpend || financeAdvertisingSpend || 0;
     const differencePercent = denominator ? round2((Math.abs(difference) / denominator) * 100) : 0;
+    const coveredByPerformance = round2(Math.min(adsCabinetSpend, financeAdvertisingSpend));
+    const uncoveredFinanceAdvertising = round2(Math.max(0, financeAdvertisingSpend - adsCabinetSpend));
+    const coveragePercent = financeAdvertisingSpend
+      ? round2((coveredByPerformance / financeAdvertisingSpend) * 100)
+      : adsCabinetSpend
+        ? 100
+        : 0;
     const status = getReconciliationStatus(adsCabinetSpend, financeAdvertisingSpend);
 
     return {
@@ -246,9 +261,14 @@ function buildReconciliationRows({ dateFrom, dateTo, performanceRows, financeRow
       dailyInputAds,
       difference,
       differencePercent,
+      coveredByPerformance,
+      uncoveredFinanceAdvertising,
+      coveragePercent,
       status,
       warning:
-        status === "WARNING"
+        status === "PARTIAL_COVERAGE"
+          ? "Performance covers only part of finance advertising."
+          : status === "WARNING"
           ? "Mismatch exceeds tolerance."
           : status === "MISSING_ADS"
             ? "Ads cabinet spend missing."
@@ -285,7 +305,55 @@ function summarizeReconciliation(rows) {
     totalFinanceAdvertisingSpend,
     totalDifference,
     totalDifferencePercent,
+    coveredByPerformance: round2(Math.min(totalAdsCabinetSpend, totalFinanceAdvertisingSpend)),
+    uncoveredFinanceAdvertising: round2(Math.max(0, totalFinanceAdvertisingSpend - totalAdsCabinetSpend)),
+    coveragePercent: totalFinanceAdvertisingSpend
+      ? round2((Math.min(totalAdsCabinetSpend, totalFinanceAdvertisingSpend) / totalFinanceAdvertisingSpend) * 100)
+      : totalAdsCabinetSpend
+        ? 100
+        : 0,
     status: getReconciliationStatus(totalAdsCabinetSpend, totalFinanceAdvertisingSpend)
+  };
+}
+
+function buildFinanceAdvertisingBreakdown(financeRows, diagnostics) {
+  const financeByDate = new Map(
+    (financeRows || []).map(row => [formatDate(row.date), Math.abs(round2(row.advertising))])
+  );
+  const periodTotal = round2(
+    Array.from(financeByDate.values()).reduce((sum, value) => sum + toNumber(value), 0)
+  );
+  const periodGroups = (diagnostics?.advertisingGroups || []).map(item => ({
+    operationType: item.operationType || "",
+    operationTypeName: item.operationTypeName || "",
+    serviceName: item.serviceName || "",
+    amount: round2(Math.abs(item.totalAmount)),
+    sharePercent: periodTotal ? round2((Math.abs(toNumber(item.totalAmount)) / periodTotal) * 100) : 0
+  }));
+  const byDate = (diagnostics?.advertisingGroupsByDate || []).map(entry => {
+    const dateTotal = financeByDate.get(formatDate(entry.date)) || 0;
+    const groups = (entry.groups || []).map(item => ({
+      date: formatDate(entry.date),
+      operationType: item.operationType || "",
+      operationTypeName: item.operationTypeName || "",
+      serviceName: item.serviceName || "",
+      amount: round2(Math.abs(item.totalAmount)),
+      sharePercent: dateTotal ? round2((Math.abs(toNumber(item.totalAmount)) / dateTotal) * 100) : 0
+    }));
+
+    return {
+      date: formatDate(entry.date),
+      count: groups.length,
+      totalAmount: dateTotal,
+      groups
+    };
+  });
+
+  return {
+    periodCount: periodGroups.length,
+    periodTotal,
+    groups: periodGroups.sort((left, right) => right.amount - left.amount),
+    byDate
   };
 }
 
@@ -327,14 +395,26 @@ function createAdsDiagnosticsService({ financeFactsService, ozonService, perform
     const deduped = dedupePerformanceRows(performanceRows);
     let financeRows = financeFactsService.getFinanceRowsForDateRange(dateFrom, dateTo);
     let financeSource = "stored";
+    let financeDiagnostics = null;
+    let financeBreakdownSource = "unavailable";
+    let financeFetchWarning = "";
 
-    if (!financeRows.length && ozonService && typeof ozonService.getFinanceFacts === "function") {
-      const live = await ozonService.getFinanceFacts({
-        dateFrom: dateFrom + "T00:00:00+03:00",
-        dateTo: dateTo + "T23:59:59.999+03:00"
-      });
-      financeRows = Array.isArray(live?.rows) ? live.rows : [];
-      financeSource = financeRows.length ? "live_fetch" : "live_fetch_empty";
+    if (ozonService && typeof ozonService.getFinanceFacts === "function") {
+      try {
+        const live = await ozonService.getFinanceFacts({
+          dateFrom: dateFrom + "T00:00:00+03:00",
+          dateTo: dateTo + "T23:59:59.999+03:00"
+        });
+        financeDiagnostics = live?.diagnostics || null;
+        financeBreakdownSource = financeDiagnostics ? "live_fetch" : "live_fetch_empty";
+        if (!financeRows.length) {
+          financeRows = Array.isArray(live?.rows) ? live.rows : [];
+          financeSource = financeRows.length ? "live_fetch" : "live_fetch_empty";
+        }
+      } catch (err) {
+        financeBreakdownSource = "live_fetch_failed";
+        financeFetchWarning = err.userMessage || err.message;
+      }
     }
 
     const availableFields = getAvailableFields(deduped.dedupedRows);
@@ -349,11 +429,17 @@ function createAdsDiagnosticsService({ financeFactsService, ozonService, perform
       financeRows,
       availableFields
     });
+    if (financeFetchWarning) {
+      warnings.push("Finance advertising breakdown unavailable: " + financeFetchWarning);
+    }
+    const financeBreakdown = buildFinanceAdvertisingBreakdown(financeRows, financeDiagnostics);
 
     return {
       performanceRows: deduped.dedupedRows,
       financeRows,
       financeSource,
+      financeBreakdownSource,
+      financeBreakdown,
       rawRowsCount: performanceRows.length,
       normalizedRowsCount: deduped.normalizedRows.length,
       dedupedRowsCount: deduped.dedupedRows.length,
@@ -381,6 +467,8 @@ function createAdsDiagnosticsService({ financeFactsService, ozonService, perform
       duplicatesRemovedCount: loaded.duplicatesRemovedCount,
       financeRowsCount: loaded.financeRows.length,
       financeSource: loaded.financeSource,
+      financeBreakdownSource: loaded.financeBreakdownSource,
+      financeBreakdown: loaded.financeBreakdown,
       availableFields: loaded.availableFields,
       sampleRows: loaded.performanceRows.slice(0, 5),
       warnings: loaded.warnings,
@@ -404,6 +492,7 @@ function createAdsDiagnosticsService({ financeFactsService, ozonService, perform
       dailySummary,
       campaignSummary,
       reconciliation: loaded.reconciliation,
+      financeBreakdown: loaded.financeBreakdown,
       warnings
     };
   }
@@ -433,6 +522,7 @@ function createAdsDiagnosticsService({ financeFactsService, ozonService, perform
       dateTo,
       rows: loaded.reconciliation,
       totals: summarizeReconciliation(loaded.reconciliation),
+      financeBreakdown: loaded.financeBreakdown,
       warnings: loaded.warnings.filter(
         item =>
           item === "Нет локальных Performance rows за период." ||

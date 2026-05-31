@@ -921,7 +921,7 @@ function formatManagementDailyDebug(debug) {
 
 function formatAdsReconciliationRows(rows) {
   const lines = [
-    "Date | Ads Cabinet Spend | Finance Advertising | Difference | Difference % | Status"
+    "Date | Ads Cabinet Spend | Finance Advertising | Difference | Difference % | Coverage % | Status"
   ];
 
   for (const row of rows) {
@@ -932,12 +932,32 @@ function formatAdsReconciliationRows(rows) {
         row.financeAdvertisingSpend,
         row.difference,
         row.differencePercent,
+        row.coveragePercent,
         row.status
       ].join(" | ")
     );
   }
 
   return lines.join("\n");
+}
+
+function formatAdsFinanceBreakdown(breakdown) {
+  if (!breakdown?.groups?.length) {
+    return "Finance advertising breakdown unavailable.";
+  }
+
+  return breakdown.groups
+    .slice(0, 20)
+    .map(item =>
+      [
+        item.operationType || "-",
+        item.operationTypeName || "-",
+        item.serviceName || "-",
+        item.amount,
+        item.sharePercent
+      ].join(" | ")
+    )
+    .join("\n");
 }
 
 function formatAdsReconcile(report) {
@@ -952,8 +972,18 @@ function formatAdsReconcile(report) {
     "Finance Advertising: " + report.totals.totalFinanceAdvertisingSpend,
     "Difference: " + report.totals.totalDifference,
     "Difference %: " + report.totals.totalDifferencePercent,
+    "Covered by Performance: " + report.totals.coveredByPerformance,
+    "Uncovered Finance Advertising: " + report.totals.uncoveredFinanceAdvertising,
+    "Coverage %: " + report.totals.coveragePercent,
     "Status: " + report.totals.status
   ];
+
+  lines.push(
+    "",
+    "Finance advertising breakdown:",
+    "Operation Type | Operation Name | Service | Amount | Share %",
+    formatAdsFinanceBreakdown(report.financeBreakdown)
+  );
 
   if (report.warnings.length) {
     lines.push("", "Warnings:", ...report.warnings.map(item => "- " + item));
@@ -1017,6 +1047,7 @@ function formatAdsDebug(debug) {
     "Duplicates removed: " + debug.duplicatesRemovedCount,
     "Finance rows count: " + debug.financeRowsCount,
     "Finance source: " + debug.financeSource,
+    "Finance breakdown source: " + debug.financeBreakdownSource,
     "Available fields: " + (debug.availableFields.join(", ") || "-"),
     "",
     "Sample first rows:",
@@ -1025,8 +1056,32 @@ function formatAdsDebug(debug) {
       : ["No Performance rows found."]),
     "",
     "Reconciliation:",
-    formatAdsReconciliationRows(debug.reconciliation)
+    formatAdsReconciliationRows(debug.reconciliation),
+    "",
+    "Finance advertising groups count: " + (debug.financeBreakdown?.periodCount || 0),
+    "Finance advertising total: " + (debug.financeBreakdown?.periodTotal || 0)
   ];
+
+  if (debug.financeBreakdown?.byDate?.length) {
+    lines.push("");
+    lines.push("Finance advertising by date:");
+    lines.push(
+      ...debug.financeBreakdown.byDate.map(item =>
+        [
+          item.date,
+          "count=" + item.count,
+          "total=" + item.totalAmount
+        ].join(" | ")
+      )
+    );
+  }
+
+  if (debug.financeBreakdown?.groups?.length) {
+    lines.push("");
+    lines.push("Finance advertising breakdown:");
+    lines.push("Operation Type | Operation Name | Service | Amount | Share %");
+    lines.push(formatAdsFinanceBreakdown(debug.financeBreakdown));
+  }
 
   if (debug.warnings.length) {
     lines.push("", "Warnings:", ...debug.warnings.map(item => "- " + item));

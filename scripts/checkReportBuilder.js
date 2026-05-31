@@ -667,7 +667,52 @@ async function run() {
       ]
     },
     ozonService: {
-      getFinanceFacts: async () => ({ rows: [] })
+      getFinanceFacts: async () => ({
+        rows: [
+          { date: "2026-05-13", advertising: -1987.68 },
+          { date: "2026-05-14", advertising: -2079.48 }
+        ],
+        diagnostics: {
+          advertisingGroups: [
+            {
+              operationType: "OperationMarketplaceCostPerClick",
+              operationTypeName: "Оплата за клик",
+              serviceName: "(remainder)",
+              totalAmount: -1987.68
+            },
+            {
+              operationType: "OperationPromotionWithCostPerOrder",
+              operationTypeName: "Продвижение с оплатой за заказ",
+              serviceName: "(remainder)",
+              totalAmount: -2079.48
+            }
+          ],
+          advertisingGroupsByDate: [
+            {
+              date: "2026-05-13",
+              groups: [
+                {
+                  operationType: "OperationMarketplaceCostPerClick",
+                  operationTypeName: "Оплата за клик",
+                  serviceName: "(remainder)",
+                  totalAmount: -1987.68
+                }
+              ]
+            },
+            {
+              date: "2026-05-14",
+              groups: [
+                {
+                  operationType: "OperationPromotionWithCostPerOrder",
+                  operationTypeName: "Продвижение с оплатой за заказ",
+                  serviceName: "(remainder)",
+                  totalAmount: -2079.48
+                }
+              ]
+            }
+          ]
+        }
+      })
     }
   });
 
@@ -681,9 +726,12 @@ async function run() {
   assert.strictEqual(adsDebug.duplicatesRemovedCount, 2);
   assert.strictEqual(adsDebug.financeRowsCount, 2);
   assert.strictEqual(adsDebug.financeSource, "stored");
+  assert.strictEqual(adsDebug.financeBreakdownSource, "live_fetch");
   assert.ok(adsDebug.availableFields.includes("campaignId"));
   assert.ok(adsDebug.availableFields.includes("spend"));
   assert.strictEqual(adsDebug.sampleRows.length, 2);
+  assert.strictEqual(adsDebug.financeBreakdown.periodCount, 2);
+  assert.strictEqual(adsDebug.financeBreakdown.periodTotal, 4067.16);
   assert.ok(adsDebug.warnings.includes("Offer ID attribution unavailable in current Performance rows."));
   assert.deepStrictEqual(adsDebug.reconciliation, [
     {
@@ -693,6 +741,9 @@ async function run() {
       dailyInputAds: 0,
       difference: 0,
       differencePercent: 0,
+      coveredByPerformance: 1987.68,
+      uncoveredFinanceAdvertising: 0,
+      coveragePercent: 100,
       status: "OK",
       warning: ""
     },
@@ -703,6 +754,9 @@ async function run() {
       dailyInputAds: 0,
       difference: 0,
       differencePercent: 0,
+      coveredByPerformance: 2079.48,
+      uncoveredFinanceAdvertising: 0,
+      coveragePercent: 100,
       status: "OK",
       warning: ""
     }
@@ -826,6 +880,9 @@ async function run() {
       dailyInputAds: 0,
       difference: 0,
       differencePercent: 0,
+      coveredByPerformance: 1987.68,
+      uncoveredFinanceAdvertising: 0,
+      coveragePercent: 100,
       status: "OK",
       warning: ""
     },
@@ -836,6 +893,9 @@ async function run() {
       dailyInputAds: 0,
       difference: 0,
       differencePercent: 0,
+      coveredByPerformance: 2079.48,
+      uncoveredFinanceAdvertising: 0,
+      coveragePercent: 100,
       status: "OK",
       warning: ""
     }
@@ -845,8 +905,27 @@ async function run() {
     totalFinanceAdvertisingSpend: 4067.16,
     totalDifference: 0,
     totalDifferencePercent: 0,
+    coveredByPerformance: 4067.16,
+    uncoveredFinanceAdvertising: 0,
+    coveragePercent: 100,
     status: "OK"
   });
+  assert.deepStrictEqual(adsReconcile.financeBreakdown.groups, [
+    {
+      operationType: "OperationPromotionWithCostPerOrder",
+      operationTypeName: "Продвижение с оплатой за заказ",
+      serviceName: "(remainder)",
+      amount: 2079.48,
+      sharePercent: 51.13
+    },
+    {
+      operationType: "OperationMarketplaceCostPerClick",
+      operationTypeName: "Оплата за клик",
+      serviceName: "(remainder)",
+      amount: 1987.68,
+      sharePercent: 48.87
+    }
+  ]);
 
   const adsDiagnosticsOkService = createAdsDiagnosticsService({
     performanceService: {
@@ -867,6 +946,7 @@ async function run() {
   assert.strictEqual(adsReconcileOk.rows[0].status, "OK");
   assert.strictEqual(adsReconcileOk.rows[0].difference, 5);
   assert.strictEqual(adsReconcileOk.rows[0].differencePercent, 5);
+  assert.strictEqual(adsReconcileOk.rows[0].coveragePercent, 100);
   assert.strictEqual(adsReconcileOk.totals.status, "OK");
 
   const adsDiagnosticsMissingAdsService = createAdsDiagnosticsService({
@@ -900,6 +980,97 @@ async function run() {
     dateTo: "2026-05-17"
   });
   assert.strictEqual(adsReconcileMissingFinance.rows[0].status, "MISSING_FINANCE");
+
+  const adsDiagnosticsPartialCoverageService = createAdsDiagnosticsService({
+    performanceService: {
+      getStoredRowsForDateRange: async () => [
+        { date: "2026-05-18", spend: 1987.68, campaignId: "101", sku: "111", impressions: 1000, clicks: 50 }
+      ]
+    },
+    financeFactsService: {
+      getFinanceRowsForDateRange: () => [
+        { date: "2026-05-18", advertising: -46444.35 }
+      ]
+    },
+    ozonService: {
+      getFinanceFacts: async () => ({
+        rows: [{ date: "2026-05-18", advertising: -46444.35 }],
+        diagnostics: {
+          advertisingGroups: [
+            {
+              operationType: "OperationMarketplaceCostPerClick",
+              operationTypeName: "Оплата за клик",
+              serviceName: "(remainder)",
+              totalAmount: -23257
+            },
+            {
+              operationType: "OperationPromotionWithCostPerOrder",
+              operationTypeName: "Продвижение с оплатой за заказ",
+              serviceName: "(remainder)",
+              totalAmount: -11494
+            },
+            {
+              operationType: "MarketplaceServiceBrandCommission",
+              operationTypeName: "Продвижение бренда",
+              serviceName: "(remainder)",
+              totalAmount: -3773
+            },
+            {
+              operationType: "OperationMarketplaceAcceleratedProductReviews",
+              operationTypeName: "Ускоренный сбор отзывов",
+              serviceName: "(remainder)",
+              totalAmount: -7920.35
+            }
+          ],
+          advertisingGroupsByDate: [
+            {
+              date: "2026-05-18",
+              groups: [
+                {
+                  operationType: "OperationMarketplaceCostPerClick",
+                  operationTypeName: "Оплата за клик",
+                  serviceName: "(remainder)",
+                  totalAmount: -23257
+                },
+                {
+                  operationType: "OperationPromotionWithCostPerOrder",
+                  operationTypeName: "Продвижение с оплатой за заказ",
+                  serviceName: "(remainder)",
+                  totalAmount: -11494
+                },
+                {
+                  operationType: "MarketplaceServiceBrandCommission",
+                  operationTypeName: "Продвижение бренда",
+                  serviceName: "(remainder)",
+                  totalAmount: -3773
+                },
+                {
+                  operationType: "OperationMarketplaceAcceleratedProductReviews",
+                  operationTypeName: "Ускоренный сбор отзывов",
+                  serviceName: "(remainder)",
+                  totalAmount: -7920.35
+                }
+              ]
+            }
+          ]
+        }
+      })
+    }
+  });
+  const partialCoverage = await adsDiagnosticsPartialCoverageService.buildReconcile({
+    dateFrom: "2026-05-18",
+    dateTo: "2026-05-18"
+  });
+  assert.strictEqual(partialCoverage.rows[0].financeAdvertisingSpend, 46444.35);
+  assert.strictEqual(partialCoverage.rows[0].status, "PARTIAL_COVERAGE");
+  assert.strictEqual(partialCoverage.rows[0].coveredByPerformance, 1987.68);
+  assert.strictEqual(partialCoverage.rows[0].uncoveredFinanceAdvertising, 44456.67);
+  assert.strictEqual(partialCoverage.rows[0].coveragePercent, 4.28);
+  assert.strictEqual(partialCoverage.totals.status, "PARTIAL_COVERAGE");
+  assert.deepStrictEqual(
+    partialCoverage.financeBreakdown.groups.map(item => item.amount),
+    [23257, 11494, 7920.35, 3773]
+  );
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ollama-bot-cogs-"));
   const cogsService = createCogsService({
