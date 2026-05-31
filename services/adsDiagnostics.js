@@ -80,6 +80,40 @@ function uniqueSorted(items) {
   return Array.from(new Set(items.filter(Boolean))).sort();
 }
 
+function normalizePerformanceRow(row) {
+  return {
+    ...row,
+    date: formatDate(row.date)
+  };
+}
+
+function createPerformanceDedupeKey(row) {
+  return [
+    formatDate(row.date),
+    String(row.campaignId || ""),
+    String(row.sku || ""),
+    round2(row.spend),
+    round2(row.impressions),
+    round2(row.clicks)
+  ].join("|");
+}
+
+function dedupePerformanceRows(rows) {
+  const normalizedRows = rows.map(normalizePerformanceRow);
+  const map = new Map();
+
+  for (const row of normalizedRows) {
+    map.set(createPerformanceDedupeKey(row), row);
+  }
+
+  const dedupedRows = Array.from(map.values());
+  return {
+    normalizedRows,
+    dedupedRows,
+    duplicatesRemovedCount: Math.max(0, normalizedRows.length - dedupedRows.length)
+  };
+}
+
 function getAvailableFields(rows) {
   return uniqueSorted(
     rows.flatMap(row => Object.keys(row || {})).filter(Boolean)
@@ -287,26 +321,43 @@ function summarizeWarnings({ performanceRows, financeRows, availableFields }) {
   return warnings;
 }
 
-function createAdsDiagnosticsService({ financeFactsService, performanceService }) {
+function createAdsDiagnosticsService({ financeFactsService, ozonService, performanceService }) {
   async function loadInputs(dateFrom, dateTo) {
     const performanceRows = await performanceService.getStoredRowsForDateRange(dateFrom, dateTo);
-    const financeRows = financeFactsService.getFinanceRowsForDateRange(dateFrom, dateTo);
-    const availableFields = getAvailableFields(performanceRows);
+    const deduped = dedupePerformanceRows(performanceRows);
+    let financeRows = financeFactsService.getFinanceRowsForDateRange(dateFrom, dateTo);
+    let financeSource = "stored";
+
+    if (!financeRows.length && ozonService && typeof ozonService.getFinanceFacts === "function") {
+      const live = await ozonService.getFinanceFacts({
+        dateFrom: dateFrom + "T00:00:00+03:00",
+        dateTo: dateTo + "T23:59:59.999+03:00"
+      });
+      financeRows = Array.isArray(live?.rows) ? live.rows : [];
+      financeSource = financeRows.length ? "live_fetch" : "live_fetch_empty";
+    }
+
+    const availableFields = getAvailableFields(deduped.dedupedRows);
     const reconciliation = buildReconciliationRows({
       dateFrom,
       dateTo,
-      performanceRows,
+      performanceRows: deduped.dedupedRows,
       financeRows
     });
     const warnings = summarizeWarnings({
-      performanceRows,
+      performanceRows: deduped.dedupedRows,
       financeRows,
       availableFields
     });
 
     return {
-      performanceRows,
+      performanceRows: deduped.dedupedRows,
       financeRows,
+      financeSource,
+      rawRowsCount: performanceRows.length,
+      normalizedRowsCount: deduped.normalizedRows.length,
+      dedupedRowsCount: deduped.dedupedRows.length,
+      duplicatesRemovedCount: deduped.duplicatesRemovedCount,
       availableFields,
       reconciliation,
       warnings
@@ -324,9 +375,12 @@ function createAdsDiagnosticsService({ financeFactsService, performanceService }
         "Performance campaigns endpoint: GET /api/client/campaign",
         "Finance endpoint: POST /v3/finance/transaction/list"
       ],
-      rawRowsCount: loaded.performanceRows.length,
-      normalizedRowsCount: loaded.performanceRows.length,
+      rawRowsCount: loaded.rawRowsCount,
+      normalizedRowsCount: loaded.normalizedRowsCount,
+      dedupedRowsCount: loaded.dedupedRowsCount,
+      duplicatesRemovedCount: loaded.duplicatesRemovedCount,
       financeRowsCount: loaded.financeRows.length,
+      financeSource: loaded.financeSource,
       availableFields: loaded.availableFields,
       sampleRows: loaded.performanceRows.slice(0, 5),
       warnings: loaded.warnings,
@@ -403,6 +457,8 @@ module.exports = {
   aggregateCampaignSummary,
   buildReconciliationRows,
   createAdsDiagnosticsService,
+  dedupePerformanceRows,
   getReconciliationStatus,
+  normalizePerformanceRow,
   summarizeReconciliation
 };

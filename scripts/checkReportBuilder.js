@@ -3,7 +3,8 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const {
-  createAdsDiagnosticsService
+  createAdsDiagnosticsService,
+  dedupePerformanceRows
 } = require("../services/adsDiagnostics");
 const {
   buildPnlSummaryRows,
@@ -554,32 +555,96 @@ async function run() {
     JSON.stringify({ count: 2, firstPostingId: "posting-1", lastPostingId: "posting-2" })
   );
 
+  assert.deepStrictEqual(
+    dedupePerformanceRows([
+      {
+        date: "13.05.2026",
+        campaignId: "101",
+        sku: "111",
+        spend: "1987,68",
+        impressions: 1000,
+        clicks: 50
+      },
+      {
+        date: "2026-05-13",
+        campaignId: "101",
+        sku: "111",
+        spend: 1987.68,
+        impressions: 1000,
+        clicks: 50
+      }
+    ]),
+    {
+      normalizedRows: [
+        {
+          date: "2026-05-13",
+          campaignId: "101",
+          sku: "111",
+          spend: "1987,68",
+          impressions: 1000,
+          clicks: 50
+        },
+        {
+          date: "2026-05-13",
+          campaignId: "101",
+          sku: "111",
+          spend: 1987.68,
+          impressions: 1000,
+          clicks: 50
+        }
+      ],
+      dedupedRows: [
+        {
+          date: "2026-05-13",
+          campaignId: "101",
+          sku: "111",
+          spend: 1987.68,
+          impressions: 1000,
+          clicks: 50
+        }
+      ],
+      duplicatesRemovedCount: 1
+    }
+  );
+
   const adsDiagnosticsService = createAdsDiagnosticsService({
     performanceService: {
       getStoredRowsForDateRange: async () => [
+        {
+          date: "13.05.2026",
+          campaignId: "101",
+          campaignName: "Campaign A",
+          sku: "111",
+          productName: "Товар 1",
+          impressions: 1500,
+          clicks: 70,
+          spend: "1987,68",
+          orders: 3,
+          revenue: 750
+        },
         {
           date: "2026-05-13",
           campaignId: "101",
           campaignName: "Campaign A",
           sku: "111",
           productName: "Товар 1",
-          impressions: 1000,
-          clicks: 50,
-          spend: 120,
-          orders: 2,
-          revenue: 500
+          impressions: 1500,
+          clicks: 70,
+          spend: 1987.68,
+          orders: 3,
+          revenue: 750
         },
         {
-          date: "2026-05-13",
-          campaignId: "101",
-          campaignName: "Campaign A",
-          sku: "222",
-          productName: "Товар 2",
-          impressions: 500,
-          clicks: 20,
-          spend: 30,
-          orders: 1,
-          revenue: 250
+          date: "14.05.2026",
+          campaignId: "202",
+          campaignName: "Campaign B",
+          sku: "333",
+          productName: "Товар 3",
+          impressions: 200,
+          clicks: 10,
+          spend: "2079,48",
+          orders: 2,
+          revenue: 0
         },
         {
           date: "2026-05-14",
@@ -589,17 +654,20 @@ async function run() {
           productName: "Товар 3",
           impressions: 200,
           clicks: 10,
-          spend: 50,
-          orders: 0,
+          spend: 2079.48,
+          orders: 2,
           revenue: 0
         }
       ]
     },
     financeFactsService: {
       getFinanceRowsForDateRange: () => [
-        { date: "2026-05-13", advertising: -120 },
-        { date: "2026-05-14", advertising: -30 }
+        { date: "2026-05-13", advertising: -1987.68 },
+        { date: "2026-05-14", advertising: -2079.48 }
       ]
+    },
+    ozonService: {
+      getFinanceFacts: async () => ({ rows: [] })
     }
   });
 
@@ -607,33 +675,36 @@ async function run() {
     dateFrom: "2026-05-13",
     dateTo: "2026-05-14"
   });
-  assert.strictEqual(adsDebug.rawRowsCount, 3);
-  assert.strictEqual(adsDebug.normalizedRowsCount, 3);
+  assert.strictEqual(adsDebug.rawRowsCount, 4);
+  assert.strictEqual(adsDebug.normalizedRowsCount, 4);
+  assert.strictEqual(adsDebug.dedupedRowsCount, 2);
+  assert.strictEqual(adsDebug.duplicatesRemovedCount, 2);
   assert.strictEqual(adsDebug.financeRowsCount, 2);
+  assert.strictEqual(adsDebug.financeSource, "stored");
   assert.ok(adsDebug.availableFields.includes("campaignId"));
   assert.ok(adsDebug.availableFields.includes("spend"));
-  assert.strictEqual(adsDebug.sampleRows.length, 3);
+  assert.strictEqual(adsDebug.sampleRows.length, 2);
   assert.ok(adsDebug.warnings.includes("Offer ID attribution unavailable in current Performance rows."));
   assert.deepStrictEqual(adsDebug.reconciliation, [
     {
       date: "2026-05-13",
-      adsCabinetSpend: 150,
-      financeAdvertisingSpend: 120,
+      adsCabinetSpend: 1987.68,
+      financeAdvertisingSpend: 1987.68,
       dailyInputAds: 0,
-      difference: 30,
-      differencePercent: 20,
-      status: "WARNING",
-      warning: "Mismatch exceeds tolerance."
+      difference: 0,
+      differencePercent: 0,
+      status: "OK",
+      warning: ""
     },
     {
       date: "2026-05-14",
-      adsCabinetSpend: 50,
-      financeAdvertisingSpend: 30,
+      adsCabinetSpend: 2079.48,
+      financeAdvertisingSpend: 2079.48,
       dailyInputAds: 0,
-      difference: 20,
-      differencePercent: 40,
-      status: "WARNING",
-      warning: "Mismatch exceeds tolerance."
+      difference: 0,
+      differencePercent: 0,
+      status: "OK",
+      warning: ""
     }
   ]);
 
@@ -646,37 +717,51 @@ async function run() {
       date: "2026-05-13",
       impressions: 1500,
       clicks: 70,
-      spend: 150,
+      spend: 1987.68,
       orders: 3,
       revenue: 750,
       ctr: 4.67,
-      cpc: 2.14,
-      drr: 20
+      cpc: 28.4,
+      drr: 265.02
     },
     {
       date: "2026-05-14",
       impressions: 200,
       clicks: 10,
-      spend: 50,
-      orders: 0,
+      spend: 2079.48,
+      orders: 2,
       revenue: 0,
       ctr: 5,
-      cpc: 5,
+      cpc: 207.95,
       drr: 0
     }
   ]);
   assert.deepStrictEqual(adsReport.campaignSummary[0], {
+    campaignId: "202",
+    campaignName: "Campaign B",
+    days: 1,
+    impressions: 200,
+    clicks: 10,
+    spend: 2079.48,
+    orders: 2,
+    revenue: 0,
+    ctr: 5,
+    cpc: 207.95,
+    drr: 0,
+    warnings: ["no revenue attribution"]
+  });
+  assert.deepStrictEqual(adsReport.campaignSummary[1], {
     campaignId: "101",
     campaignName: "Campaign A",
     days: 1,
     impressions: 1500,
     clicks: 70,
-    spend: 150,
+    spend: 1987.68,
     orders: 3,
     revenue: 750,
     ctr: 4.67,
-    cpc: 2.14,
-    drr: 20,
+    cpc: 28.4,
+    drr: 265.02,
     warnings: []
   });
   assert.deepStrictEqual(adsReport.reconciliation, adsDebug.reconciliation);
@@ -686,32 +771,32 @@ async function run() {
   });
   assert.strictEqual(adsCampaigns.campaigns.length, 2);
   assert.deepStrictEqual(adsCampaigns.campaigns[0], {
-    campaignId: "101",
-    campaignName: "Campaign A",
-    days: 1,
-    impressions: 1500,
-    clicks: 70,
-    spend: 150,
-    orders: 3,
-    revenue: 750,
-    ctr: 4.67,
-    cpc: 2.14,
-    drr: 20,
-    warnings: []
-  });
-  assert.deepStrictEqual(adsCampaigns.campaigns[1], {
     campaignId: "202",
     campaignName: "Campaign B",
     days: 1,
     impressions: 200,
     clicks: 10,
-    spend: 50,
-    orders: 0,
+    spend: 2079.48,
+    orders: 2,
     revenue: 0,
     ctr: 5,
-    cpc: 5,
+    cpc: 207.95,
     drr: 0,
-    warnings: ["no revenue attribution", "spend exists but no orders/revenue"]
+    warnings: ["no revenue attribution"]
+  });
+  assert.deepStrictEqual(adsCampaigns.campaigns[1], {
+    campaignId: "101",
+    campaignName: "Campaign A",
+    days: 1,
+    impressions: 1500,
+    clicks: 70,
+    spend: 1987.68,
+    orders: 3,
+    revenue: 750,
+    ctr: 4.67,
+    cpc: 28.4,
+    drr: 265.02,
+    warnings: []
   });
   const adsCampaignsSortingService = createAdsDiagnosticsService({
     performanceService: {
@@ -736,31 +821,31 @@ async function run() {
   assert.deepStrictEqual(adsReconcile.rows, [
     {
       date: "2026-05-13",
-      adsCabinetSpend: 150,
-      financeAdvertisingSpend: 120,
+      adsCabinetSpend: 1987.68,
+      financeAdvertisingSpend: 1987.68,
       dailyInputAds: 0,
-      difference: 30,
-      differencePercent: 20,
-      status: "WARNING",
-      warning: "Mismatch exceeds tolerance."
+      difference: 0,
+      differencePercent: 0,
+      status: "OK",
+      warning: ""
     },
     {
       date: "2026-05-14",
-      adsCabinetSpend: 50,
-      financeAdvertisingSpend: 30,
+      adsCabinetSpend: 2079.48,
+      financeAdvertisingSpend: 2079.48,
       dailyInputAds: 0,
-      difference: 20,
-      differencePercent: 40,
-      status: "WARNING",
-      warning: "Mismatch exceeds tolerance."
+      difference: 0,
+      differencePercent: 0,
+      status: "OK",
+      warning: ""
     }
   ]);
   assert.deepStrictEqual(adsReconcile.totals, {
-    totalAdsCabinetSpend: 200,
-    totalFinanceAdvertisingSpend: 150,
-    totalDifference: 50,
-    totalDifferencePercent: 25,
-    status: "WARNING"
+    totalAdsCabinetSpend: 4067.16,
+    totalFinanceAdvertisingSpend: 4067.16,
+    totalDifference: 0,
+    totalDifferencePercent: 0,
+    status: "OK"
   });
 
   const adsDiagnosticsOkService = createAdsDiagnosticsService({

@@ -101,6 +101,7 @@ const reportBuilderService = createReportBuilderService({
 
 const adsDiagnosticsService = createAdsDiagnosticsService({
   financeFactsService,
+  ozonService,
   performanceService
 });
 
