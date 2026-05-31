@@ -162,7 +162,13 @@ function aggregateCampaignSummary(rows) {
       revenue: round2(item.revenue),
       ctr: item.impressions ? round2((item.clicks / item.impressions) * 100) : 0,
       cpc: item.clicks ? round2(item.spend / item.clicks) : 0,
-      drr: item.revenue ? round2((item.spend / item.revenue) * 100) : 0
+      drr: item.revenue ? round2((item.spend / item.revenue) * 100) : 0,
+      warnings: [
+        item.impressions <= 0 ? "no impressions" : "",
+        item.clicks <= 0 ? "no clicks" : "",
+        item.revenue <= 0 ? "no revenue attribution" : "",
+        item.spend > 0 && item.orders <= 0 && item.revenue <= 0 ? "spend exists but no orders/revenue" : ""
+      ].filter(Boolean)
     }))
     .sort((left, right) => right.spend - left.spend);
 }
@@ -348,6 +354,23 @@ function createAdsDiagnosticsService({ financeFactsService, performanceService }
     };
   }
 
+  async function buildCampaigns({ dateFrom, dateTo }) {
+    const loaded = await loadInputs(dateFrom, dateTo);
+    const campaigns = aggregateCampaignSummary(loaded.performanceRows).slice(0, 20);
+    const warnings = [...loaded.warnings];
+
+    if (!campaigns.length) {
+      warnings.push("Campaign attribution unavailable because no Performance rows were found.");
+    }
+
+    return {
+      dateFrom,
+      dateTo,
+      campaigns,
+      warnings
+    };
+  }
+
   async function buildReconcile({ dateFrom, dateTo }) {
     const loaded = await loadInputs(dateFrom, dateTo);
 
@@ -367,6 +390,7 @@ function createAdsDiagnosticsService({ financeFactsService, performanceService }
   return {
     aggregateByDate,
     aggregateCampaignSummary,
+    buildCampaigns,
     buildDebug,
     buildReconcile,
     buildReconciliationRows,

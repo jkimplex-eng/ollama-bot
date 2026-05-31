@@ -74,6 +74,7 @@ function getHelpText() {
     "/ads debug 2026-05-01 2026-05-14",
     "/ads report 2026-05-01 2026-05-14",
     "/ads reconcile 2026-05-01 2026-05-14",
+    "/ads campaigns 2026-05-01 2026-05-14",
     "/report pnl 2026-05-01 2026-05-14",
     "/report pnl в таблицу 2026-05-01 2026-05-14",
     "/report sku 2026-05-01 2026-05-14",
@@ -338,7 +339,7 @@ function parseAlertsCommand(text) {
 function parseAdsCommand(text) {
   const normalized = text.trim().replace(/\s+/g, " ").toLowerCase();
   const match = normalized.match(
-    /^\/ads\s+(debug|report|reconcile)\s+(\d{4}-\d{2}-\d{2})\s+(\d{4}-\d{2}-\d{2})$/
+    /^\/ads\s+(debug|report|reconcile|campaigns)\s+(\d{4}-\d{2}-\d{2})\s+(\d{4}-\d{2}-\d{2})$/
   );
 
   if (!match) {
@@ -953,6 +954,47 @@ function formatAdsReconcile(report) {
     "Difference %: " + report.totals.totalDifferencePercent,
     "Status: " + report.totals.status
   ];
+
+  if (report.warnings.length) {
+    lines.push("", "Warnings:", ...report.warnings.map(item => "- " + item));
+  }
+
+  return lines.join("\n");
+}
+
+function formatAdsCampaigns(report) {
+  const lines = [
+    "Ads campaigns",
+    "Период: " + report.dateFrom + " -> " + report.dateTo
+  ];
+
+  if (!report.campaigns.length) {
+    lines.push("", "Нет campaign-level Performance rows за период.");
+  } else {
+    lines.push(
+      "",
+      ...report.campaigns.map(item => {
+        const parts = [
+          "Campaign ID: " + (item.campaignId || "-"),
+          "Campaign Name: " + (item.campaignName || "-"),
+          "Spend: " + item.spend,
+          "Impressions: " + item.impressions,
+          "Clicks: " + item.clicks,
+          "CTR: " + item.ctr,
+          "CPC: " + item.cpc,
+          "Orders: " + item.orders,
+          "Revenue: " + item.revenue,
+          "ДРР: " + item.drr
+        ];
+
+        if (item.warnings.length) {
+          parts.push("Warnings: " + item.warnings.join(", "));
+        }
+
+        return parts.join("\n");
+      }).join("\n\n")
+    );
+  }
 
   if (report.warnings.length) {
     lines.push("", "Warnings:", ...report.warnings.map(item => "- " + item));
@@ -2693,6 +2735,12 @@ function startTelegramBot({
           await sendLongMessage(tgBot, chatId, formatAdsReconcile(report));
           return;
         }
+
+        if (adsCommand.type === "campaigns") {
+          const report = await adsDiagnosticsService.buildCampaigns(adsCommand);
+          await sendLongMessage(tgBot, chatId, formatAdsCampaigns(report));
+          return;
+        }
       } catch (err) {
         await tgBot.sendMessage(chatId, "Ошибка ads " + adsCommand.type + ": " + err.message);
         return;
@@ -3028,6 +3076,7 @@ function startTelegramBot({
 
 module.exports = {
   formatAdsDebug,
+  formatAdsCampaigns,
   formatAdsReconcile,
   formatAdsReport,
   formatModelsInfo,

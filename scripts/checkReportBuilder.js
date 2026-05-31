@@ -337,6 +337,11 @@ async function run() {
     dateFrom: "2026-05-01",
     dateTo: "2026-05-14"
   });
+  assert.deepStrictEqual(parseAdsCommand("/ads campaigns 2026-05-01 2026-05-14"), {
+    type: "campaigns",
+    dateFrom: "2026-05-01",
+    dateTo: "2026-05-14"
+  });
   assert.deepStrictEqual(parseDailyControlCommand("/daily control 2026-05-14"), {
     toSheet: false,
     dateInput: "2026-05-14"
@@ -671,9 +676,59 @@ async function run() {
     revenue: 750,
     ctr: 4.67,
     cpc: 2.14,
-    drr: 20
+    drr: 20,
+    warnings: []
   });
   assert.deepStrictEqual(adsReport.reconciliation, adsDebug.reconciliation);
+  const adsCampaigns = await adsDiagnosticsService.buildCampaigns({
+    dateFrom: "2026-05-13",
+    dateTo: "2026-05-14"
+  });
+  assert.strictEqual(adsCampaigns.campaigns.length, 2);
+  assert.deepStrictEqual(adsCampaigns.campaigns[0], {
+    campaignId: "101",
+    campaignName: "Campaign A",
+    days: 1,
+    impressions: 1500,
+    clicks: 70,
+    spend: 150,
+    orders: 3,
+    revenue: 750,
+    ctr: 4.67,
+    cpc: 2.14,
+    drr: 20,
+    warnings: []
+  });
+  assert.deepStrictEqual(adsCampaigns.campaigns[1], {
+    campaignId: "202",
+    campaignName: "Campaign B",
+    days: 1,
+    impressions: 200,
+    clicks: 10,
+    spend: 50,
+    orders: 0,
+    revenue: 0,
+    ctr: 5,
+    cpc: 5,
+    drr: 0,
+    warnings: ["no revenue attribution", "spend exists but no orders/revenue"]
+  });
+  const adsCampaignsSortingService = createAdsDiagnosticsService({
+    performanceService: {
+      getStoredRowsForDateRange: async () => [
+        { date: "2026-05-18", campaignId: "1", campaignName: "Low", spend: 10, impressions: 10, clicks: 1, orders: 0, revenue: 0 },
+        { date: "2026-05-18", campaignId: "2", campaignName: "High", spend: 100, impressions: 100, clicks: 10, orders: 1, revenue: 100 }
+      ]
+    },
+    financeFactsService: {
+      getFinanceRowsForDateRange: () => []
+    }
+  });
+  const sortedCampaigns = await adsCampaignsSortingService.buildCampaigns({
+    dateFrom: "2026-05-18",
+    dateTo: "2026-05-18"
+  });
+  assert.strictEqual(sortedCampaigns.campaigns[0].campaignId, "2");
   const adsReconcile = await adsDiagnosticsService.buildReconcile({
     dateFrom: "2026-05-13",
     dateTo: "2026-05-14"
