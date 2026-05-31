@@ -71,6 +71,8 @@ function getHelpText() {
     "/performance report <uuid>",
     "/performance report status <uuid>",
     "/performance watch <uuid>",
+    "/ads debug 2026-05-01 2026-05-14",
+    "/ads report 2026-05-01 2026-05-14",
     "/report pnl 2026-05-01 2026-05-14",
     "/report pnl в таблицу 2026-05-01 2026-05-14",
     "/report sku 2026-05-01 2026-05-14",
@@ -330,6 +332,23 @@ function parseAlertsCommand(text) {
   const normalized = text.trim().replace(/\s+/g, " ").toLowerCase();
   const match = normalized.match(/^\/alerts\s+(status|run|stop|settings|on|off)$/);
   return match ? match[1] : null;
+}
+
+function parseAdsCommand(text) {
+  const normalized = text.trim().replace(/\s+/g, " ").toLowerCase();
+  const match = normalized.match(
+    /^\/ads\s+(debug|report)\s+(\d{4}-\d{2}-\d{2})\s+(\d{4}-\d{2}-\d{2})$/
+  );
+
+  if (!match) {
+    return null;
+  }
+
+  return {
+    type: match[1],
+    dateFrom: match[2],
+    dateTo: match[3]
+  };
 }
 
 function isCoderCommand(text) {
@@ -898,6 +917,114 @@ function formatManagementDailyDebug(debug) {
   ].join("\n");
 }
 
+function formatAdsReconciliationRows(rows) {
+  const lines = [
+    "Date | Ads Cabinet Spend | Finance Advertising | Difference | Status"
+  ];
+
+  for (const row of rows) {
+    lines.push(
+      [
+        row.date,
+        row.adsCabinetSpend,
+        row.financeAdvertisingSpend,
+        row.difference,
+        row.status
+      ].join(" | ")
+    );
+  }
+
+  return lines.join("\n");
+}
+
+function formatAdsDebug(debug) {
+  const lines = [
+    "Ads debug",
+    "Период: " + debug.dateFrom + " -> " + debug.dateTo,
+    "",
+    "Endpoint used:",
+    ...debug.endpoints.map(item => "- " + item),
+    "",
+    "Raw rows count: " + debug.rawRowsCount,
+    "Normalized rows count: " + debug.normalizedRowsCount,
+    "Finance rows count: " + debug.financeRowsCount,
+    "Available fields: " + (debug.availableFields.join(", ") || "-"),
+    "",
+    "Sample first rows:",
+    ...(debug.sampleRows.length
+      ? debug.sampleRows.map(row => JSON.stringify(row, null, 2))
+      : ["No Performance rows found."]),
+    "",
+    "Reconciliation:",
+    formatAdsReconciliationRows(debug.reconciliation)
+  ];
+
+  if (debug.warnings.length) {
+    lines.push("", "Warnings:", ...debug.warnings.map(item => "- " + item));
+  }
+
+  return lines.join("\n");
+}
+
+function formatAdsReport(report) {
+  const lines = [
+    "Ads report",
+    "Период: " + report.dateFrom + " -> " + report.dateTo,
+    "",
+    "Campaign/day summary:"
+  ];
+
+  if (!report.dailySummary.length) {
+    lines.push("Нет локальных Performance rows за период.");
+  } else {
+    lines.push(
+      ...report.dailySummary.map(item =>
+        [
+          item.date,
+          "Spend: " + item.spend,
+          "Impressions: " + item.impressions,
+          "Clicks: " + item.clicks,
+          "CTR: " + item.ctr,
+          "CPC: " + item.cpc,
+          "Orders: " + item.orders,
+          "Revenue: " + item.revenue,
+          "ДРР: " + item.drr
+        ].join(" | ")
+      )
+    );
+  }
+
+  lines.push("", "Campaign summary:");
+  if (!report.campaignSummary.length) {
+    lines.push("Campaign attribution unavailable.");
+  } else {
+    lines.push(
+      ...report.campaignSummary.slice(0, 10).map(item =>
+        [
+          item.campaignId || "-",
+          item.campaignName || "-",
+          "Spend: " + item.spend,
+          "Impr: " + item.impressions,
+          "Clicks: " + item.clicks,
+          "CTR: " + item.ctr,
+          "CPC: " + item.cpc,
+          "Orders: " + item.orders,
+          "Revenue: " + item.revenue,
+          "ДРР: " + item.drr
+        ].join(" | ")
+      )
+    );
+  }
+
+  lines.push("", "Reconciliation:", formatAdsReconciliationRows(report.reconciliation));
+
+  if (report.warnings.length) {
+    lines.push("", "Warnings:", ...report.warnings.map(item => "- " + item));
+  }
+
+  return lines.join("\n");
+}
+
 function formatManagementMonthResult(result, type) {
   return [
     "Management " + type + " " + result.month,
@@ -1448,6 +1575,7 @@ async function sendLongMessage(bot, chatId, text) {
 }
 
 function startTelegramBot({
+  adsDiagnosticsService,
   analyticsService,
   alertsService,
   cogsService,
@@ -2520,6 +2648,27 @@ function startTelegramBot({
       }
     }
 
+    const adsCommand = parseAdsCommand(text);
+
+    if (adsCommand) {
+      try {
+        if (adsCommand.type === "debug") {
+          const debug = await adsDiagnosticsService.buildDebug(adsCommand);
+          await sendLongMessage(tgBot, chatId, formatAdsDebug(debug));
+          return;
+        }
+
+        if (adsCommand.type === "report") {
+          const report = await adsDiagnosticsService.buildReport(adsCommand);
+          await sendLongMessage(tgBot, chatId, formatAdsReport(report));
+          return;
+        }
+      } catch (err) {
+        await tgBot.sendMessage(chatId, "Ошибка ads " + adsCommand.type + ": " + err.message);
+        return;
+      }
+    }
+
     const prioritySkuCommand = parsePrioritySkuCommand(text);
 
     if (prioritySkuCommand) {
@@ -2848,11 +2997,14 @@ function startTelegramBot({
 }
 
 module.exports = {
+  formatAdsDebug,
+  formatAdsReport,
   formatModelsInfo,
   formatOzonProducts,
   formatPerformanceRows,
   getHelpText,
   isCoderCommand,
+  parseAdsCommand,
   parseAiCommand,
   parseAlertsCommand,
   parseAnalyticsCommand,

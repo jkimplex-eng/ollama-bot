@@ -3,6 +3,9 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const {
+  createAdsDiagnosticsService
+} = require("../services/adsDiagnostics");
+const {
   buildPnlSummaryRows,
   buildSkuDashboardRows,
   buildPnlFormatting,
@@ -28,6 +31,7 @@ const {
   MAX_BACKFILL_DAYS
 } = require("../services/managementWorkbook");
 const {
+  parseAdsCommand,
   parseAlertsCommand,
   parseCogsCommand,
   parseDailyControlCommand,
@@ -318,6 +322,16 @@ async function run() {
     dateFrom: "2026-05-01",
     dateTo: "2026-05-14"
   });
+  assert.deepStrictEqual(parseAdsCommand("/ads debug 2026-05-01 2026-05-14"), {
+    type: "debug",
+    dateFrom: "2026-05-01",
+    dateTo: "2026-05-14"
+  });
+  assert.deepStrictEqual(parseAdsCommand("/ads report 2026-05-01 2026-05-14"), {
+    type: "report",
+    dateFrom: "2026-05-01",
+    dateTo: "2026-05-14"
+  });
   assert.deepStrictEqual(parseDailyControlCommand("/daily control 2026-05-14"), {
     toSheet: false,
     dateInput: "2026-05-14"
@@ -529,6 +543,132 @@ async function run() {
     getPageSignature([{ posting_number: "posting-1" }, { posting_number: "posting-2" }]),
     JSON.stringify({ count: 2, firstPostingId: "posting-1", lastPostingId: "posting-2" })
   );
+
+  const adsDiagnosticsService = createAdsDiagnosticsService({
+    performanceService: {
+      getStoredRowsForDateRange: async () => [
+        {
+          date: "2026-05-13",
+          campaignId: "101",
+          campaignName: "Campaign A",
+          sku: "111",
+          productName: "Товар 1",
+          impressions: 1000,
+          clicks: 50,
+          spend: 120,
+          orders: 2,
+          revenue: 500
+        },
+        {
+          date: "2026-05-13",
+          campaignId: "101",
+          campaignName: "Campaign A",
+          sku: "222",
+          productName: "Товар 2",
+          impressions: 500,
+          clicks: 20,
+          spend: 30,
+          orders: 1,
+          revenue: 250
+        },
+        {
+          date: "2026-05-14",
+          campaignId: "202",
+          campaignName: "Campaign B",
+          sku: "333",
+          productName: "Товар 3",
+          impressions: 200,
+          clicks: 10,
+          spend: 50,
+          orders: 0,
+          revenue: 0
+        }
+      ]
+    },
+    financeFactsService: {
+      getFinanceRowsForDateRange: () => [
+        { date: "2026-05-13", advertising: -120 },
+        { date: "2026-05-14", advertising: -30 }
+      ]
+    }
+  });
+
+  const adsDebug = await adsDiagnosticsService.buildDebug({
+    dateFrom: "2026-05-13",
+    dateTo: "2026-05-14"
+  });
+  assert.strictEqual(adsDebug.rawRowsCount, 3);
+  assert.strictEqual(adsDebug.normalizedRowsCount, 3);
+  assert.strictEqual(adsDebug.financeRowsCount, 2);
+  assert.ok(adsDebug.availableFields.includes("campaignId"));
+  assert.ok(adsDebug.availableFields.includes("spend"));
+  assert.strictEqual(adsDebug.sampleRows.length, 3);
+  assert.ok(adsDebug.warnings.includes("Offer ID attribution unavailable in current Performance rows."));
+  assert.deepStrictEqual(adsDebug.reconciliation, [
+    {
+      date: "2026-05-13",
+      adsCabinetSpend: 150,
+      financeAdvertisingSpend: 120,
+      dailyInputAds: 0,
+      difference: 30,
+      tolerance: 1,
+      status: "WARNING",
+      warning: "Mismatch exceeds tolerance."
+    },
+    {
+      date: "2026-05-14",
+      adsCabinetSpend: 50,
+      financeAdvertisingSpend: 30,
+      dailyInputAds: 0,
+      difference: 20,
+      tolerance: 1,
+      status: "WARNING",
+      warning: "Mismatch exceeds tolerance."
+    }
+  ]);
+
+  const adsReport = await adsDiagnosticsService.buildReport({
+    dateFrom: "2026-05-13",
+    dateTo: "2026-05-14"
+  });
+  assert.deepStrictEqual(adsReport.dailySummary, [
+    {
+      date: "2026-05-13",
+      impressions: 1500,
+      clicks: 70,
+      spend: 150,
+      orders: 3,
+      revenue: 750,
+      ctr: 4.67,
+      cpc: 2.14,
+      drr: 20
+    },
+    {
+      date: "2026-05-14",
+      impressions: 200,
+      clicks: 10,
+      spend: 50,
+      orders: 0,
+      revenue: 0,
+      ctr: 5,
+      cpc: 5,
+      drr: 0
+    }
+  ]);
+  assert.deepStrictEqual(adsReport.campaignSummary[0], {
+    campaignId: "101",
+    campaignName: "Campaign A",
+    days: 1,
+    impressions: 1500,
+    clicks: 70,
+    spend: 150,
+    orders: 3,
+    revenue: 750,
+    ctr: 4.67,
+    cpc: 2.14,
+    drr: 20
+  });
+  assert.deepStrictEqual(adsReport.reconciliation, adsDebug.reconciliation);
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ollama-bot-cogs-"));
   const cogsService = createCogsService({

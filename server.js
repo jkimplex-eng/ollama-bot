@@ -2,6 +2,7 @@ const express = require("express");
 const env = require("./config/env");
 const { createApiRouter, createFileState } = require("./routes/api");
 const { createAnalyticsService } = require("./services/analytics");
+const { createAdsDiagnosticsService } = require("./services/adsDiagnostics");
 const { createAlertsService } = require("./services/alerts");
 const { createCalendarService } = require("./services/calendar");
 const { createCogsService } = require("./services/cogs");
@@ -96,6 +97,11 @@ const reportBuilderService = createReportBuilderService({
   performanceService,
   salesFactsService,
   sheetsService
+});
+
+const adsDiagnosticsService = createAdsDiagnosticsService({
+  financeFactsService,
+  performanceService
 });
 
 const dailyControlService = createDailyControlService({
@@ -214,6 +220,7 @@ app.use(
 );
 
 const activeTelegramService = startTelegramBot({
+  adsDiagnosticsService,
   analyticsService,
   alertsService,
   cogsService,
