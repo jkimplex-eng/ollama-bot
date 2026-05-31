@@ -215,6 +215,53 @@ function aggregateCampaignSummary(rows) {
     .sort((left, right) => right.spend - left.spend);
 }
 
+function aggregateSkuSummary(rows) {
+  const bySku = new Map();
+
+  for (const row of rows) {
+    const sku = String(row.sku || "");
+    const key = sku || "unknown";
+    const current = bySku.get(key) || {
+      sku,
+      productName: row.productName || "",
+      impressions: 0,
+      clicks: 0,
+      spend: 0,
+      orders: 0,
+      revenue: 0
+    };
+
+    current.productName = current.productName || row.productName || "";
+    current.impressions += toNumber(row.impressions);
+    current.clicks += toNumber(row.clicks);
+    current.spend += toNumber(row.spend);
+    current.orders += toNumber(row.orders);
+    current.revenue += toNumber(row.revenue);
+    bySku.set(key, current);
+  }
+
+  return Array.from(bySku.values())
+    .map(item => ({
+      sku: item.sku || "",
+      productName: item.productName || "",
+      spend: round2(item.spend),
+      impressions: item.impressions,
+      clicks: item.clicks,
+      orders: round2(item.orders),
+      revenue: round2(item.revenue),
+      ctr: item.impressions ? round2((item.clicks / item.impressions) * 100) : 0,
+      cpc: item.clicks ? round2(item.spend / item.clicks) : 0,
+      drr: item.revenue ? round2((item.spend / item.revenue) * 100) : 0,
+      warnings: [
+        item.impressions <= 0 ? "no impressions" : "",
+        item.clicks <= 0 ? "no clicks" : "",
+        item.revenue <= 0 ? "no revenue attribution" : "",
+        item.spend > 0 && item.orders <= 0 && item.revenue <= 0 ? "spend exists but no orders/revenue" : ""
+      ].filter(Boolean)
+    }))
+    .sort((left, right) => right.spend - left.spend);
+}
+
 function buildReconciliationRows({ dateFrom, dateTo, performanceRows, financeRows, dailyInputAdsByDate = new Map() }) {
   const dates = listDates(dateFrom, dateTo);
   const financeAdvertisingByDate = new Map(
@@ -514,6 +561,26 @@ function createAdsDiagnosticsService({ financeFactsService, ozonService, perform
     };
   }
 
+  async function buildSku({ dateFrom, dateTo }) {
+    const loaded = await loadInputs(dateFrom, dateTo);
+    const skuRows = aggregateSkuSummary(loaded.performanceRows).slice(0, 30);
+    const warnings = [...loaded.warnings];
+
+    if (!skuRows.length) {
+      warnings.push("SKU attribution unavailable because no Performance rows were found.");
+    }
+    if (!loaded.availableFields.includes("offerId")) {
+      warnings.push("Offer ID attribution unavailable in current Performance rows.");
+    }
+
+    return {
+      dateFrom,
+      dateTo,
+      skuRows,
+      warnings
+    };
+  }
+
   async function buildReconcile({ dateFrom, dateTo }) {
     const loaded = await loadInputs(dateFrom, dateTo);
 
@@ -534,17 +601,20 @@ function createAdsDiagnosticsService({ financeFactsService, ozonService, perform
   return {
     aggregateByDate,
     aggregateCampaignSummary,
+    aggregateSkuSummary,
     buildCampaigns,
     buildDebug,
     buildReconcile,
     buildReconciliationRows,
-    buildReport
+    buildReport,
+    buildSku
   };
 }
 
 module.exports = {
   aggregateByDate,
   aggregateCampaignSummary,
+  aggregateSkuSummary,
   buildReconciliationRows,
   createAdsDiagnosticsService,
   dedupePerformanceRows,

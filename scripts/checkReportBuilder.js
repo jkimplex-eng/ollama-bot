@@ -343,6 +343,11 @@ async function run() {
     dateFrom: "2026-05-01",
     dateTo: "2026-05-14"
   });
+  assert.deepStrictEqual(parseAdsCommand("/ads sku 2026-05-01 2026-05-14"), {
+    type: "sku",
+    dateFrom: "2026-05-01",
+    dateTo: "2026-05-14"
+  });
   assert.deepStrictEqual(parseDailyControlCommand("/daily control 2026-05-14"), {
     toSheet: false,
     dateInput: "2026-05-14"
@@ -845,6 +850,38 @@ async function run() {
     impressions: 1500,
     clicks: 70,
     spend: 1987.68,
+    orders: 3,
+    revenue: 750,
+    ctr: 4.67,
+    cpc: 28.4,
+    drr: 265.02,
+    warnings: []
+  });
+  const adsSku = await adsDiagnosticsService.buildSku({
+    dateFrom: "2026-05-13",
+    dateTo: "2026-05-14"
+  });
+  assert.strictEqual(adsSku.skuRows.length, 2);
+  assert.ok(adsSku.warnings.includes("Offer ID attribution unavailable in current Performance rows."));
+  assert.deepStrictEqual(adsSku.skuRows[0], {
+    sku: "333",
+    productName: "Товар 3",
+    spend: 2079.48,
+    impressions: 200,
+    clicks: 10,
+    orders: 2,
+    revenue: 0,
+    ctr: 5,
+    cpc: 207.95,
+    drr: 0,
+    warnings: ["no revenue attribution"]
+  });
+  assert.deepStrictEqual(adsSku.skuRows[1], {
+    sku: "111",
+    productName: "Товар 1",
+    spend: 1987.68,
+    impressions: 1500,
+    clicks: 70,
     orders: 3,
     revenue: 750,
     ctr: 4.67,
