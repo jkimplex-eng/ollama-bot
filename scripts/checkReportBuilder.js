@@ -32,6 +32,8 @@ const {
   MAX_BACKFILL_DAYS
 } = require("../services/managementWorkbook");
 const {
+  formatAdsCampaigns,
+  formatAdsSku,
   parseAdsCommand,
   parseAlertsCommand,
   parseCogsCommand,
@@ -42,6 +44,7 @@ const {
   parseReportCommand,
   parseSalesCommand
 } = require("../services/telegram");
+const { splitMessageByLines } = require("../services/telegram");
 const { createCogsService, parseBulkImportText } = require("../services/cogs");
 const { createFinanceFactsService } = require("../services/financeFacts");
 const {
@@ -857,6 +860,9 @@ async function run() {
     drr: 265.02,
     warnings: []
   });
+  const adsCampaignsText = formatAdsCampaigns(adsCampaigns);
+  assert.ok(adsCampaignsText.includes("Campaign ID: 202"));
+  assert.ok(!adsCampaignsText.includes("C\na\nm\np\na\ni\ng\nn"));
   const adsSku = await adsDiagnosticsService.buildSku({
     dateFrom: "2026-05-13",
     dateTo: "2026-05-14"
@@ -889,6 +895,11 @@ async function run() {
     drr: 265.02,
     warnings: []
   });
+  const adsSkuText = formatAdsSku(adsSku);
+  assert.ok(adsSkuText.includes("SKU: 333"));
+  assert.ok(!adsSkuText.includes("S\nK\nU"));
+  assert.ok(!adsSkuText.includes("P\nr\no\nd\u0075\u0063\u0074"));
+  assert.ok(adsSkuText.includes("- Offer ID attribution unavailable in current Performance rows."));
   const adsCampaignsSortingService = createAdsDiagnosticsService({
     performanceService: {
       getStoredRowsForDateRange: async () => [
@@ -905,6 +916,35 @@ async function run() {
     dateTo: "2026-05-18"
   });
   assert.strictEqual(sortedCampaigns.campaigns[0].campaignId, "2");
+  const adsSkuLongOutput = formatAdsSku({
+    dateFrom: "2026-05-13",
+    dateTo: "2026-05-14",
+    skuRows: Array.from({ length: 25 }, (_, index) => ({
+      sku: String(index + 1),
+      productName: "Очень длинное название товара " + String(index + 1).padStart(2, "0") + " ".repeat(80),
+      spend: 1000 - index,
+      impressions: 10000,
+      clicks: 100,
+      ctr: 1,
+      cpc: 10,
+      orders: 0,
+      revenue: 0,
+      drr: 0,
+      warnings: ["no revenue attribution"]
+    })),
+    warnings: []
+  });
+  const adsSkuChunks = splitMessageByLines(adsSkuLongOutput, 3500);
+  assert.ok(adsSkuChunks.length > 1);
+  assert.ok(adsSkuChunks.every(chunk => chunk.length <= 3500));
+  assert.ok(adsSkuChunks.every(chunk => chunk.includes("SKU:") || chunk.includes("Ads sku")));
+  const emptyAdsSkuText = formatAdsSku({
+    dateFrom: "2026-05-13",
+    dateTo: "2026-05-14",
+    skuRows: [],
+    warnings: []
+  });
+  assert.ok(emptyAdsSkuText.includes("No ads SKU rows found."));
   const adsReconcile = await adsDiagnosticsService.buildReconcile({
     dateFrom: "2026-05-13",
     dateTo: "2026-05-14"

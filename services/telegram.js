@@ -4,6 +4,7 @@ const { parseDailyCommand } = require("./dailySummary");
 
 const OZON_PRODUCTS_SHEET = "products";
 const TELEGRAM_MESSAGE_LIMIT = 4000;
+const SAFE_TELEGRAM_CHUNK_LIMIT = 3500;
 
 function getHelpText() {
   return [
@@ -1002,9 +1003,9 @@ function formatAdsCampaigns(report) {
   if (!report.campaigns.length) {
     lines.push("", "Нет campaign-level Performance rows за период.");
   } else {
+    lines.push("");
     lines.push(
-      "",
-      ...report.campaigns.map(item => {
+      report.campaigns.map(item => {
         const parts = [
           "Campaign ID: " + (item.campaignId || "-"),
           "Campaign Name: " + (item.campaignName || "-"),
@@ -1041,11 +1042,11 @@ function formatAdsSku(report) {
   ];
 
   if (!report.skuRows.length) {
-    lines.push("", "Нет SKU-level Performance rows за период.");
+    lines.push("", "No ads SKU rows found.");
   } else {
+    lines.push("");
     lines.push(
-      "",
-      ...report.skuRows.map(item => {
+      report.skuRows.map(item => {
         const parts = [
           "SKU: " + (item.sku || "-"),
           "Product Name: " + (item.productName || "-"),
@@ -1724,19 +1725,72 @@ function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+async function safeSendMessage(bot, chatId, text) {
+  try {
+    await bot.sendMessage(chatId, text);
+    return true;
+  } catch (err) {
+    console.log("[telegram] sendMessage failed", {
+      chatId,
+      message: err?.message || String(err)
+    });
+    return false;
+  }
+}
+
+function splitMessageByLines(text, maxChunkLength = SAFE_TELEGRAM_CHUNK_LIMIT) {
+  const normalized = String(text || "");
+  if (!normalized) {
+    return ["Нет ответа."];
+  }
+
+  const chunks = [];
+  const lines = normalized.split("\n");
+  let current = "";
+
+  for (const line of lines) {
+    const candidate = current ? current + "\n" + line : line;
+    if (candidate.length <= maxChunkLength) {
+      current = candidate;
+      continue;
+    }
+
+    if (current) {
+      chunks.push(current);
+      current = "";
+    }
+
+    if (line.length <= maxChunkLength) {
+      current = line;
+      continue;
+    }
+
+    for (let index = 0; index < line.length; index += maxChunkLength) {
+      chunks.push(line.slice(index, index + maxChunkLength));
+    }
+  }
+
+  if (current) {
+    chunks.push(current);
+  }
+
+  return chunks.length ? chunks : ["Нет ответа."];
+}
+
 async function sendLongMessage(bot, chatId, text) {
-  const parts = [];
-
-  for (let index = 0; index < text.length; index += TELEGRAM_MESSAGE_LIMIT) {
-    parts.push(text.slice(index, index + TELEGRAM_MESSAGE_LIMIT));
-  }
-
-  if (!parts.length) {
-    parts.push("Нет ответа.");
-  }
+  const parts = splitMessageByLines(text, SAFE_TELEGRAM_CHUNK_LIMIT);
+  let failed = false;
 
   for (const part of parts) {
-    await bot.sendMessage(chatId, part);
+    const ok = await safeSendMessage(bot, chatId, part);
+    if (!ok) {
+      failed = true;
+      break;
+    }
+  }
+
+  if (failed) {
+    throw new Error("Не удалось отправить сообщение в Telegram.");
   }
 }
 
@@ -2848,7 +2902,7 @@ function startTelegramBot({
           return;
         }
       } catch (err) {
-        await tgBot.sendMessage(chatId, "Ошибка ads " + adsCommand.type + ": " + err.message);
+        await safeSendMessage(tgBot, chatId, "Ошибка ads " + adsCommand.type + ": " + err.message);
         return;
       }
     }
@@ -3210,5 +3264,6 @@ module.exports = {
   parseWarehouseMappingCommand,
   productToSheetRow,
   sendLongMessage,
+  splitMessageByLines,
   startTelegramBot
 };

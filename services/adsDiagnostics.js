@@ -563,7 +563,7 @@ function createAdsDiagnosticsService({ financeFactsService, ozonService, perform
 
   async function buildSku({ dateFrom, dateTo }) {
     const loaded = await loadInputs(dateFrom, dateTo);
-    const skuRows = aggregateSkuSummary(loaded.performanceRows).slice(0, 30);
+    const skuRows = aggregateSkuSummary(loaded.performanceRows).slice(0, 20);
     const warnings = [...loaded.warnings];
 
     if (!skuRows.length) {
