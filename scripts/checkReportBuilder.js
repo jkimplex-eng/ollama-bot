@@ -332,6 +332,11 @@ async function run() {
     dateFrom: "2026-05-01",
     dateTo: "2026-05-14"
   });
+  assert.deepStrictEqual(parseAdsCommand("/ads reconcile 2026-05-01 2026-05-14"), {
+    type: "reconcile",
+    dateFrom: "2026-05-01",
+    dateTo: "2026-05-14"
+  });
   assert.deepStrictEqual(parseDailyControlCommand("/daily control 2026-05-14"), {
     toSheet: false,
     dateInput: "2026-05-14"
@@ -611,7 +616,7 @@ async function run() {
       financeAdvertisingSpend: 120,
       dailyInputAds: 0,
       difference: 30,
-      tolerance: 1,
+      differencePercent: 20,
       status: "WARNING",
       warning: "Mismatch exceeds tolerance."
     },
@@ -621,7 +626,7 @@ async function run() {
       financeAdvertisingSpend: 30,
       dailyInputAds: 0,
       difference: 20,
-      tolerance: 1,
+      differencePercent: 40,
       status: "WARNING",
       warning: "Mismatch exceeds tolerance."
     }
@@ -669,6 +674,92 @@ async function run() {
     drr: 20
   });
   assert.deepStrictEqual(adsReport.reconciliation, adsDebug.reconciliation);
+  const adsReconcile = await adsDiagnosticsService.buildReconcile({
+    dateFrom: "2026-05-13",
+    dateTo: "2026-05-14"
+  });
+  assert.deepStrictEqual(adsReconcile.rows, [
+    {
+      date: "2026-05-13",
+      adsCabinetSpend: 150,
+      financeAdvertisingSpend: 120,
+      dailyInputAds: 0,
+      difference: 30,
+      differencePercent: 20,
+      status: "WARNING",
+      warning: "Mismatch exceeds tolerance."
+    },
+    {
+      date: "2026-05-14",
+      adsCabinetSpend: 50,
+      financeAdvertisingSpend: 30,
+      dailyInputAds: 0,
+      difference: 20,
+      differencePercent: 40,
+      status: "WARNING",
+      warning: "Mismatch exceeds tolerance."
+    }
+  ]);
+  assert.deepStrictEqual(adsReconcile.totals, {
+    totalAdsCabinetSpend: 200,
+    totalFinanceAdvertisingSpend: 150,
+    totalDifference: 50,
+    totalDifferencePercent: 25,
+    status: "WARNING"
+  });
+
+  const adsDiagnosticsOkService = createAdsDiagnosticsService({
+    performanceService: {
+      getStoredRowsForDateRange: async () => [
+        { date: "2026-05-15", spend: 100 }
+      ]
+    },
+    financeFactsService: {
+      getFinanceRowsForDateRange: () => [
+        { date: "2026-05-15", advertising: -95 }
+      ]
+    }
+  });
+  const adsReconcileOk = await adsDiagnosticsOkService.buildReconcile({
+    dateFrom: "2026-05-15",
+    dateTo: "2026-05-15"
+  });
+  assert.strictEqual(adsReconcileOk.rows[0].status, "OK");
+  assert.strictEqual(adsReconcileOk.rows[0].difference, 5);
+  assert.strictEqual(adsReconcileOk.rows[0].differencePercent, 5);
+  assert.strictEqual(adsReconcileOk.totals.status, "OK");
+
+  const adsDiagnosticsMissingAdsService = createAdsDiagnosticsService({
+    performanceService: {
+      getStoredRowsForDateRange: async () => []
+    },
+    financeFactsService: {
+      getFinanceRowsForDateRange: () => [
+        { date: "2026-05-16", advertising: -50 }
+      ]
+    }
+  });
+  const adsReconcileMissingAds = await adsDiagnosticsMissingAdsService.buildReconcile({
+    dateFrom: "2026-05-16",
+    dateTo: "2026-05-16"
+  });
+  assert.strictEqual(adsReconcileMissingAds.rows[0].status, "MISSING_ADS");
+
+  const adsDiagnosticsMissingFinanceService = createAdsDiagnosticsService({
+    performanceService: {
+      getStoredRowsForDateRange: async () => [
+        { date: "2026-05-17", spend: 75 }
+      ]
+    },
+    financeFactsService: {
+      getFinanceRowsForDateRange: () => []
+    }
+  });
+  const adsReconcileMissingFinance = await adsDiagnosticsMissingFinanceService.buildReconcile({
+    dateFrom: "2026-05-17",
+    dateTo: "2026-05-17"
+  });
+  assert.strictEqual(adsReconcileMissingFinance.rows[0].status, "MISSING_FINANCE");
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ollama-bot-cogs-"));
   const cogsService = createCogsService({

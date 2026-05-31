@@ -37,6 +37,32 @@ function round2(value) {
   return Number(toNumber(value).toFixed(2));
 }
 
+function getReconciliationStatus(adsCabinetSpend, financeAdvertisingSpend) {
+  const hasAds = adsCabinetSpend > 0;
+  const hasFinance = financeAdvertisingSpend > 0;
+
+  if (!hasAds && hasFinance) {
+    return "MISSING_ADS";
+  }
+
+  if (hasAds && !hasFinance) {
+    return "MISSING_FINANCE";
+  }
+
+  if (!hasAds && !hasFinance) {
+    return "OK";
+  }
+
+  const difference = Math.abs(adsCabinetSpend - financeAdvertisingSpend);
+  const differencePercent = adsCabinetSpend
+    ? (difference / adsCabinetSpend) * 100
+    : financeAdvertisingSpend
+      ? 100
+      : 0;
+
+  return difference <= 10 || differencePercent <= 1 ? "OK" : "WARNING";
+}
+
 function listDates(dateFrom, dateTo) {
   const dates = [];
   const current = new Date(dateFrom + "T00:00:00Z");
@@ -169,8 +195,9 @@ function buildReconciliationRows({ dateFrom, dateTo, performanceRows, financeRow
     const financeAdvertisingSpend = round2(financeAdvertisingByDate.get(date) || 0);
     const dailyInputAds = round2(dailyInputAdsByDate.get(date) || 0);
     const difference = round2(adsCabinetSpend - financeAdvertisingSpend);
-    const tolerance = round2(Math.max(1, Math.abs(adsCabinetSpend) * 0.005, Math.abs(financeAdvertisingSpend) * 0.005));
-    const mismatch = Math.abs(difference) > tolerance;
+    const denominator = adsCabinetSpend || financeAdvertisingSpend || 0;
+    const differencePercent = denominator ? round2((Math.abs(difference) / denominator) * 100) : 0;
+    const status = getReconciliationStatus(adsCabinetSpend, financeAdvertisingSpend);
 
     return {
       date,
@@ -178,11 +205,48 @@ function buildReconciliationRows({ dateFrom, dateTo, performanceRows, financeRow
       financeAdvertisingSpend,
       dailyInputAds,
       difference,
-      tolerance,
-      status: mismatch ? "WARNING" : "OK",
-      warning: mismatch ? "Mismatch exceeds tolerance." : ""
+      differencePercent,
+      status,
+      warning:
+        status === "WARNING"
+          ? "Mismatch exceeds tolerance."
+          : status === "MISSING_ADS"
+            ? "Ads cabinet spend missing."
+            : status === "MISSING_FINANCE"
+              ? "Finance advertising missing."
+              : ""
     };
   });
+}
+
+function summarizeReconciliation(rows) {
+  const totals = rows.reduce(
+    (acc, row) => {
+      acc.adsCabinetSpend += toNumber(row.adsCabinetSpend);
+      acc.financeAdvertisingSpend += toNumber(row.financeAdvertisingSpend);
+      return acc;
+    },
+    {
+      adsCabinetSpend: 0,
+      financeAdvertisingSpend: 0
+    }
+  );
+
+  const totalAdsCabinetSpend = round2(totals.adsCabinetSpend);
+  const totalFinanceAdvertisingSpend = round2(totals.financeAdvertisingSpend);
+  const totalDifference = round2(totalAdsCabinetSpend - totalFinanceAdvertisingSpend);
+  const denominator = totalAdsCabinetSpend || totalFinanceAdvertisingSpend || 0;
+  const totalDifferencePercent = denominator
+    ? round2((Math.abs(totalDifference) / denominator) * 100)
+    : 0;
+
+  return {
+    totalAdsCabinetSpend,
+    totalFinanceAdvertisingSpend,
+    totalDifference,
+    totalDifferencePercent,
+    status: getReconciliationStatus(totalAdsCabinetSpend, totalFinanceAdvertisingSpend)
+  };
 }
 
 function summarizeWarnings({ performanceRows, financeRows, availableFields }) {
@@ -284,10 +348,27 @@ function createAdsDiagnosticsService({ financeFactsService, performanceService }
     };
   }
 
+  async function buildReconcile({ dateFrom, dateTo }) {
+    const loaded = await loadInputs(dateFrom, dateTo);
+
+    return {
+      dateFrom,
+      dateTo,
+      rows: loaded.reconciliation,
+      totals: summarizeReconciliation(loaded.reconciliation),
+      warnings: loaded.warnings.filter(
+        item =>
+          item === "Нет локальных Performance rows за период." ||
+          item === "Нет finance advertising за период."
+      )
+    };
+  }
+
   return {
     aggregateByDate,
     aggregateCampaignSummary,
     buildDebug,
+    buildReconcile,
     buildReconciliationRows,
     buildReport
   };
@@ -297,5 +378,7 @@ module.exports = {
   aggregateByDate,
   aggregateCampaignSummary,
   buildReconciliationRows,
-  createAdsDiagnosticsService
+  createAdsDiagnosticsService,
+  getReconciliationStatus,
+  summarizeReconciliation
 };
