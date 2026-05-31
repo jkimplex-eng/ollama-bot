@@ -168,6 +168,7 @@ const decisionEngine = createDecisionEngine({
 });
 
 const alertsService = createAlertsService({
+  enabled: env.alerts.enabled,
   intervalMs: env.alerts.intervalMs,
   jobsService,
   lowStockThreshold: env.alerts.lowStockThreshold,

@@ -55,6 +55,7 @@ async function loadPerformanceAlertStats(performanceService, logger = console) {
 }
 
 function createAlertsService({
+  enabled = true,
   intervalMs = 60 * 60 * 1000,
   jobsService,
   lowStockThreshold = 5,
@@ -69,6 +70,7 @@ function createAlertsService({
   let notifier = onAlert;
   let timer = null;
   let running = false;
+  let schedulerEnabled = enabled !== false;
 
   function writeLog(level, message, extra = {}) {
     ensureParentDir(logFile);
@@ -269,6 +271,10 @@ function createAlertsService({
   }
 
   function start() {
+    if (!schedulerEnabled) {
+      writeLog("info", "Alerts scheduler start skipped because alerts are disabled");
+      return;
+    }
     if (running) return;
 
     running = true;
@@ -295,10 +301,28 @@ function createAlertsService({
     writeLog("info", "Alerts scheduler stopped");
   }
 
+  function setEnabled(value) {
+    schedulerEnabled = value !== false;
+    if (!schedulerEnabled) {
+      stop();
+      return {
+        enabled: false,
+        running: false
+      };
+    }
+
+    start();
+    return {
+      enabled: true,
+      running
+    };
+  }
+
   function getStatus() {
     const state = loadState();
 
     return {
+      enabled: schedulerEnabled,
       running,
       intervalMs,
       lowStockThreshold,
@@ -312,6 +336,7 @@ function createAlertsService({
   function formatStatus() {
     const status = getStatus();
     return [
+      "Alerts enabled: " + (status.enabled ? "yes" : "no"),
       "Alerts: " + (status.running ? "running" : "stopped"),
       "Interval: " + status.intervalMs,
       "Low stock threshold: " + status.lowStockThreshold,
@@ -335,6 +360,7 @@ function createAlertsService({
     formatStatus,
     getStatus,
     runChecks,
+    setEnabled,
     setNotifier: nextNotifier => {
       notifier = typeof nextNotifier === "function" ? nextNotifier : notifier;
     },

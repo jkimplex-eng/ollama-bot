@@ -27,7 +27,16 @@ const {
   getDailyInputSheetName,
   MAX_BACKFILL_DAYS
 } = require("../services/managementWorkbook");
-const { parseCogsCommand, parseDailyControlCommand, parseFinanceCommand, parseManagementCommand, parseReplenishmentCommand, parseReportCommand, parseSalesCommand } = require("../services/telegram");
+const {
+  parseAlertsCommand,
+  parseCogsCommand,
+  parseDailyControlCommand,
+  parseFinanceCommand,
+  parseManagementCommand,
+  parseReplenishmentCommand,
+  parseReportCommand,
+  parseSalesCommand
+} = require("../services/telegram");
 const { createCogsService, parseBulkImportText } = require("../services/cogs");
 const { createFinanceFactsService } = require("../services/financeFacts");
 const {
@@ -481,6 +490,10 @@ async function run() {
     dateFrom: "2026-05-13",
     dateTo: "2026-05-14"
   });
+  assert.strictEqual(parseAlertsCommand("/alerts status"), "status");
+  assert.strictEqual(parseAlertsCommand("/alerts on"), "on");
+  assert.strictEqual(parseAlertsCommand("/alerts off"), "off");
+  assert.strictEqual(parseAlertsCommand("/alerts run"), "run");
   assert.deepStrictEqual(parseReplenishmentCommand("/replenishment forecast 2026-05-13 2026-05-14"), {
     type: "forecast",
     toSheet: false,
@@ -1376,6 +1389,7 @@ async function run() {
   const alertsTempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ollama-bot-alerts-"));
   const alertsMessages = [];
   const alertsService = createAlertsService({
+    enabled: false,
     intervalMs: 1000,
     jobsService: null,
     lowStockThreshold: 5,
@@ -1396,6 +1410,12 @@ async function run() {
   const alertRun = await alertsService.runChecks();
   assert.strictEqual(alertRun.error, undefined);
   assert.ok(Array.isArray(alertRun.alerts));
+  assert.ok(alertsService.formatStatus().includes("Alerts enabled: no"));
+  const enabledState = alertsService.setEnabled(true);
+  assert.strictEqual(enabledState.enabled, true);
+  assert.ok(alertsService.formatStatus().includes("Alerts enabled: yes"));
+  const disabledState = alertsService.setEnabled(false);
+  assert.strictEqual(disabledState.enabled, false);
 
   const jobsTempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ollama-bot-jobs-"));
   const jobWrites = [];

@@ -113,6 +113,8 @@ function getHelpText() {
     "/ai закупка",
     "/ai реклама",
     "/alerts status",
+    "/alerts on",
+    "/alerts off",
     "/alerts run",
     "/alerts stop",
     "/alerts settings",
@@ -326,7 +328,7 @@ function parseManagementCommand(text) {
 
 function parseAlertsCommand(text) {
   const normalized = text.trim().replace(/\s+/g, " ").toLowerCase();
-  const match = normalized.match(/^\/alerts\s+(status|run|stop|settings)$/);
+  const match = normalized.match(/^\/alerts\s+(status|run|stop|settings|on|off)$/);
   return match ? match[1] : null;
 }
 
@@ -1589,6 +1591,18 @@ function startTelegramBot({
     if (alertsCommand === "stop") {
       alertsService.stop();
       await tgBot.sendMessage(chatId, "Alerts остановлены.");
+      return;
+    }
+
+    if (alertsCommand === "off") {
+      alertsService.setEnabled(false);
+      await tgBot.sendMessage(chatId, "Alerts отключены.");
+      return;
+    }
+
+    if (alertsCommand === "on") {
+      alertsService.setEnabled(true);
+      await tgBot.sendMessage(chatId, "Alerts включены.");
       return;
     }
 
