@@ -34,6 +34,7 @@ const {
 const {
   formatAdsCampaigns,
   formatAdsFactors,
+  formatAdsFactorsDebug,
   formatAdsSku,
   parseAdsCommand,
   parseAlertsCommand,
@@ -364,6 +365,11 @@ async function run() {
   });
   assert.deepStrictEqual(parseAdsCommand("/ads factors 2026-05-01 2026-05-14"), {
     type: "factors",
+    dateFrom: "2026-05-01",
+    dateTo: "2026-05-14"
+  });
+  assert.deepStrictEqual(parseAdsCommand("/ads factors debug 2026-05-01 2026-05-14"), {
+    type: "factors_debug",
     dateFrom: "2026-05-01",
     dateTo: "2026-05-14"
   });
@@ -1247,6 +1253,13 @@ async function run() {
       getFinanceRowsForDateRange: () => [{ date: "2026-05-18", advertising: -400 }]
     },
     ozonService: {
+      getProducts: async () => [
+        {
+          sku: "111",
+          offerId: "SJ11",
+          name: "Товар 1"
+        }
+      ],
       getFinanceFacts: async () => ({
         rows: [{ date: "2026-05-18", advertising: -400 }],
         diagnostics: {
@@ -1313,8 +1326,12 @@ async function run() {
     dateTo: "2026-05-18"
   });
   assert.strictEqual(factorReport.rows.length, 1);
+  assert.strictEqual(factorReport.rows[0].offerId, "SJ11");
   assert.strictEqual(factorReport.rows[0].grossProfitEstimate, 3600);
   assert.strictEqual(factorReport.rows[0].cogs, 100);
+  assert.strictEqual(factorReport.rows[0].organicSalesQuantity, 10);
+  assert.strictEqual(factorReport.rows[0].salesRevenue, 5000);
+  assert.strictEqual(factorReport.rows[0].salesRowsMatched, 1);
   assert.strictEqual(factorReport.rows[0].stockRisk, "low stock");
   assert.strictEqual(factorReport.rows[0].prioritySku, true);
   assert.strictEqual(factorReport.rows[0].externalTraffic, true);
@@ -1322,9 +1339,32 @@ async function run() {
   assert.strictEqual(factorReport.rows[0].confidence, "HIGH");
   assert.strictEqual(factorReport.rows[0].economics, "positive");
   assert.strictEqual(factorReport.rows[0].dataQuality, "reliable");
+  assert.strictEqual(factorReport.rows[0].attribution.offerIdSource, "product_catalog");
+  assert.strictEqual(factorReport.rows[0].attribution.salesMatchSource, "sku");
   assert.ok(formatAdsFactors(factorReport).includes("Confidence: HIGH"));
+  assert.ok(formatAdsFactors(factorReport).includes("Offer ID: SJ11"));
+  assert.ok(
+    formatAdsFactors(factorReport).includes("Economics Note: gross profit estimate excludes commission/logistics")
+  );
+
+  const factorDebug = await factorAdsService.buildFactorsDebug({
+    dateFrom: "2026-05-18",
+    dateTo: "2026-05-18"
+  });
+  assert.strictEqual(factorDebug.rows[0].offerId, "SJ11");
+  assert.strictEqual(factorDebug.rows[0].attribution.offerIdSource, "product_catalog");
+  assert.strictEqual(factorDebug.rows[0].attribution.salesMatchSource, "sku");
+  assert.ok(formatAdsFactorsDebug(factorDebug).includes("Resolved Offer ID: SJ11"));
+  assert.ok(formatAdsFactorsDebug(factorDebug).includes("offerIdSource=product_catalog"));
+  assert.ok(formatAdsFactorsDebug(factorDebug).includes("salesMatchSource=sku"));
 
   const factorMissingCogsService = createAdsDiagnosticsService({
+    cogsService: {
+      resolveCogs: () => null
+    },
+    externalTrafficPlanService: {
+      getPlan: () => null
+    },
     financeFactsService: {
       getFinanceRowsForDateRange: () => [{ date: "2026-05-18", advertising: -1000 }]
     },
@@ -1333,6 +1373,13 @@ async function run() {
         rows: [{ date: "2026-05-18", advertising: -1000 }],
         diagnostics: { advertisingGroups: [], advertisingGroupsByDate: [] }
       }),
+      getProducts: async () => [
+        {
+          sku: "222",
+          offerId: "SJ222",
+          name: "Товар 2"
+        }
+      ],
       getNormalizedStockRows: async () => {
         throw new Error("stocks unavailable");
       }
@@ -1354,20 +1401,106 @@ async function run() {
       ]
     },
     salesFactsService: {
-      getSalesRowsForDateRange: () => []
+      getSalesRowsForDateRange: () => [
+        {
+          date: "2026-05-18",
+          sku: "999",
+          offerId: "sj222",
+          productName: "Товар 2",
+          quantity: 5,
+          revenue: 3000
+        }
+      ]
+    },
+    prioritySkusService: {
+      list: () => []
     }
   });
   const factorMissing = await factorMissingCogsService.buildFactors({
     dateFrom: "2026-05-18",
     dateTo: "2026-05-18"
   });
+  assert.strictEqual(factorMissing.rows[0].offerId, "SJ222");
   assert.strictEqual(factorMissing.rows[0].cogs, null);
   assert.strictEqual(factorMissing.rows[0].economics, "unknown");
   assert.strictEqual(factorMissing.rows[0].stockRisk, "unknown stock");
+  assert.strictEqual(factorMissing.rows[0].salesRowsMatched, 1);
+  assert.strictEqual(factorMissing.rows[0].salesRevenue, 3000);
+  assert.strictEqual(factorMissing.rows[0].organicSalesQuantity, 5);
   assert.strictEqual(factorMissing.rows[0].coverageStatus, "PARTIALLY_COVERED");
   assert.strictEqual(factorMissing.rows[0].confidence, "LOW");
+  assert.strictEqual(factorMissing.rows[0].attribution.salesMatchSource, "offerId-case-insensitive");
   assert.ok(factorMissing.rows[0].warnings.includes("COGS unknown"));
   assert.ok(factorMissing.rows[0].warnings.includes("stock unknown"));
+
+  const factorMediumConfidenceService = createAdsDiagnosticsService({
+    cogsService: {
+      resolveCogs: () => ({
+        match: { cogs: 200, logisticsToMp: 0, offerId: "SJ333" },
+        source: "offerId-case-insensitive"
+      })
+    },
+    externalTrafficPlanService: {
+      getPlan: () => null
+    },
+    financeFactsService: {
+      getFinanceRowsForDateRange: () => [{ date: "2026-05-18", advertising: -500 }]
+    },
+    ozonService: {
+      getFinanceFacts: async () => ({
+        rows: [{ date: "2026-05-18", advertising: -500 }],
+        diagnostics: { advertisingGroups: [], advertisingGroupsByDate: [] }
+      }),
+      getProducts: async () => [
+        {
+          sku: "333",
+          offerId: "SJ333",
+          name: "Товар 3"
+        }
+      ],
+      getNormalizedStockRows: async () => {
+        throw new Error("stocks unavailable");
+      }
+    },
+    performanceService: {
+      getStoredRowsForDateRange: async () => [
+        {
+          date: "2026-05-18",
+          campaignId: "303",
+          campaignName: "Campaign C",
+          sku: "333",
+          productName: "Товар 3",
+          spend: 500,
+          impressions: 300,
+          clicks: 12,
+          orders: 4,
+          revenue: 3200
+        }
+      ]
+    },
+    salesFactsService: {
+      getSalesRowsForDateRange: () => [
+        {
+          date: "2026-05-18",
+          sku: "333",
+          offerId: "SJ333",
+          productName: "Товар 3",
+          quantity: 4,
+          revenue: 3200
+        }
+      ]
+    },
+    prioritySkusService: {
+      list: () => []
+    }
+  });
+  const factorMedium = await factorMediumConfidenceService.buildFactors({
+    dateFrom: "2026-05-18",
+    dateTo: "2026-05-18"
+  });
+  assert.strictEqual(factorMedium.rows[0].grossProfitEstimate, 1900);
+  assert.strictEqual(factorMedium.rows[0].confidence, "MEDIUM");
+  assert.strictEqual(factorMedium.rows[0].stockRisk, "unknown stock");
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ollama-bot-cogs-"));
   const cogsService = createCogsService({

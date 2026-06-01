@@ -78,6 +78,7 @@ function getHelpText() {
     "/ads gaps 2026-05-01 2026-05-14",
     "/ads gaps debug 2026-05-01 2026-05-14",
     "/ads factors 2026-05-01 2026-05-14",
+    "/ads factors debug 2026-05-01 2026-05-14",
     "/ads campaigns 2026-05-01 2026-05-14",
     "/ads sku 2026-05-01 2026-05-14",
     "/report pnl 2026-05-01 2026-05-14",
@@ -352,6 +353,18 @@ function parseAdsCommand(text) {
       type: "gaps_debug",
       dateFrom: gapsDebugMatch[1],
       dateTo: gapsDebugMatch[2]
+    };
+  }
+
+  const factorsDebugMatch = normalized.match(
+    /^\/ads\s+factors\s+debug\s+(\d{4}-\d{2}-\d{2})\s+(\d{4}-\d{2}-\d{2})$/
+  );
+
+  if (factorsDebugMatch) {
+    return {
+      type: "factors_debug",
+      dateFrom: factorsDebugMatch[1],
+      dateTo: factorsDebugMatch[2]
     };
   }
 
@@ -1275,6 +1288,7 @@ function formatAdsFactors(report) {
           "Product Name: " + (item.productName || "-"),
           "Campaign ID: " + (item.campaignId || "-"),
           "Campaign Name: " + (item.campaignName || "-"),
+          "Offer ID: " + (item.offerId || "unknown"),
           "Spend: " + item.spend,
           "Impressions: " + item.impressions,
           "Clicks: " + item.clicks,
@@ -1283,6 +1297,9 @@ function formatAdsFactors(report) {
           "Orders: " + item.orders,
           "Revenue: " + item.revenue,
           "ДРР: " + item.drr,
+          "Organic / Total Sales Quantity: " + item.organicSalesQuantity,
+          "Sales Revenue: " + item.salesRevenue,
+          "Sales Rows Matched: " + item.salesRowsMatched,
           "Gross Profit Estimate: " + (item.grossProfitEstimate === null ? "unknown" : item.grossProfitEstimate),
           "COGS: " + (item.cogs === null ? "unknown" : item.cogs),
           "Stock Status: " + item.stockRisk,
@@ -1297,10 +1314,61 @@ function formatAdsFactors(report) {
           "Confidence: " + item.confidence
         ];
 
+        if (item.grossProfitEstimateNote) {
+          parts.push("Economics Note: " + item.grossProfitEstimateNote);
+        }
+
         if (item.warnings.length) {
           parts.push("Warnings: " + item.warnings.join(", "));
         }
 
+        return parts.join("\n");
+      }).join("\n\n")
+    );
+  }
+
+  if (report.warnings.length) {
+    lines.push("", "Warnings:", ...report.warnings.map(item => "- " + item));
+  }
+
+  return lines.join("\n");
+}
+
+function formatAdsFactorsDebug(report) {
+  const lines = [
+    "Ads factors debug",
+    "Период: " + report.dateFrom + " -> " + report.dateTo,
+    "Product source: " + (report.productSource || "unavailable"),
+    "Stock source: " + (report.stockSource || "unavailable"),
+    ""
+  ];
+
+  if (!report.rows.length) {
+    lines.push("No ads factor rows found.");
+  } else {
+    lines.push(
+      report.rows.map(item => {
+        const parts = [
+          "SKU: " + (item.sku || "-"),
+          "Resolved Offer ID: " + (item.offerId || "unknown"),
+          "Product Name: " + (item.productName || "unknown"),
+          "Campaign ID: " + (item.campaignId || "-"),
+          "Sales Rows Matched: " + item.salesRowsMatched,
+          "Sales Revenue: " + item.salesRevenue,
+          "Organic / Total Sales Quantity: " + item.organicSalesQuantity,
+          "COGS: " + (item.cogs === null ? "unknown" : item.cogs),
+          "Coverage Status: " + item.coverageStatus,
+          "Confidence: " + item.confidence,
+          "Attribution: " +
+            [
+              "ads sku=" + (item.attribution.adsSku || "-"),
+              "offerIdSource=" + (item.attribution.offerIdSource || "none"),
+              "salesMatchSource=" + (item.attribution.salesMatchSource || "none"),
+              "cogsSource=" + (item.attribution.cogsSource || "none"),
+              "stockSource=" + (item.attribution.stockSource || "none"),
+              "productSource=" + (item.attribution.productSource || "none")
+            ].join(", ")
+        ];
         return parts.join("\n");
       }).join("\n\n")
     );
@@ -3088,6 +3156,12 @@ function startTelegramBot({
           return;
         }
 
+        if (adsCommand.type === "factors_debug") {
+          const report = await adsDiagnosticsService.buildFactorsDebug(adsCommand);
+          await sendLongMessage(tgBot, chatId, formatAdsFactorsDebug(report));
+          return;
+        }
+
         if (adsCommand.type === "campaigns") {
           const report = await adsDiagnosticsService.buildCampaigns(adsCommand);
           await sendLongMessage(tgBot, chatId, formatAdsCampaigns(report));
@@ -3439,6 +3513,7 @@ module.exports = {
   formatAdsGaps,
   formatAdsGapsDebug,
   formatAdsFactors,
+  formatAdsFactorsDebug,
   formatAdsReconcile,
   formatAdsReport,
   formatModelsInfo,

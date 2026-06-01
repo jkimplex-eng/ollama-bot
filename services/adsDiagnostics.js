@@ -582,6 +582,127 @@ function buildStockIndex(stockRows) {
   return { bySku, byOfferId };
 }
 
+function buildProductIndex(products) {
+  const bySku = new Map();
+  const byOfferId = new Map();
+
+  for (const product of products || []) {
+    const sku = String(product?.sku || "").trim();
+    const offerId = String(product?.offerId || "").trim();
+    if (sku) {
+      bySku.set(sku, product);
+    }
+    if (offerId) {
+      byOfferId.set(offerId.toLowerCase(), product);
+    }
+  }
+
+  return { bySku, byOfferId };
+}
+
+function buildSalesIndex(rows) {
+  const bySku = new Map();
+  const byOfferId = new Map();
+
+  for (const row of rows || []) {
+    const sku = String(row?.sku || "").trim();
+    const offerId = String(row?.offerId || "").trim();
+    const next = current => {
+      const item = current || {
+        quantity: 0,
+        revenue: 0,
+        rowsMatched: 0,
+        offerId,
+        sku,
+        productName: String(row?.productName || "")
+      };
+      item.quantity += toNumber(row?.quantity);
+      item.revenue += toNumber(row?.revenue);
+      item.rowsMatched += 1;
+      item.offerId = item.offerId || offerId;
+      item.sku = item.sku || sku;
+      item.productName = item.productName || String(row?.productName || "");
+      return item;
+    };
+
+    if (sku) {
+      bySku.set(sku, next(bySku.get(sku)));
+    }
+    if (offerId) {
+      const offerIdKey = offerId.toLowerCase();
+      byOfferId.set(offerIdKey, next(byOfferId.get(offerIdKey)));
+    }
+  }
+
+  return { bySku, byOfferId };
+}
+
+function resolveSliceIdentity(slice, productIndex, salesIndex, cogsService) {
+  const sku = String(slice?.sku || "").trim();
+  const rawOfferId = String(slice?.offerId || "").trim();
+  const productBySku = sku ? productIndex.bySku.get(sku) : null;
+  const productByOfferId = rawOfferId ? productIndex.byOfferId.get(rawOfferId.toLowerCase()) : null;
+  const salesBySku = sku ? salesIndex.bySku.get(sku) : null;
+  const salesByOfferId = rawOfferId ? salesIndex.byOfferId.get(rawOfferId.toLowerCase()) : null;
+  const cogsResolved = cogsService ? cogsService.resolveCogs(sku, rawOfferId) : null;
+  const cogsEntry = cogsResolved ? cogsResolved.match : null;
+
+  const resolvedOfferId =
+    rawOfferId ||
+    String(productBySku?.offerId || "") ||
+    String(salesBySku?.offerId || "") ||
+    String(cogsEntry?.offerId || "") ||
+    "";
+  const resolvedOfferIdKey = resolvedOfferId.toLowerCase();
+  const product =
+    productBySku ||
+    productByOfferId ||
+    (resolvedOfferIdKey ? productIndex.byOfferId.get(resolvedOfferIdKey) : null) ||
+    null;
+  const salesMatch =
+    salesBySku ||
+    salesByOfferId ||
+    (resolvedOfferIdKey ? salesIndex.byOfferId.get(resolvedOfferIdKey) : null) ||
+    null;
+  const productName =
+    String(slice?.productName || "") ||
+    String(product?.name || "") ||
+    String(salesMatch?.productName || "") ||
+    "";
+
+  let offerIdSource = "none";
+  if (rawOfferId) {
+    offerIdSource = "ads_row";
+  } else if (productBySku?.offerId) {
+    offerIdSource = "product_catalog";
+  } else if (salesBySku?.offerId) {
+    offerIdSource = "sales_facts_sku";
+  } else if (cogsEntry?.offerId) {
+    offerIdSource = cogsResolved.source;
+  }
+
+  let salesMatchSource = "none";
+  if (salesBySku) {
+    salesMatchSource = "sku";
+  } else if (rawOfferId && salesByOfferId) {
+    salesMatchSource = "offerId";
+  } else if (resolvedOfferIdKey && salesIndex.byOfferId.get(resolvedOfferIdKey)) {
+    salesMatchSource = "offerId-case-insensitive";
+  }
+
+  return {
+    sku,
+    offerId: resolvedOfferId,
+    offerIdSource,
+    product,
+    productName,
+    salesMatch,
+    salesMatchSource,
+    cogsResolved,
+    cogsEntry
+  };
+}
+
 function getMonthFromDate(dateValue) {
   return formatDate(dateValue).slice(0, 7);
 }
@@ -991,8 +1112,6 @@ function createAdsDiagnosticsService({
     const totals = summarizeReconciliation(loaded.reconciliation);
     const factorSlices = aggregateFactorSlices(loaded.performanceRows);
     const salesRows = salesFactsService ? salesFactsService.getSalesRowsForDateRange(dateFrom, dateTo) : [];
-    const salesBySku = new Map();
-    const salesByOfferId = new Map();
     const days = Math.max(1, listDates(dateFrom, dateTo).length);
     const warnings = [...loaded.warnings];
     const month = getMonthFromDate(dateFrom);
@@ -1002,22 +1121,17 @@ function createAdsDiagnosticsService({
     const prioritySkus = new Set(priorityItems.map(item => String(item.sku || "").trim()).filter(Boolean));
     let stockRows = [];
     let stockSource = "unavailable";
+    let products = [];
+    let productSource = "unavailable";
 
-    for (const row of salesRows) {
-      const sku = String(row.sku || "").trim();
-      const offerIdKey = String(row.offerId || "").trim().toLowerCase();
-      const nextSku = salesBySku.get(sku) || { quantity: 0, revenue: 0, offerId: row.offerId || "" };
-      const nextOffer = salesByOfferId.get(offerIdKey) || { quantity: 0, revenue: 0, sku: row.sku || "" };
-      nextSku.quantity += toNumber(row.quantity);
-      nextSku.revenue += toNumber(row.revenue);
-      nextOffer.quantity += toNumber(row.quantity);
-      nextOffer.revenue += toNumber(row.revenue);
-      if (sku) {
-        salesBySku.set(sku, nextSku);
+    try {
+      if (ozonService && typeof ozonService.getProducts === "function") {
+        products = await ozonService.getProducts(1000);
+        productSource = "product_catalog";
       }
-      if (offerIdKey) {
-        salesByOfferId.set(offerIdKey, nextOffer);
-      }
+    } catch (err) {
+      warnings.push("Product catalog unavailable for ads factors: " + (err.userMessage || err.message));
+      productSource = "unavailable";
     }
 
     try {
@@ -1032,13 +1146,15 @@ function createAdsDiagnosticsService({
     }
 
     const stockIndex = buildStockIndex(stockRows);
+    const productIndex = buildProductIndex(products);
+    const salesIndex = buildSalesIndex(salesRows);
     const rows = factorSlices.slice(0, 20).map(slice => {
-      const sku = String(slice.sku || "").trim();
-      const offerId = String(slice.offerId || "").trim();
+      const identity = resolveSliceIdentity(slice, productIndex, salesIndex, cogsService);
+      const sku = identity.sku;
+      const offerId = identity.offerId;
       const offerIdKey = offerId.toLowerCase();
-      const salesFact = (sku && salesBySku.get(sku)) || (offerIdKey && salesByOfferId.get(offerIdKey)) || null;
-      const cogsResolved = cogsService ? cogsService.resolveCogs(sku, offerId || salesFact?.offerId) : null;
-      const cogsEntry = cogsResolved ? cogsResolved.match : null;
+      const salesFact = identity.salesMatch;
+      const cogsEntry = identity.cogsEntry;
       const cogsValue = cogsEntry ? toNumber(cogsEntry.cogs) : null;
       const stockAvailable =
         (sku && stockIndex.bySku.has(sku) ? stockIndex.bySku.get(sku) : null) ??
@@ -1046,8 +1162,8 @@ function createAdsDiagnosticsService({
       const prioritySku = prioritySkus.has(sku) || priorityOfferIdKeys.has(offerIdKey);
       const externalTraffic = Boolean(prioritySku && trafficPlan && toNumber(trafficPlan.budget) > 0);
       const grossProfitEstimate =
-        cogsValue !== null && toNumber(slice.revenue) > 0
-          ? round2(toNumber(slice.revenue) - toNumber(slice.spend) - cogsValue * toNumber(slice.orders))
+        cogsValue !== null && salesFact && toNumber(salesFact.revenue) > 0
+          ? round2(toNumber(salesFact.revenue) - toNumber(slice.spend) - cogsValue * toNumber(salesFact.quantity))
           : null;
       const coverageStatus = getCoverageStatusForSlice(slice, totals);
       const stockRisk = classifyStockRisk(stockAvailable, salesFact?.quantity || 0, days);
@@ -1073,10 +1189,10 @@ function createAdsDiagnosticsService({
 
       return {
         sku,
-        productName: slice.productName || "unknown",
+        offerId,
+        productName: identity.productName || "unknown",
         campaignId: slice.campaignId || "",
         campaignName: slice.campaignName || "",
-        offerId: offerId || (salesFact?.offerId || ""),
         spend: slice.spend,
         impressions: slice.impressions,
         clicks: slice.clicks,
@@ -1085,7 +1201,12 @@ function createAdsDiagnosticsService({
         orders: slice.orders,
         revenue: slice.revenue,
         drr: slice.drr,
+        organicSalesQuantity: salesFact ? round2(salesFact.quantity) : 0,
+        salesRevenue: salesFact ? round2(salesFact.revenue) : 0,
+        salesRowsMatched: salesFact ? salesFact.rowsMatched : 0,
         grossProfitEstimate,
+        grossProfitEstimateNote:
+          grossProfitEstimate !== null ? "gross profit estimate excludes commission/logistics" : "",
         cogs: cogsValue,
         stockAvailable,
         prioritySku,
@@ -1098,6 +1219,15 @@ function createAdsDiagnosticsService({
         stockRisk,
         dataQuality,
         confidence: getConfidenceLevel({ hasAds, hasSales, hasCogs, hasStock }),
+        attribution: {
+          adsSku: sku,
+          resolvedOfferId: offerId,
+          offerIdSource: identity.offerIdSource,
+          salesMatchSource: identity.salesMatchSource,
+          cogsSource: identity.cogsResolved ? identity.cogsResolved.source : "none",
+          stockSource: stockAvailable !== null && stockAvailable !== undefined ? stockSource : "none",
+          productSource
+        },
         warnings: warningsForRow
       };
     });
@@ -1107,7 +1237,32 @@ function createAdsDiagnosticsService({
       dateTo,
       rows,
       stockSource,
+      productSource,
       warnings
+    };
+  }
+
+  async function buildFactorsDebug({ dateFrom, dateTo }) {
+    const report = await buildFactors({ dateFrom, dateTo });
+    return {
+      dateFrom,
+      dateTo,
+      stockSource: report.stockSource,
+      productSource: report.productSource,
+      rows: report.rows.map(item => ({
+        sku: item.sku,
+        offerId: item.offerId,
+        productName: item.productName,
+        campaignId: item.campaignId,
+        salesRowsMatched: item.salesRowsMatched,
+        salesRevenue: item.salesRevenue,
+        organicSalesQuantity: item.organicSalesQuantity,
+        cogs: item.cogs,
+        coverageStatus: item.coverageStatus,
+        confidence: item.confidence,
+        attribution: item.attribution
+      })),
+      warnings: report.warnings
     };
   }
 
@@ -1119,6 +1274,7 @@ function createAdsDiagnosticsService({
     buildCampaigns,
     buildDebug,
     buildFactors,
+    buildFactorsDebug,
     buildGaps,
     buildGapsDebug,
     buildReconcile,
