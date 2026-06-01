@@ -33,6 +33,7 @@ const {
 } = require("../services/managementWorkbook");
 const {
   formatAdsCampaigns,
+  formatAdsFactors,
   formatAdsSku,
   parseAdsCommand,
   parseAlertsCommand,
@@ -358,6 +359,11 @@ async function run() {
   });
   assert.deepStrictEqual(parseAdsCommand("/ads gaps debug 2026-05-01 2026-05-14"), {
     type: "gaps_debug",
+    dateFrom: "2026-05-01",
+    dateTo: "2026-05-14"
+  });
+  assert.deepStrictEqual(parseAdsCommand("/ads factors 2026-05-01 2026-05-14"), {
+    type: "factors",
     dateFrom: "2026-05-01",
     dateTo: "2026-05-14"
   });
@@ -1207,6 +1213,161 @@ async function run() {
   assert.ok(
     adsGapsDebug.recommendations.includes("Brand promotion costs are not attributable.")
   );
+
+  const factorTempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ollama-bot-ads-factors-"));
+  const factorCogsService = createCogsService({
+    filePath: path.join(factorTempDir, "cogs.json")
+  });
+  factorCogsService.setSku("111", 100, { logisticsToMp: 10, offerId: "SJ11" });
+
+  const factorSalesFactsService = createSalesFactsService({
+    filePath: path.join(factorTempDir, "sales.json")
+  });
+  factorSalesFactsService.saveSalesRows(
+    [
+      {
+        date: "2026-05-18",
+        sku: "111",
+        offerId: "SJ11",
+        productName: "Товар 1",
+        quantity: 10,
+        revenue: 5000,
+        price: 500
+      }
+    ],
+    { source: "test" }
+  );
+
+  const factorAdsService = createAdsDiagnosticsService({
+    cogsService: factorCogsService,
+    externalTrafficPlanService: {
+      getPlan: month => (month === "2026-05" ? { month, budget: 200000, coefficient: 2, targetCity: "Москва" } : null)
+    },
+    financeFactsService: {
+      getFinanceRowsForDateRange: () => [{ date: "2026-05-18", advertising: -400 }]
+    },
+    ozonService: {
+      getFinanceFacts: async () => ({
+        rows: [{ date: "2026-05-18", advertising: -400 }],
+        diagnostics: {
+          advertisingGroups: [
+            {
+              operationType: "OperationMarketplaceCostPerClick",
+              operationTypeName: "Оплата за клик",
+              serviceName: "(remainder)",
+              totalAmount: -400
+            }
+          ],
+          advertisingGroupsByDate: [
+            {
+              date: "2026-05-18",
+              groups: [
+                {
+                  operationType: "OperationMarketplaceCostPerClick",
+                  operationTypeName: "Оплата за клик",
+                  serviceName: "(remainder)",
+                  totalAmount: -400
+                }
+              ]
+            }
+          ]
+        }
+      }),
+      getNormalizedStockRows: async () => ({
+        rows: [
+          {
+            sku: "111",
+            offerId: "SJ11",
+            available: 5
+          }
+        ]
+      })
+    },
+    performanceService: {
+      getStoredRowsForDateRange: async () => [
+        {
+          date: "2026-05-18",
+          campaignId: "101",
+          campaignName: "Campaign A",
+          sku: "111",
+          productName: "Товар 1",
+          spend: 400,
+          impressions: 1000,
+          clicks: 50,
+          orders: 10,
+          revenue: 5000
+        }
+      ]
+    },
+    prioritySkusService: {
+      list: month =>
+        month === "2026-05"
+          ? [{ month, offerId: "SJ11", offerIdKey: "sj11", sku: "111", weight: 1, targetCity: "Москва" }]
+          : []
+    },
+    salesFactsService: factorSalesFactsService
+  });
+
+  const factorReport = await factorAdsService.buildFactors({
+    dateFrom: "2026-05-18",
+    dateTo: "2026-05-18"
+  });
+  assert.strictEqual(factorReport.rows.length, 1);
+  assert.strictEqual(factorReport.rows[0].grossProfitEstimate, 3600);
+  assert.strictEqual(factorReport.rows[0].cogs, 100);
+  assert.strictEqual(factorReport.rows[0].stockRisk, "low stock");
+  assert.strictEqual(factorReport.rows[0].prioritySku, true);
+  assert.strictEqual(factorReport.rows[0].externalTraffic, true);
+  assert.strictEqual(factorReport.rows[0].coverageStatus, "FULLY_COVERED");
+  assert.strictEqual(factorReport.rows[0].confidence, "HIGH");
+  assert.strictEqual(factorReport.rows[0].economics, "positive");
+  assert.strictEqual(factorReport.rows[0].dataQuality, "reliable");
+  assert.ok(formatAdsFactors(factorReport).includes("Confidence: HIGH"));
+
+  const factorMissingCogsService = createAdsDiagnosticsService({
+    financeFactsService: {
+      getFinanceRowsForDateRange: () => [{ date: "2026-05-18", advertising: -1000 }]
+    },
+    ozonService: {
+      getFinanceFacts: async () => ({
+        rows: [{ date: "2026-05-18", advertising: -1000 }],
+        diagnostics: { advertisingGroups: [], advertisingGroupsByDate: [] }
+      }),
+      getNormalizedStockRows: async () => {
+        throw new Error("stocks unavailable");
+      }
+    },
+    performanceService: {
+      getStoredRowsForDateRange: async () => [
+        {
+          date: "2026-05-18",
+          campaignId: "202",
+          campaignName: "Campaign B",
+          sku: "222",
+          productName: "Товар 2",
+          spend: 400,
+          impressions: 100,
+          clicks: 4,
+          orders: 0,
+          revenue: 0
+        }
+      ]
+    },
+    salesFactsService: {
+      getSalesRowsForDateRange: () => []
+    }
+  });
+  const factorMissing = await factorMissingCogsService.buildFactors({
+    dateFrom: "2026-05-18",
+    dateTo: "2026-05-18"
+  });
+  assert.strictEqual(factorMissing.rows[0].cogs, null);
+  assert.strictEqual(factorMissing.rows[0].economics, "unknown");
+  assert.strictEqual(factorMissing.rows[0].stockRisk, "unknown stock");
+  assert.strictEqual(factorMissing.rows[0].coverageStatus, "PARTIALLY_COVERED");
+  assert.strictEqual(factorMissing.rows[0].confidence, "LOW");
+  assert.ok(factorMissing.rows[0].warnings.includes("COGS unknown"));
+  assert.ok(factorMissing.rows[0].warnings.includes("stock unknown"));
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ollama-bot-cogs-"));
   const cogsService = createCogsService({

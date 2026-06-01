@@ -100,9 +100,13 @@ const reportBuilderService = createReportBuilderService({
 });
 
 const adsDiagnosticsService = createAdsDiagnosticsService({
+  cogsService,
+  externalTrafficPlanService,
   financeFactsService,
   ozonService,
-  performanceService
+  performanceService,
+  prioritySkusService,
+  salesFactsService
 });
 
 const dailyControlService = createDailyControlService({

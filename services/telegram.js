@@ -77,6 +77,7 @@ function getHelpText() {
     "/ads reconcile 2026-05-01 2026-05-14",
     "/ads gaps 2026-05-01 2026-05-14",
     "/ads gaps debug 2026-05-01 2026-05-14",
+    "/ads factors 2026-05-01 2026-05-14",
     "/ads campaigns 2026-05-01 2026-05-14",
     "/ads sku 2026-05-01 2026-05-14",
     "/report pnl 2026-05-01 2026-05-14",
@@ -355,7 +356,7 @@ function parseAdsCommand(text) {
   }
 
   const match = normalized.match(
-    /^\/ads\s+(debug|report|reconcile|campaigns|sku|gaps)\s+(\d{4}-\d{2}-\d{2})\s+(\d{4}-\d{2}-\d{2})$/
+    /^\/ads\s+(debug|report|reconcile|campaigns|sku|gaps|factors)\s+(\d{4}-\d{2}-\d{2})\s+(\d{4}-\d{2}-\d{2})$/
   );
 
   if (!match) {
@@ -1251,6 +1252,62 @@ function formatAdsDebug(debug) {
 
   if (debug.warnings.length) {
     lines.push("", "Warnings:", ...debug.warnings.map(item => "- " + item));
+  }
+
+  return lines.join("\n");
+}
+
+function formatAdsFactors(report) {
+  const lines = [
+    "Ads factors",
+    "Период: " + report.dateFrom + " -> " + report.dateTo,
+    "Stock source: " + (report.stockSource || "unavailable")
+  ];
+
+  if (!report.rows.length) {
+    lines.push("", "No ads factor rows found.");
+  } else {
+    lines.push("");
+    lines.push(
+      report.rows.map(item => {
+        const parts = [
+          "SKU: " + (item.sku || "-"),
+          "Product Name: " + (item.productName || "-"),
+          "Campaign ID: " + (item.campaignId || "-"),
+          "Campaign Name: " + (item.campaignName || "-"),
+          "Spend: " + item.spend,
+          "Impressions: " + item.impressions,
+          "Clicks: " + item.clicks,
+          "CTR: " + item.ctr,
+          "CPC: " + item.cpc,
+          "Orders: " + item.orders,
+          "Revenue: " + item.revenue,
+          "ДРР: " + item.drr,
+          "Gross Profit Estimate: " + (item.grossProfitEstimate === null ? "unknown" : item.grossProfitEstimate),
+          "COGS: " + (item.cogs === null ? "unknown" : item.cogs),
+          "Stock Status: " + item.stockRisk,
+          "Priority SKU: " + (item.prioritySku ? "yes" : "no"),
+          "External Traffic: " + (item.externalTraffic ? "yes" : "no"),
+          "Coverage Status: " + item.coverageStatus,
+          "Traffic Quality: " + item.trafficQuality,
+          "Click Cost: " + item.clickCost,
+          "Conversion: " + item.conversion,
+          "Economics: " + item.economics,
+          "Data Quality: " + item.dataQuality,
+          "Confidence: " + item.confidence
+        ];
+
+        if (item.warnings.length) {
+          parts.push("Warnings: " + item.warnings.join(", "));
+        }
+
+        return parts.join("\n");
+      }).join("\n\n")
+    );
+  }
+
+  if (report.warnings.length) {
+    lines.push("", "Warnings:", ...report.warnings.map(item => "- " + item));
   }
 
   return lines.join("\n");
@@ -3025,6 +3082,12 @@ function startTelegramBot({
           return;
         }
 
+        if (adsCommand.type === "factors") {
+          const report = await adsDiagnosticsService.buildFactors(adsCommand);
+          await sendLongMessage(tgBot, chatId, formatAdsFactors(report));
+          return;
+        }
+
         if (adsCommand.type === "campaigns") {
           const report = await adsDiagnosticsService.buildCampaigns(adsCommand);
           await sendLongMessage(tgBot, chatId, formatAdsCampaigns(report));
@@ -3375,6 +3438,7 @@ module.exports = {
   formatAdsSku,
   formatAdsGaps,
   formatAdsGapsDebug,
+  formatAdsFactors,
   formatAdsReconcile,
   formatAdsReport,
   formatModelsInfo,
