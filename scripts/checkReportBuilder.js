@@ -351,6 +351,16 @@ async function run() {
     dateFrom: "2026-05-01",
     dateTo: "2026-05-14"
   });
+  assert.deepStrictEqual(parseAdsCommand("/ads gaps 2026-05-01 2026-05-14"), {
+    type: "gaps",
+    dateFrom: "2026-05-01",
+    dateTo: "2026-05-14"
+  });
+  assert.deepStrictEqual(parseAdsCommand("/ads gaps debug 2026-05-01 2026-05-14"), {
+    type: "gaps_debug",
+    dateFrom: "2026-05-01",
+    dateTo: "2026-05-14"
+  });
   assert.deepStrictEqual(parseDailyControlCommand("/daily control 2026-05-14"), {
     toSheet: false,
     dateInput: "2026-05-14"
@@ -1147,6 +1157,55 @@ async function run() {
   assert.deepStrictEqual(
     partialCoverage.financeBreakdown.groups.map(item => item.amount),
     [23257, 11494, 7920.35, 3773]
+  );
+  const adsGaps = await adsDiagnosticsPartialCoverageService.buildGaps({
+    dateFrom: "2026-05-18",
+    dateTo: "2026-05-18"
+  });
+  assert.strictEqual(adsGaps.summary.performanceCoveredSpend, 1987.68);
+  assert.strictEqual(adsGaps.summary.financeAdvertisingTotal, 46444.35);
+  assert.strictEqual(adsGaps.summary.uncoveredAdvertisingSpend, 44456.67);
+  assert.strictEqual(adsGaps.summary.coveragePercent, 4.28);
+  assert.strictEqual(adsGaps.uncoveredGroups[0].operationType, "OperationMarketplaceCostPerClick");
+  assert.strictEqual(adsGaps.uncoveredGroups[0].attributionStatus, "PARTIALLY_COVERED");
+  assert.strictEqual(adsGaps.uncoveredGroups[0].amount, 23257);
+  assert.strictEqual(adsGaps.uncoveredGroups[0].sharePercent, 50.07);
+  assert.strictEqual(adsGaps.uncoveredGroups[0].coveredAmount, 1987.68);
+  assert.strictEqual(adsGaps.uncoveredGroups[0].uncoveredAmount, 21269.32);
+  assert.strictEqual(
+    adsGaps.uncoveredGroups.find(item => item.operationType === "OperationPromotionWithCostPerOrder").attributionStatus,
+    "NOT_COVERED"
+  );
+  assert.strictEqual(
+    adsGaps.uncoveredGroups.find(item => item.operationType === "MarketplaceServiceBrandCommission").attributionStatus,
+    "NOT_COVERED"
+  );
+  assert.strictEqual(
+    adsGaps.uncoveredGroups.find(item => item.operationType === "OperationMarketplaceAcceleratedProductReviews").attributionStatus,
+    "NOT_COVERED"
+  );
+  assert.deepStrictEqual(adsGaps.recommendations, [
+    "Brand promotion costs are not attributable.",
+    "Order-based promotion costs are not attributable.",
+    "Performance API currently covers only CPC campaigns.",
+    "Reviews promotion costs are not attributable."
+  ]);
+
+  const adsGapsDebug = await adsDiagnosticsPartialCoverageService.buildGapsDebug({
+    dateFrom: "2026-05-18",
+    dateTo: "2026-05-18"
+  });
+  assert.strictEqual(adsGapsDebug.financeAdvertisingGroups.length, 4);
+  assert.strictEqual(adsGapsDebug.performanceCampaignGroups.length, 1);
+  assert.strictEqual(adsGapsDebug.performanceCampaignGroups[0].spend, 1987.68);
+  assert.strictEqual(adsGapsDebug.coverageMappingTable.length, 4);
+  assert.ok(
+    adsGapsDebug.coverageAssumptions.includes(
+      "Current Performance rows are treated as CPC-like coverage when finance operation type clearly matches click-based advertising."
+    )
+  );
+  assert.ok(
+    adsGapsDebug.recommendations.includes("Brand promotion costs are not attributable.")
   );
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ollama-bot-cogs-"));

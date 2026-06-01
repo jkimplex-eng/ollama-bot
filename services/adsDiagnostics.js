@@ -363,6 +363,159 @@ function summarizeReconciliation(rows) {
   };
 }
 
+function detectCoverageCategory(group) {
+  const operationType = String(group.operationType || "").toLowerCase();
+  const operationName = String(group.operationTypeName || "").toLowerCase();
+  const serviceName = String(group.serviceName || "").toLowerCase();
+  const haystack = [operationType, operationName, serviceName].join(" ");
+
+  if (
+    haystack.includes("costperclick") ||
+    haystack.includes("оплата за клик") ||
+    /\bcpc\b/.test(haystack) ||
+    haystack.includes("click")
+  ) {
+    return "cpc";
+  }
+
+  if (
+    haystack.includes("promotionwithcostperorder") ||
+    haystack.includes("продвижение с оплатой за заказ") ||
+    haystack.includes("за заказ") ||
+    haystack.includes("cost per order") ||
+    haystack.includes("cpo")
+  ) {
+    return "order_promo";
+  }
+
+  if (
+    haystack.includes("brandcommission") ||
+    haystack.includes("продвижение бренда") ||
+    haystack.includes("brand promotion") ||
+    haystack.includes("brand")
+  ) {
+    return "brand_promo";
+  }
+
+  if (
+    haystack.includes("acceleratedproductreviews") ||
+    haystack.includes("ускоренный сбор отзывов") ||
+    haystack.includes("reviews") ||
+    haystack.includes("review")
+  ) {
+    return "reviews_promo";
+  }
+
+  if (
+    haystack.includes("promotion") ||
+    haystack.includes("продвижение") ||
+    haystack.includes("advertising") ||
+    haystack.includes("реклама")
+  ) {
+    return "generic_ads";
+  }
+
+  return "unknown";
+}
+
+function buildGapRecommendations(groups) {
+  const recommendations = [];
+  const categories = new Set(groups.map(item => item.coverageCategory));
+  const hasPerformanceCoverage = groups.some(
+    item => item.attributionStatus === "FULLY_COVERED" || item.attributionStatus === "PARTIALLY_COVERED"
+  );
+
+  if (hasPerformanceCoverage) {
+    recommendations.push("Performance API currently covers only CPC campaigns.");
+  }
+  if (categories.has("brand_promo")) {
+    recommendations.push("Brand promotion costs are not attributable.");
+  }
+  if (categories.has("reviews_promo")) {
+    recommendations.push("Reviews promotion costs are not attributable.");
+  }
+  if (categories.has("order_promo")) {
+    recommendations.push("Order-based promotion costs are not attributable.");
+  }
+  if (categories.has("generic_ads") || categories.has("unknown")) {
+    recommendations.push("Some finance advertising groups still have no reliable campaign/SKU attribution.");
+  }
+
+  return uniqueSorted(recommendations);
+}
+
+function buildCoverageMapping(financeBreakdown, reconciliationTotals, campaignSummary) {
+  const performanceSpend = round2(reconciliationTotals?.coveredByPerformance || 0);
+  let availableCoveredSpend = performanceSpend;
+  const assumptions = [
+    "Coverage mapping is heuristic and read-only.",
+    "Current Performance rows are treated as CPC-like coverage when finance operation type clearly matches click-based advertising.",
+    "Brand, reviews, and order-based promotion costs are treated as not attributable unless explicit campaign-type attribution is available."
+  ];
+  const performanceCampaignGroups = [
+    {
+      group: "performance_rows",
+      campaignCount: campaignSummary.length,
+      spend: performanceSpend,
+      note: performanceSpend > 0 ? "Observed Performance-attributed spend" : "No Performance-attributed spend"
+    }
+  ];
+
+  const coverageGroups = (financeBreakdown?.groups || []).map(group => {
+    const amount = round2(group.amount);
+    const coverageCategory = detectCoverageCategory(group);
+    let attributionStatus = "NOT_COVERED";
+    let coveredAmount = 0;
+    let uncoveredAmount = amount;
+    let rationale = "No reliable match from current Performance attribution.";
+
+    if (coverageCategory === "cpc" && performanceSpend > 0) {
+      coveredAmount = round2(Math.min(amount, availableCoveredSpend));
+      uncoveredAmount = round2(Math.max(0, amount - coveredAmount));
+      attributionStatus = uncoveredAmount <= 10 ? "FULLY_COVERED" : "PARTIALLY_COVERED";
+      availableCoveredSpend = round2(Math.max(0, availableCoveredSpend - coveredAmount));
+      rationale =
+        attributionStatus === "FULLY_COVERED"
+          ? "Click-based finance advertising is fully represented by current Performance spend."
+          : "Click-based finance advertising is only partly represented by current Performance spend.";
+    } else if (coverageCategory === "cpc") {
+      rationale = "Click-based finance advertising exists, but there is no Performance spend for the period.";
+    } else if (coverageCategory === "order_promo") {
+      rationale = "Order-based promotion appears in finance, but current Performance attribution does not isolate it.";
+    } else if (coverageCategory === "brand_promo") {
+      rationale = "Brand promotion appears only in finance diagnostics, not in current Performance attribution.";
+    } else if (coverageCategory === "reviews_promo") {
+      rationale = "Reviews promotion appears only in finance diagnostics, not in current Performance attribution.";
+    } else if (coverageCategory === "generic_ads") {
+      rationale = "Advertising group detected in finance, but current attribution is too generic to map safely.";
+    }
+
+    return {
+      ...group,
+      coverageCategory,
+      attributionStatus,
+      coveredAmount,
+      uncoveredAmount,
+      rationale
+    };
+  });
+
+  return {
+    groups: coverageGroups,
+    assumptions,
+    performanceCampaignGroups
+  };
+}
+
+function buildAdsGapsSummary(reconciliationTotals) {
+  return {
+    performanceCoveredSpend: round2(reconciliationTotals?.coveredByPerformance || 0),
+    financeAdvertisingTotal: round2(reconciliationTotals?.totalFinanceAdvertisingSpend || 0),
+    uncoveredAdvertisingSpend: round2(reconciliationTotals?.uncoveredFinanceAdvertising || 0),
+    coveragePercent: round2(reconciliationTotals?.coveragePercent || 0)
+  };
+}
+
 function buildFinanceAdvertisingBreakdown(financeRows, diagnostics) {
   const financeByDate = new Map(
     (financeRows || []).map(row => [formatDate(row.date), Math.abs(round2(row.advertising))])
@@ -598,12 +751,55 @@ function createAdsDiagnosticsService({ financeFactsService, ozonService, perform
     };
   }
 
+  async function buildGaps({ dateFrom, dateTo }) {
+    const loaded = await loadInputs(dateFrom, dateTo);
+    const totals = summarizeReconciliation(loaded.reconciliation);
+    const campaignSummary = aggregateCampaignSummary(loaded.performanceRows);
+    const coverageMapping = buildCoverageMapping(loaded.financeBreakdown, totals, campaignSummary);
+
+    return {
+      dateFrom,
+      dateTo,
+      summary: buildAdsGapsSummary(totals),
+      uncoveredGroups: coverageMapping.groups
+        .filter(item => item.uncoveredAmount > 0)
+        .sort((left, right) => right.amount - left.amount),
+      recommendations: buildGapRecommendations(coverageMapping.groups),
+      warnings: loaded.warnings.filter(
+        item =>
+          item === "Нет локальных Performance rows за период." ||
+          item === "Нет finance advertising за период."
+      )
+    };
+  }
+
+  async function buildGapsDebug({ dateFrom, dateTo }) {
+    const loaded = await loadInputs(dateFrom, dateTo);
+    const totals = summarizeReconciliation(loaded.reconciliation);
+    const campaignSummary = aggregateCampaignSummary(loaded.performanceRows);
+    const coverageMapping = buildCoverageMapping(loaded.financeBreakdown, totals, campaignSummary);
+
+    return {
+      dateFrom,
+      dateTo,
+      summary: buildAdsGapsSummary(totals),
+      financeAdvertisingGroups: loaded.financeBreakdown.groups,
+      performanceCampaignGroups: coverageMapping.performanceCampaignGroups,
+      coverageMappingTable: coverageMapping.groups,
+      coverageAssumptions: coverageMapping.assumptions,
+      recommendations: buildGapRecommendations(coverageMapping.groups),
+      warnings: loaded.warnings
+    };
+  }
+
   return {
     aggregateByDate,
     aggregateCampaignSummary,
     aggregateSkuSummary,
     buildCampaigns,
     buildDebug,
+    buildGaps,
+    buildGapsDebug,
     buildReconcile,
     buildReconciliationRows,
     buildReport,

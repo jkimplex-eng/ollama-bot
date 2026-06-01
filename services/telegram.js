@@ -75,6 +75,8 @@ function getHelpText() {
     "/ads debug 2026-05-01 2026-05-14",
     "/ads report 2026-05-01 2026-05-14",
     "/ads reconcile 2026-05-01 2026-05-14",
+    "/ads gaps 2026-05-01 2026-05-14",
+    "/ads gaps debug 2026-05-01 2026-05-14",
     "/ads campaigns 2026-05-01 2026-05-14",
     "/ads sku 2026-05-01 2026-05-14",
     "/report pnl 2026-05-01 2026-05-14",
@@ -340,8 +342,20 @@ function parseAlertsCommand(text) {
 
 function parseAdsCommand(text) {
   const normalized = text.trim().replace(/\s+/g, " ").toLowerCase();
+  const gapsDebugMatch = normalized.match(
+    /^\/ads\s+gaps\s+debug\s+(\d{4}-\d{2}-\d{2})\s+(\d{4}-\d{2}-\d{2})$/
+  );
+
+  if (gapsDebugMatch) {
+    return {
+      type: "gaps_debug",
+      dateFrom: gapsDebugMatch[1],
+      dateTo: gapsDebugMatch[2]
+    };
+  }
+
   const match = normalized.match(
-    /^\/ads\s+(debug|report|reconcile|campaigns|sku)\s+(\d{4}-\d{2}-\d{2})\s+(\d{4}-\d{2}-\d{2})$/
+    /^\/ads\s+(debug|report|reconcile|campaigns|sku|gaps)\s+(\d{4}-\d{2}-\d{2})\s+(\d{4}-\d{2}-\d{2})$/
   );
 
   if (!match) {
@@ -987,6 +1001,115 @@ function formatAdsReconcile(report) {
     formatAdsFinanceBreakdown(report.financeBreakdown)
   );
 
+  if (report.warnings.length) {
+    lines.push("", "Warnings:", ...report.warnings.map(item => "- " + item));
+  }
+
+  return lines.join("\n");
+}
+
+function formatAdsGaps(report) {
+  const lines = [
+    "Ads gaps",
+    "Период: " + report.dateFrom + " -> " + report.dateTo,
+    "",
+    "Advertising coverage summary:",
+    "Performance covered spend: " + report.summary.performanceCoveredSpend,
+    "Finance advertising total: " + report.summary.financeAdvertisingTotal,
+    "Uncovered advertising spend: " + report.summary.uncoveredAdvertisingSpend,
+    "Coverage %: " + report.summary.coveragePercent
+  ];
+
+  if (!report.uncoveredGroups.length) {
+    lines.push("", "No uncovered finance advertising groups found.");
+  } else {
+    lines.push("", "Uncovered finance breakdown:");
+    lines.push("Operation Type | Operation Name | Amount | Share % | Status");
+    lines.push(
+      ...report.uncoveredGroups.map(item =>
+        [
+          item.operationType || "-",
+          item.operationTypeName || "-",
+          item.amount,
+          item.sharePercent,
+          item.attributionStatus
+        ].join(" | ")
+      )
+    );
+  }
+
+  if (report.recommendations.length) {
+    lines.push("", "Recommendations:", ...report.recommendations.map(item => "- " + item));
+  }
+
+  if (report.warnings.length) {
+    lines.push("", "Warnings:", ...report.warnings.map(item => "- " + item));
+  }
+
+  return lines.join("\n");
+}
+
+function formatAdsGapsDebug(report) {
+  const lines = [
+    "Ads gaps debug",
+    "Период: " + report.dateFrom + " -> " + report.dateTo,
+    "",
+    "Advertising coverage summary:",
+    "Performance covered spend: " + report.summary.performanceCoveredSpend,
+    "Finance advertising total: " + report.summary.financeAdvertisingTotal,
+    "Uncovered advertising spend: " + report.summary.uncoveredAdvertisingSpend,
+    "Coverage %: " + report.summary.coveragePercent
+  ];
+
+  lines.push("", "Finance advertising groups:");
+  if (!report.financeAdvertisingGroups.length) {
+    lines.push("No finance advertising groups found.");
+  } else {
+    lines.push("Operation Type | Operation Name | Service | Amount | Share %");
+    lines.push(formatAdsFinanceBreakdown({ groups: report.financeAdvertisingGroups }));
+  }
+
+  lines.push("", "Performance campaign groups:");
+  if (!report.performanceCampaignGroups.length) {
+    lines.push("No Performance campaign groups found.");
+  } else {
+    lines.push(
+      ...report.performanceCampaignGroups.map(item =>
+        [
+          item.group || "-",
+          "campaigns=" + item.campaignCount,
+          "spend=" + item.spend,
+          item.note || ""
+        ].join(" | ")
+      )
+    );
+  }
+
+  lines.push("", "Coverage mapping table:");
+  if (!report.coverageMappingTable.length) {
+    lines.push("No coverage mapping rows found.");
+  } else {
+    lines.push("Operation Type | Operation Name | Amount | Covered | Uncovered | Status");
+    lines.push(
+      ...report.coverageMappingTable.map(item =>
+        [
+          item.operationType || "-",
+          item.operationTypeName || "-",
+          item.amount,
+          item.coveredAmount,
+          item.uncoveredAmount,
+          item.attributionStatus
+        ].join(" | ")
+      )
+    );
+  }
+
+  if (report.coverageAssumptions.length) {
+    lines.push("", "Coverage assumptions:", ...report.coverageAssumptions.map(item => "- " + item));
+  }
+  if (report.recommendations.length) {
+    lines.push("", "Recommendations:", ...report.recommendations.map(item => "- " + item));
+  }
   if (report.warnings.length) {
     lines.push("", "Warnings:", ...report.warnings.map(item => "- " + item));
   }
@@ -2890,6 +3013,18 @@ function startTelegramBot({
           return;
         }
 
+        if (adsCommand.type === "gaps") {
+          const report = await adsDiagnosticsService.buildGaps(adsCommand);
+          await sendLongMessage(tgBot, chatId, formatAdsGaps(report));
+          return;
+        }
+
+        if (adsCommand.type === "gaps_debug") {
+          const report = await adsDiagnosticsService.buildGapsDebug(adsCommand);
+          await sendLongMessage(tgBot, chatId, formatAdsGapsDebug(report));
+          return;
+        }
+
         if (adsCommand.type === "campaigns") {
           const report = await adsDiagnosticsService.buildCampaigns(adsCommand);
           await sendLongMessage(tgBot, chatId, formatAdsCampaigns(report));
@@ -3238,6 +3373,8 @@ module.exports = {
   formatAdsDebug,
   formatAdsCampaigns,
   formatAdsSku,
+  formatAdsGaps,
+  formatAdsGapsDebug,
   formatAdsReconcile,
   formatAdsReport,
   formatModelsInfo,
