@@ -142,6 +142,51 @@ const sheetsMap = {
     },
     mode: "replace"
   },
+  ads_budget_plan: {
+    logicalName: "ads_budget_plan",
+    tabName: "Ads Budget Plan",
+    columns: [
+      "Month",
+      "Date From",
+      "Date To",
+      "Offer ID",
+      "SKU",
+      "Campaign ID",
+      "Campaign Name",
+      "Current Spend",
+      "Recommended Delta",
+      "Planned Spend Preview",
+      "Revenue",
+      "GP",
+      "Margin",
+      "DRR/ACOS",
+      "Stock Days",
+      "Priority",
+      "Decision",
+      "Reason",
+      "Expected Effect",
+      "Confidence",
+      "Stop-loss"
+    ],
+    formatting: {
+      boldHeader: true,
+      freezeRows: 1,
+      autoResizeColumns: true,
+      headerBackground: "#000000",
+      headerFontColor: "#ffffff",
+      currencyColumns: ["Current Spend", "Recommended Delta", "Planned Spend Preview", "Revenue", "GP"],
+      percentColumns: ["Margin", "DRR/ACOS"],
+      conditionalColumns: [
+        {
+          header: "GP",
+          positiveBackground: "#d9ead3",
+          negativeBackground: "#f4cccc",
+          neutralBackground: ""
+        }
+      ]
+    },
+    mode: "replace"
+  },
   cogs_mapping: {
     logicalName: "cogs_mapping",
     tabName: "COGS Mapping",

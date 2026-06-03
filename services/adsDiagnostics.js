@@ -1,3 +1,9 @@
+const {
+  buildReconciliationRows,
+  getReconciliationStatus,
+  summarizeReconciliation
+} = require("./verification/reconciliationVerification");
+
 function formatDate(value) {
   const normalized = String(value || "").trim();
   const isoMatch = normalized.match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -35,40 +41,6 @@ function toNumber(value) {
 
 function round2(value) {
   return Number(toNumber(value).toFixed(2));
-}
-
-function getReconciliationStatus(adsCabinetSpend, financeAdvertisingSpend) {
-  const hasAds = adsCabinetSpend > 0;
-  const hasFinance = financeAdvertisingSpend > 0;
-
-  if (!hasAds && hasFinance) {
-    return "MISSING_ADS";
-  }
-
-  if (hasAds && !hasFinance) {
-    return "MISSING_FINANCE";
-  }
-
-  if (!hasAds && !hasFinance) {
-    return "OK";
-  }
-
-  const difference = Math.abs(adsCabinetSpend - financeAdvertisingSpend);
-  const differencePercent = adsCabinetSpend
-    ? (difference / adsCabinetSpend) * 100
-    : financeAdvertisingSpend
-      ? 100
-      : 0;
-
-  if (difference <= 10 || differencePercent <= 1) {
-    return "OK";
-  }
-
-  if (hasAds && hasFinance && financeAdvertisingSpend > adsCabinetSpend) {
-    return "PARTIAL_COVERAGE";
-  }
-
-  return "WARNING";
 }
 
 function listDates(dateFrom, dateTo) {
@@ -304,107 +276,6 @@ function aggregateFactorSlices(rows) {
       drr: item.revenue ? round2((item.spend / item.revenue) * 100) : 0
     }))
     .sort((left, right) => right.spend - left.spend);
-}
-
-function buildReconciliationRows({ dateFrom, dateTo, performanceRows, financeRows, dailyInputAdsByDate = new Map() }) {
-  const dates = listDates(dateFrom, dateTo);
-  const financeAdvertisingByDate = new Map(
-    dates.map(date => [date, 0])
-  );
-  const adsCabinetByDate = new Map(
-    dates.map(date => [date, 0])
-  );
-
-  for (const row of performanceRows) {
-    const date = formatDate(row.date);
-    if (adsCabinetByDate.has(date)) {
-      adsCabinetByDate.set(date, adsCabinetByDate.get(date) + toNumber(row.spend));
-    }
-  }
-
-  for (const row of financeRows) {
-    const date = formatDate(row.date);
-    if (financeAdvertisingByDate.has(date)) {
-      financeAdvertisingByDate.set(date, financeAdvertisingByDate.get(date) + Math.abs(toNumber(row.advertising)));
-    }
-  }
-
-  return dates.map(date => {
-    const adsCabinetSpend = round2(adsCabinetByDate.get(date) || 0);
-    const financeAdvertisingSpend = round2(financeAdvertisingByDate.get(date) || 0);
-    const dailyInputAds = round2(dailyInputAdsByDate.get(date) || 0);
-    const difference = round2(adsCabinetSpend - financeAdvertisingSpend);
-    const denominator = adsCabinetSpend || financeAdvertisingSpend || 0;
-    const differencePercent = denominator ? round2((Math.abs(difference) / denominator) * 100) : 0;
-    const coveredByPerformance = round2(Math.min(adsCabinetSpend, financeAdvertisingSpend));
-    const uncoveredFinanceAdvertising = round2(Math.max(0, financeAdvertisingSpend - adsCabinetSpend));
-    const coveragePercent = financeAdvertisingSpend
-      ? round2((coveredByPerformance / financeAdvertisingSpend) * 100)
-      : adsCabinetSpend
-        ? 100
-        : 0;
-    const status = getReconciliationStatus(adsCabinetSpend, financeAdvertisingSpend);
-
-    return {
-      date,
-      adsCabinetSpend,
-      financeAdvertisingSpend,
-      dailyInputAds,
-      difference,
-      differencePercent,
-      coveredByPerformance,
-      uncoveredFinanceAdvertising,
-      coveragePercent,
-      status,
-      warning:
-        status === "PARTIAL_COVERAGE"
-          ? "Performance covers only part of finance advertising."
-          : status === "WARNING"
-          ? "Mismatch exceeds tolerance."
-          : status === "MISSING_ADS"
-            ? "Ads cabinet spend missing."
-            : status === "MISSING_FINANCE"
-              ? "Finance advertising missing."
-              : ""
-    };
-  });
-}
-
-function summarizeReconciliation(rows) {
-  const totals = rows.reduce(
-    (acc, row) => {
-      acc.adsCabinetSpend += toNumber(row.adsCabinetSpend);
-      acc.financeAdvertisingSpend += toNumber(row.financeAdvertisingSpend);
-      return acc;
-    },
-    {
-      adsCabinetSpend: 0,
-      financeAdvertisingSpend: 0
-    }
-  );
-
-  const totalAdsCabinetSpend = round2(totals.adsCabinetSpend);
-  const totalFinanceAdvertisingSpend = round2(totals.financeAdvertisingSpend);
-  const totalDifference = round2(totalAdsCabinetSpend - totalFinanceAdvertisingSpend);
-  const denominator = totalAdsCabinetSpend || totalFinanceAdvertisingSpend || 0;
-  const totalDifferencePercent = denominator
-    ? round2((Math.abs(totalDifference) / denominator) * 100)
-    : 0;
-
-  return {
-    totalAdsCabinetSpend,
-    totalFinanceAdvertisingSpend,
-    totalDifference,
-    totalDifferencePercent,
-    coveredByPerformance: round2(Math.min(totalAdsCabinetSpend, totalFinanceAdvertisingSpend)),
-    uncoveredFinanceAdvertising: round2(Math.max(0, totalFinanceAdvertisingSpend - totalAdsCabinetSpend)),
-    coveragePercent: totalFinanceAdvertisingSpend
-      ? round2((Math.min(totalAdsCabinetSpend, totalFinanceAdvertisingSpend) / totalFinanceAdvertisingSpend) * 100)
-      : totalAdsCabinetSpend
-        ? 100
-        : 0,
-    status: getReconciliationStatus(totalAdsCabinetSpend, totalFinanceAdvertisingSpend)
-  };
 }
 
 function detectCoverageCategory(group) {

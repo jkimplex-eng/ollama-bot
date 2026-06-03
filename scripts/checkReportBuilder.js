@@ -7,6 +7,24 @@ const {
   dedupePerformanceRows
 } = require("../services/adsDiagnostics");
 const {
+  buildBudgetPlanFromRecommendations,
+  buildBudgetPlanSheetRows,
+  buildOptimizerAuditFromRecommendations,
+  buildRecommendationsFromSkuDay,
+  createAdsOptimizerService,
+  getMonthRange,
+  recommendForRow
+} = require("../services/adsOptimizer");
+const {
+  buildReconciliationRows: buildVerificationReconciliationRows,
+  getReconciliationStatus: getVerificationReconciliationStatus,
+  summarizeReconciliation: summarizeVerificationReconciliation
+} = require("../services/verification/reconciliationVerification");
+const {
+  verifySkuDayRow,
+  verifySkuDayRows
+} = require("../services/verification/skuDayVerification");
+const {
   buildPnlSummaryRows,
   buildSkuDashboardRows,
   buildPnlFormatting,
@@ -14,6 +32,7 @@ const {
   createReportBuilderService,
   SKU_DASHBOARD_HEADERS
 } = require("../services/reportBuilder");
+const { createSkuDayService } = require("../services/skuDay");
 const { createAlertsService } = require("../services/alerts");
 const { createDailyControlService } = require("../services/dailyControl");
 const {
@@ -31,11 +50,16 @@ const {
   getDailyInputSheetName,
   MAX_BACKFILL_DAYS
 } = require("../services/managementWorkbook");
+const { createOllamaService } = require("../services/ollama");
 const {
   formatAdsCampaigns,
+  formatAdsBudgetPlan,
   formatAdsFactors,
   formatAdsFactorsDebug,
+  formatAdsOptimizerAudit,
+  formatAdsRecommendations,
   formatAdsSku,
+  formatAdsSkuDay,
   parseAdsCommand,
   parseAlertsCommand,
   parseCogsCommand,
@@ -60,6 +84,12 @@ const {
 const { createSalesFactsService } = require("../services/salesFacts");
 const { clampOzonLimit, createOzonService, getPageSignature, getPostingIdentity } = require("../services/ozon");
 const { parseDailyCommand } = require("../services/dailySummary");
+const {
+  buildOptimizerSkuDayFixture,
+  okVerification,
+  profitableScaleRow,
+  unprofitablePauseRow
+} = require("./fixtures/adsOptimizerFixtures");
 
 async function run() {
   const performanceRows = [
@@ -353,6 +383,42 @@ async function run() {
     dateFrom: "2026-05-01",
     dateTo: "2026-05-14"
   });
+  assert.deepStrictEqual(parseAdsCommand("/ads sku_day 2026-05-01 2026-05-14"), {
+    type: "sku_day",
+    dateFrom: "2026-05-01",
+    dateTo: "2026-05-14"
+  });
+  assert.deepStrictEqual(parseAdsCommand("/ads recommendations 2026-05-01 2026-05-14"), {
+    type: "recommendations",
+    dateFrom: "2026-05-01",
+    dateTo: "2026-05-14"
+  });
+  assert.deepStrictEqual(parseAdsCommand("/ads optimize preview 2026-05-01 2026-05-14"), {
+    type: "optimize_preview",
+    dateFrom: "2026-05-01",
+    dateTo: "2026-05-14"
+  });
+  assert.deepStrictEqual(parseAdsCommand("/ads budget plan 2026-05"), {
+    type: "budget_plan",
+    month: "2026-05",
+    toSheet: false
+  });
+  assert.deepStrictEqual(parseAdsCommand("/ads budget plan в таблицу 2026-05"), {
+    type: "budget_plan",
+    month: "2026-05",
+    toSheet: true
+  });
+  assert.deepStrictEqual(parseAdsCommand("/ads optimizer audit 2026-05-01 2026-05-14"), {
+    type: "optimizer_audit",
+    dateFrom: "2026-05-01",
+    dateTo: "2026-05-14"
+  });
+  assert.deepStrictEqual(parseAdsCommand("/ads sku decision Offer-111 2026-05-01 2026-05-14"), {
+    type: "sku_decision",
+    offerId: "Offer-111",
+    dateFrom: "2026-05-01",
+    dateTo: "2026-05-14"
+  });
   assert.deepStrictEqual(parseAdsCommand("/ads gaps 2026-05-01 2026-05-14"), {
     type: "gaps",
     dateFrom: "2026-05-01",
@@ -636,6 +702,532 @@ async function run() {
       duplicatesRemovedCount: 1
     }
   );
+
+  assert.strictEqual(getVerificationReconciliationStatus(100, 109), "OK");
+  assert.strictEqual(getVerificationReconciliationStatus(100, 150), "PARTIAL_COVERAGE");
+  assert.strictEqual(getVerificationReconciliationStatus(150, 100), "WARNING");
+
+  const verificationReconciliationRows = buildVerificationReconciliationRows({
+    dateFrom: "2026-05-13",
+    dateTo: "2026-05-14",
+    performanceRows: [
+      { date: "13.05.2026", spend: "100,00" },
+      { date: "2026-05-14", spend: 50 }
+    ],
+    financeRows: [
+      { date: "2026-05-13", advertising: -100 },
+      { date: "2026-05-14", advertising: -70 }
+    ]
+  });
+  assert.deepStrictEqual(verificationReconciliationRows, [
+    {
+      date: "2026-05-13",
+      adsCabinetSpend: 100,
+      financeAdvertisingSpend: 100,
+      dailyInputAds: 0,
+      difference: 0,
+      differencePercent: 0,
+      coveredByPerformance: 100,
+      uncoveredFinanceAdvertising: 0,
+      coveragePercent: 100,
+      status: "OK",
+      warning: ""
+    },
+    {
+      date: "2026-05-14",
+      adsCabinetSpend: 50,
+      financeAdvertisingSpend: 70,
+      dailyInputAds: 0,
+      difference: -20,
+      differencePercent: 40,
+      coveredByPerformance: 50,
+      uncoveredFinanceAdvertising: 20,
+      coveragePercent: 71.43,
+      status: "PARTIAL_COVERAGE",
+      warning: "Performance covers only part of finance advertising."
+    }
+  ]);
+  assert.deepStrictEqual(summarizeVerificationReconciliation(verificationReconciliationRows), {
+    totalAdsCabinetSpend: 150,
+    totalFinanceAdvertisingSpend: 170,
+    totalDifference: -20,
+    totalDifferencePercent: 13.33,
+    coveredByPerformance: 150,
+    uncoveredFinanceAdvertising: 20,
+    coveragePercent: 88.24,
+    status: "PARTIAL_COVERAGE"
+  });
+
+  assert.deepStrictEqual(
+    verifySkuDayRow({
+      date: "2026-05-13",
+      sku: "111",
+      offerId: "offer-111",
+      productName: "Товар 1",
+      adSpend: 100,
+      adOrders: 2,
+      adRevenue: 600,
+      organicOrders: 1,
+      organicRevenue: 400,
+      totalOrders: 3,
+      totalRevenue: 1000,
+      financeAdvertising: 80,
+      spendMismatch: 20,
+      spendMismatchStatus: "WARNING",
+      cogs: 100,
+      cogsTotal: 300,
+      logisticsToMp: 15,
+      grossProfitEstimate: 435,
+      margin: 43.5,
+      stock: 20,
+      stockDays: 6.67,
+      priorityFlag: true,
+      confidence: "low",
+      warnings: ["ads reconciliation WARNING"]
+    }),
+    {
+      date: "2026-05-13",
+      sku: "111",
+      offerId: "offer-111",
+      status: "BLOCKED",
+      missingFields: [],
+      calculationErrors: [],
+      mismatchFlags: ["WARNING"],
+      warnings: ["ads reconciliation WARNING"],
+      confidence: "low",
+      blockOptimization: true
+    }
+  );
+
+  assert.deepStrictEqual(
+    verifySkuDayRows([
+      {
+        date: "2026-05-13",
+        sku: "111",
+        offerId: "offer-111",
+        productName: "Товар 1",
+        adSpend: 100,
+        adOrders: 2,
+        adRevenue: 600,
+        organicOrders: 1,
+        organicRevenue: 400,
+        totalOrders: 3,
+        totalRevenue: 1000,
+        financeAdvertising: 80,
+        spendMismatch: 20,
+        spendMismatchStatus: "WARNING",
+        cogs: 100,
+        cogsTotal: 300,
+        logisticsToMp: 15,
+        grossProfitEstimate: 435,
+        margin: 43.5,
+        stock: 20,
+        stockDays: 6.67,
+        priorityFlag: true,
+        confidence: "low",
+        warnings: ["ads reconciliation WARNING"]
+      }
+    ]).summary,
+    {
+      rowsChecked: 1,
+      blockedRows: 1,
+      missingFields: 0,
+      calculationErrors: 0,
+      mismatchFlags: 1,
+      lowConfidenceRows: 1,
+      warnings: ["ads reconciliation WARNING"]
+    }
+  );
+
+  const skuDayService = createSkuDayService({
+    cogsService: {
+      resolveCogs: (sku, offerId) => {
+        if (sku === "111" || offerId === "offer-111") {
+          return {
+            match: {
+              cogs: 100,
+              logisticsToMp: 15
+            },
+            source: "sku"
+          };
+        }
+        return null;
+      }
+    },
+    financeFactsService: {
+      getFinanceRowsForDateRange: () => [
+        {
+          date: "2026-05-13",
+          sales: 1000,
+          returns: -50,
+          ozonCommission: -100,
+          logistics: -20,
+          partnerServices: -10,
+          fboServices: -5,
+          advertising: -80,
+          otherServices: 0,
+          accruedTotal: 735
+        }
+      ]
+    },
+    ozonService: {
+      getStocks: async () => [
+        {
+          sku: "111",
+          offerId: "offer-111",
+          stock: 20,
+          name: "Товар 1"
+        }
+      ]
+    },
+    performanceService: {
+      getStoredRowsForDateRange: () => [
+        {
+          date: "2026-05-13",
+          sku: "111",
+          offerId: "offer-111",
+          campaignId: "101",
+          campaignName: "Campaign A",
+          productName: "Товар 1",
+          spend: 100,
+          orders: 2,
+          revenue: 600
+        }
+      ]
+    },
+    prioritySkusService: {
+      find: (month, offerId) => (month === "2026-05" && offerId === "offer-111" ? { offerId } : null)
+    },
+    salesFactsService: {
+      getSalesRowsForDateRange: () => [
+        {
+          date: "2026-05-13",
+          sku: "111",
+          offerId: "offer-111",
+          productName: "Товар 1",
+          quantity: 3,
+          revenue: 1000
+        }
+      ]
+    }
+  });
+
+  assert.deepStrictEqual(
+    await skuDayService.buildRows({
+      dateFrom: "2026-05-13",
+      dateTo: "2026-05-13"
+    }),
+    {
+      dateFrom: "2026-05-13",
+      dateTo: "2026-05-13",
+      rows: [
+        {
+          date: "2026-05-13",
+          sku: "111",
+          offerId: "offer-111",
+          productName: "Товар 1",
+          campaignId: "101",
+          campaignName: "Campaign A",
+          campaignIds: ["101"],
+          campaignNames: ["Campaign A"],
+          adSpend: 100,
+          adOrders: 2,
+          adRevenue: 600,
+          organicOrders: 1,
+          organicRevenue: 400,
+          totalOrders: 3,
+          totalRevenue: 1000,
+          financeAdvertising: 80,
+          spendMismatch: 20,
+          spendMismatchStatus: "WARNING",
+          cogs: 100,
+          cogsTotal: 300,
+          logisticsToMp: 15,
+          grossProfitEstimate: 435,
+          margin: 43.5,
+          stock: 20,
+          stockDays: 6.67,
+          priorityFlag: true,
+          confidence: "low",
+          warnings: ["ads reconciliation WARNING"]
+        }
+      ],
+      reconciliationRows: [
+        {
+          date: "2026-05-13",
+          adsCabinetSpend: 100,
+          financeAdvertisingSpend: 80,
+          dailyInputAds: 0,
+          difference: 20,
+          differencePercent: 20,
+          coveredByPerformance: 80,
+          uncoveredFinanceAdvertising: 0,
+          coveragePercent: 100,
+          status: "WARNING",
+          warning: "Mismatch exceeds tolerance."
+        }
+      ],
+      verification: {
+        rows: [
+          {
+            date: "2026-05-13",
+            sku: "111",
+            offerId: "offer-111",
+            status: "BLOCKED",
+            missingFields: [],
+            calculationErrors: [],
+            mismatchFlags: ["WARNING"],
+            warnings: ["ads reconciliation WARNING"],
+            confidence: "low",
+            blockOptimization: true
+          }
+        ],
+        summary: {
+          rowsChecked: 1,
+          blockedRows: 1,
+          missingFields: 0,
+          calculationErrors: 0,
+          mismatchFlags: 1,
+          lowConfidenceRows: 1,
+          warnings: ["ads reconciliation WARNING"]
+        }
+      }
+    }
+  );
+  assert.ok(
+    formatAdsSkuDay({
+      dateFrom: "2026-05-13",
+      dateTo: "2026-05-13",
+      rows: [
+        {
+          date: "2026-05-13",
+          sku: "111",
+          offerId: "offer-111",
+          productName: "Товар 1",
+          campaignId: "101",
+          campaignName: "Campaign A",
+          campaignIds: ["101"],
+          campaignNames: ["Campaign A"],
+          adSpend: 100,
+          adOrders: 2,
+          adRevenue: 600,
+          organicOrders: 1,
+          organicRevenue: 400,
+          totalOrders: 3,
+          totalRevenue: 1000,
+          financeAdvertising: 80,
+          spendMismatch: 20,
+          spendMismatchStatus: "WARNING",
+          cogsTotal: 300,
+          grossProfitEstimate: 435,
+          margin: 43.5,
+          stock: 20,
+          stockDays: 6.67,
+          priorityFlag: true,
+          confidence: "low",
+          warnings: ["ads reconciliation WARNING"]
+        }
+      ],
+      verification: {
+        rows: [
+          {
+            date: "2026-05-13",
+            sku: "111",
+            offerId: "offer-111",
+            status: "BLOCKED",
+            missingFields: [],
+            calculationErrors: [],
+            mismatchFlags: ["WARNING"],
+            warnings: ["ads reconciliation WARNING"],
+            confidence: "low",
+            blockOptimization: true
+          }
+        ],
+        summary: {
+          rowsChecked: 1,
+          blockedRows: 1,
+          missingFields: 0,
+          calculationErrors: 0,
+          mismatchFlags: 1,
+          lowConfidenceRows: 1,
+          warnings: ["ads reconciliation WARNING"]
+        }
+      }
+    }).includes("Ads sku_day")
+  );
+
+  const baseOptimizerRow = profitableScaleRow;
+
+  assert.strictEqual(
+    recommendForRow(baseOptimizerRow, okVerification).recommendation,
+    "increase_budget"
+  );
+  assert.strictEqual(
+    recommendForRow(
+      {
+        ...baseOptimizerRow,
+        grossProfitEstimate: -50,
+        margin: -5
+      },
+      okVerification
+    ).recommendation,
+    "pause"
+  );
+  assert.strictEqual(
+    recommendForRow(
+      {
+        ...baseOptimizerRow,
+        stockDays: 2
+      },
+      okVerification
+    ).recommendation,
+    "restock_first"
+  );
+  const priorityRecommendation = recommendForRow(
+    {
+      ...baseOptimizerRow,
+      grossProfitEstimate: -30,
+      margin: -3,
+      priorityFlag: true
+    },
+    okVerification
+  );
+  assert.strictEqual(priorityRecommendation.recommendation, "test");
+  assert.ok(priorityRecommendation.reason.includes("strategic priority override: yes"));
+  assert.ok(priorityRecommendation.stopLoss.includes("pause if GP stays negative"));
+  assert.strictEqual(
+    recommendForRow(baseOptimizerRow, {
+      ...okVerification,
+      status: "BLOCKED",
+      warnings: ["COGS unknown"],
+      blockOptimization: true
+    }).recommendation,
+    "needs_data"
+  );
+  assert.strictEqual(
+    recommendForRow(baseOptimizerRow, {
+      ...okVerification,
+      status: "BLOCKED",
+      mismatchFlags: ["CRITICAL"],
+      blockOptimization: true
+    }).recommendation,
+    "needs_data"
+  );
+
+  const recommendationsReport = buildRecommendationsFromSkuDay(buildOptimizerSkuDayFixture());
+  assert.strictEqual(recommendationsReport.mode, "recommendation_only");
+  assert.strictEqual(recommendationsReport.summary.total, 2);
+  assert.strictEqual(recommendationsReport.summary.byRecommendation.increase_budget, 1);
+  assert.strictEqual(recommendationsReport.summary.byRecommendation.pause, 1);
+  assert.ok(formatAdsRecommendations(recommendationsReport).includes("Campaign mutations: no"));
+  assert.ok(formatAdsRecommendations(recommendationsReport).includes("Decision: increase_budget"));
+  assert.deepStrictEqual(getMonthRange("2026-05"), {
+    dateFrom: "2026-05-01",
+    dateTo: "2026-05-31"
+  });
+  const budgetPlan = buildBudgetPlanFromRecommendations(recommendationsReport, "2026-05");
+  assert.strictEqual(budgetPlan.mode, "recommendation_only");
+  assert.strictEqual(budgetPlan.summary.currentSpend, 170);
+  assert.strictEqual(budgetPlan.summary.recommendedSpendDelta, -50);
+  assert.strictEqual(budgetPlan.summary.plannedSpend, 120);
+  assert.strictEqual(budgetPlan.summary.scaleCandidates, 1);
+  assert.strictEqual(budgetPlan.summary.reduceCandidates, 1);
+  assert.strictEqual(budgetPlan.items[0].recommendedSpendDelta, 20);
+  assert.strictEqual(budgetPlan.items[1].recommendedSpendDelta, -70);
+  assert.ok(formatAdsBudgetPlan(budgetPlan).includes("Campaign mutations: no"));
+  assert.ok(formatAdsBudgetPlan(budgetPlan).includes("Planned spend preview: 120"));
+  const budgetPlanSheetRows = buildBudgetPlanSheetRows(budgetPlan);
+  assert.strictEqual(budgetPlanSheetRows.length, 2);
+  assert.deepStrictEqual(budgetPlanSheetRows[0].slice(0, 7), [
+    "2026-05",
+    "2026-05-13",
+    "2026-05-13",
+    "offer-111",
+    "111",
+    "101",
+    "Campaign A"
+  ]);
+  const optimizerAudit = buildOptimizerAuditFromRecommendations(recommendationsReport);
+  assert.strictEqual(optimizerAudit.summary.rowsChecked, 2);
+  assert.strictEqual(optimizerAudit.summary.readyToScale, 1);
+  assert.strictEqual(optimizerAudit.summary.profitProtection, 1);
+  assert.ok(formatAdsOptimizerAudit(optimizerAudit).includes("Ready to scale: 1"));
+  assert.strictEqual(
+    recommendForRow(
+      {
+        ...baseOptimizerRow,
+        campaignId: "",
+        campaignName: "",
+        campaignIds: ["101", "202"],
+        campaignNames: ["Campaign A", "Campaign B"]
+      },
+      okVerification
+    ).campaignId,
+    "101, 202"
+  );
+  const adsOptimizerService = createAdsOptimizerService({
+    sheetsService: {
+      clearAndWriteMappedRows: async (mappingKey, rows) => ({
+        mappingKey,
+        tabName: "Ads Budget Plan",
+        rowsWritten: rows.length
+      })
+    },
+    skuDayService: {
+      buildRows: async ({ dateFrom, dateTo }) => ({
+        dateFrom,
+        dateTo,
+        rows: recommendationsReport.recommendations.map(item => ({
+          date: item.date,
+          sku: item.sku,
+          offerId: item.offerId,
+          campaignId: item.campaignId,
+          campaignName: item.campaignName,
+          adSpend: item.currentSpend,
+          totalRevenue: item.revenue,
+          grossProfitEstimate: item.grossProfitEstimate,
+          margin: item.margin,
+          stockDays: item.stockDays,
+          priorityFlag: item.priorityFlag,
+          confidence: item.confidence
+        })),
+        verification: {
+          rows: recommendationsReport.recommendations.map(item => ({
+            ...okVerification,
+            date: item.date,
+            sku: item.sku,
+            offerId: item.offerId
+          })),
+          summary: recommendationsReport.skuDayVerification.summary
+        }
+      })
+    }
+  });
+  const skuDecision = await adsOptimizerService.buildSkuDecision({
+    offerId: "OFFER-222",
+    dateFrom: "2026-05-13",
+    dateTo: "2026-05-13"
+  });
+  assert.strictEqual(skuDecision.offerId, "OFFER-222");
+  assert.strictEqual(skuDecision.recommendations.length, 1);
+  assert.strictEqual(skuDecision.recommendations[0].offerId, "offer-222");
+  assert.ok(formatAdsRecommendations(skuDecision).includes("Offer filter: OFFER-222"));
+  const serviceBudgetPlan = await adsOptimizerService.buildBudgetPlan({
+    month: "2026-05"
+  });
+  assert.strictEqual(serviceBudgetPlan.month, "2026-05");
+  assert.strictEqual(serviceBudgetPlan.dateFrom, "2026-05-01");
+  assert.strictEqual(serviceBudgetPlan.dateTo, "2026-05-31");
+  const serviceAudit = await adsOptimizerService.buildAudit({
+    dateFrom: "2026-05-01",
+    dateTo: "2026-05-31"
+  });
+  assert.strictEqual(serviceAudit.summary.rowsChecked, 2);
+  const exportedBudgetPlan = await adsOptimizerService.exportBudgetPlan({
+    month: "2026-05"
+  });
+  assert.strictEqual(exportedBudgetPlan.writeResult.mappingKey, "ads_budget_plan");
+  assert.strictEqual(exportedBudgetPlan.writeResult.rowsWritten, 2);
 
   const adsDiagnosticsService = createAdsDiagnosticsService({
     performanceService: {
@@ -3718,6 +4310,69 @@ async function run() {
   assert.ok(partialFailureResult.clientSummaryText.includes("sheet update: SKIP"));
   assert.ok(partialFailureResult.clientSummaryText.includes("Ошибки:"));
   assert.ok(partialFailureResult.clientSummaryText.includes("finance fetch: finance down"));
+
+  const ollamaCalls = [];
+  const originalOllamaFetch = global.fetch;
+  global.fetch = async (url, options = {}) => {
+    ollamaCalls.push({
+      url,
+      body: JSON.parse(options.body || "{}")
+    });
+
+    return {
+      ok: true,
+      json: async () => ({
+        message: {
+          content: "ok"
+        }
+      })
+    };
+  };
+
+  try {
+    const ollamaService = createOllamaService({
+      chatUrl: "http://127.0.0.1:11434/api/chat",
+      models: {
+        chat: "chat-model",
+        coder: "coder-model",
+        analytics: "analytics-model",
+        fast: "fast-model"
+      },
+      state: {
+        loadMemory: () => [],
+        loadProfile: () => [],
+        saveMemory: () => {}
+      },
+      maxPromptChars: 400,
+      decisionTimeoutMs: 321000,
+      timeoutMs: 123000,
+      logger: {
+        error: () => {}
+      }
+    });
+
+    await ollamaService.askChat(
+      [
+        { role: "system", content: "S".repeat(150) },
+        { role: "assistant", content: "A".repeat(150) },
+        { role: "user", content: "U".repeat(600) }
+      ],
+      { preferFast: true }
+    );
+    assert.strictEqual(ollamaCalls[0].body.model, "fast-model");
+    assert.strictEqual(ollamaCalls[0].body.messages[0].content.length, 0);
+    assert.strictEqual(ollamaCalls[0].body.messages[1].content.length, 0);
+    assert.strictEqual(ollamaCalls[0].body.messages[2].content.length, 400);
+    assert.ok(ollamaCalls[0].body.messages[2].content.endsWith("U".repeat(400)));
+
+    await ollamaService.askAnalytics([{ role: "user", content: "analytics" }]);
+    assert.strictEqual(ollamaCalls[1].body.model, "analytics-model");
+
+    await ollamaService.askCoder([{ role: "user", content: "code" }]);
+    assert.strictEqual(ollamaCalls[2].body.model, "coder-model");
+  } finally {
+    global.fetch = originalOllamaFetch;
+  }
 
   console.log("New positive signs and Daily Input finance mapping tests passed!");
 

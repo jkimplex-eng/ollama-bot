@@ -81,6 +81,13 @@ function getHelpText() {
     "/ads factors debug 2026-05-01 2026-05-14",
     "/ads campaigns 2026-05-01 2026-05-14",
     "/ads sku 2026-05-01 2026-05-14",
+    "/ads sku_day 2026-05-01 2026-05-14",
+    "/ads recommendations 2026-05-01 2026-05-14",
+    "/ads optimize preview 2026-05-01 2026-05-14",
+    "/ads budget plan 2026-05",
+    "/ads budget plan в таблицу 2026-05",
+    "/ads optimizer audit 2026-05-01 2026-05-14",
+    "/ads sku decision <offerId> 2026-05-01 2026-05-14",
     "/report pnl 2026-05-01 2026-05-14",
     "/report pnl в таблицу 2026-05-01 2026-05-14",
     "/report sku 2026-05-01 2026-05-14",
@@ -344,6 +351,53 @@ function parseAlertsCommand(text) {
 
 function parseAdsCommand(text) {
   const normalized = text.trim().replace(/\s+/g, " ").toLowerCase();
+  const optimizePreviewMatch = normalized.match(
+    /^\/ads\s+optimize\s+preview\s+(\d{4}-\d{2}-\d{2})\s+(\d{4}-\d{2}-\d{2})$/
+  );
+
+  if (optimizePreviewMatch) {
+    return {
+      type: "optimize_preview",
+      dateFrom: optimizePreviewMatch[1],
+      dateTo: optimizePreviewMatch[2]
+    };
+  }
+
+  const budgetPlanMatch = normalized.match(/^\/ads\s+budget\s+plan(?:\s+в\s+таблицу)?\s+(\d{4}-\d{2})$/);
+
+  if (budgetPlanMatch) {
+    return {
+      type: "budget_plan",
+      month: budgetPlanMatch[1],
+      toSheet: normalized.includes(" в таблицу ")
+    };
+  }
+
+  const optimizerAuditMatch = normalized.match(
+    /^\/ads\s+optimizer\s+audit\s+(\d{4}-\d{2}-\d{2})\s+(\d{4}-\d{2}-\d{2})$/
+  );
+
+  if (optimizerAuditMatch) {
+    return {
+      type: "optimizer_audit",
+      dateFrom: optimizerAuditMatch[1],
+      dateTo: optimizerAuditMatch[2]
+    };
+  }
+
+  const skuDecisionMatch = text.trim().replace(/\s+/g, " ").match(
+    /^\/ads\s+sku\s+decision\s+(\S+)\s+(\d{4}-\d{2}-\d{2})\s+(\d{4}-\d{2}-\d{2})$/i
+  );
+
+  if (skuDecisionMatch) {
+    return {
+      type: "sku_decision",
+      offerId: skuDecisionMatch[1],
+      dateFrom: skuDecisionMatch[2],
+      dateTo: skuDecisionMatch[3]
+    };
+  }
+
   const gapsDebugMatch = normalized.match(
     /^\/ads\s+gaps\s+debug\s+(\d{4}-\d{2}-\d{2})\s+(\d{4}-\d{2}-\d{2})$/
   );
@@ -369,7 +423,7 @@ function parseAdsCommand(text) {
   }
 
   const match = normalized.match(
-    /^\/ads\s+(debug|report|reconcile|campaigns|sku|gaps|factors)\s+(\d{4}-\d{2}-\d{2})\s+(\d{4}-\d{2}-\d{2})$/
+    /^\/ads\s+(debug|report|reconcile|campaigns|sku|sku_day|recommendations|gaps|factors)\s+(\d{4}-\d{2}-\d{2})\s+(\d{4}-\d{2}-\d{2})$/
   );
 
   if (!match) {
@@ -1213,6 +1267,239 @@ function formatAdsSku(report) {
   return lines.join("\n");
 }
 
+function formatAdsSkuDay(report) {
+  const lines = [
+    "Ads sku_day",
+    "Период: " + report.dateFrom + " -> " + report.dateTo,
+    "",
+    "Verification summary:",
+    "Rows checked: " + report.verification.summary.rowsChecked,
+    "Blocked rows: " + report.verification.summary.blockedRows,
+    "Missing fields: " + report.verification.summary.missingFields,
+    "Calculation errors: " + report.verification.summary.calculationErrors,
+    "Mismatch flags: " + report.verification.summary.mismatchFlags,
+    "Low confidence rows: " + report.verification.summary.lowConfidenceRows
+  ];
+
+  if (report.verification.summary.warnings.length) {
+    lines.push(
+      "Warnings: " + report.verification.summary.warnings.join(", ")
+    );
+  }
+
+  if (!report.rows.length) {
+    lines.push("", "No sku_day rows found.");
+    return lines.join("\n");
+  }
+
+  lines.push("");
+  lines.push(
+    report.rows.slice(0, 20).map(item => {
+      const verification =
+        report.verification.rows.find(
+          row => row.date === item.date && row.sku === item.sku && row.offerId === item.offerId
+        ) || null;
+      const parts = [
+        "Date: " + item.date,
+        "SKU: " + (item.sku || "-"),
+        "Offer ID: " + (item.offerId || "-"),
+        "Product Name: " + (item.productName || "-"),
+        "Campaign: " + (item.campaignId || (item.campaignIds || []).join(", ") || "-"),
+        "Campaign Name: " + (item.campaignName || (item.campaignNames || []).join(", ") || "-"),
+        "Ad Spend: " + item.adSpend,
+        "Ad Orders: " + item.adOrders,
+        "Ad Revenue: " + item.adRevenue,
+        "Organic Orders: " + item.organicOrders,
+        "Organic Revenue: " + item.organicRevenue,
+        "Total Orders: " + item.totalOrders,
+        "Total Revenue: " + item.totalRevenue,
+        "Finance Advertising: " + item.financeAdvertising,
+        "Spend Mismatch: " + item.spendMismatch,
+        "Mismatch Status: " + item.spendMismatchStatus,
+        "COGS Total: " + item.cogsTotal,
+        "Gross Profit Estimate: " + item.grossProfitEstimate,
+        "Margin: " + item.margin,
+        "Stock: " + (item.stock === null ? "-" : item.stock),
+        "Stock Days: " + (item.stockDays === null ? "-" : item.stockDays),
+        "Priority: " + (item.priorityFlag ? "yes" : "no"),
+        "Confidence: " + item.confidence
+      ];
+
+      if (item.warnings.length) {
+        parts.push("Row Warnings: " + item.warnings.join(", "));
+      }
+
+      if (verification) {
+        parts.push("Verification Status: " + verification.status);
+        if (verification.mismatchFlags.length) {
+          parts.push("Verification Mismatch Flags: " + verification.mismatchFlags.join(", "));
+        }
+        if (verification.blockOptimization) {
+          parts.push("Block Optimization: yes");
+        }
+      }
+
+      return parts.join("\n");
+    }).join("\n\n")
+  );
+
+  return lines.join("\n");
+}
+
+function formatAdsRecommendations(report) {
+  const summaryParts = Object.keys(report.summary.byRecommendation || {})
+    .sort()
+    .map(key => key + ": " + report.summary.byRecommendation[key]);
+  const lines = [
+    "Ads recommendations",
+    "Период: " + report.dateFrom + " -> " + report.dateTo,
+    "Offer filter: " + (report.offerId || "-"),
+    "Mode: " + (report.mode || "recommendation_only"),
+    "Campaign mutations: no",
+    "",
+    "Summary:",
+    "Total: " + report.summary.total,
+    "Low confidence: " + report.summary.lowConfidence,
+    "By decision: " + (summaryParts.length ? summaryParts.join(", ") : "-")
+  ];
+
+  if (report.skuDayVerification?.summary) {
+    lines.push(
+      "",
+      "sku_day verification:",
+      "Rows checked: " + report.skuDayVerification.summary.rowsChecked,
+      "Blocked rows: " + report.skuDayVerification.summary.blockedRows,
+      "Mismatch flags: " + report.skuDayVerification.summary.mismatchFlags
+    );
+  }
+
+  if (!report.recommendations.length) {
+    lines.push("", "No recommendations found.");
+    return lines.join("\n");
+  }
+
+  lines.push("");
+  lines.push(
+    report.recommendations.slice(0, 20).map(item => {
+      const parts = [
+        "Date: " + (item.date || "-"),
+        "SKU: " + (item.sku || "-"),
+        "Offer ID: " + (item.offerId || "-"),
+        "Campaign: " + (item.campaignId || "-"),
+        "Campaign Name: " + (item.campaignName || "-"),
+        "Spend: " + item.currentSpend,
+        "Revenue: " + item.revenue,
+        "GP: " + item.grossProfitEstimate,
+        "Margin: " + item.margin,
+        "DRR/ACOS: " + item.drr,
+        "Stock Days: " + (item.stockDays === null ? "-" : item.stockDays),
+        "Priority: " + (item.priorityFlag ? "yes" : "no"),
+        "Decision: " + item.recommendation,
+        "Reason: " + item.reason,
+        "Expected effect: " + item.expectedEffect,
+        "Confidence: " + item.confidence
+      ];
+
+      if (item.priorityFlag && item.stopLoss) {
+        parts.push("Strategic priority override: yes");
+        parts.push("Stop-loss: " + item.stopLoss);
+      }
+
+      return parts.join("\n");
+    }).join("\n\n")
+  );
+
+  return lines.join("\n");
+}
+
+function formatAdsBudgetPlan(plan) {
+  const summaryParts = Object.keys(plan.summary.byRecommendation || {})
+    .sort()
+    .map(key => key + ": " + plan.summary.byRecommendation[key]);
+  const lines = [
+    "Ads budget plan",
+    "Month: " + plan.month,
+    "Период: " + plan.dateFrom + " -> " + plan.dateTo,
+    "Mode: " + (plan.mode || "recommendation_only"),
+    "Campaign mutations: no",
+    "",
+    "Summary:",
+    "Current spend: " + plan.summary.currentSpend,
+    "Recommended delta: " + plan.summary.recommendedSpendDelta,
+    "Planned spend preview: " + plan.summary.plannedSpend,
+    "Scale candidates: " + plan.summary.scaleCandidates,
+    "Reduce candidates: " + plan.summary.reduceCandidates,
+    "Restock first: " + plan.summary.restockFirst,
+    "Needs data: " + plan.summary.needsData,
+    "By decision: " + (summaryParts.length ? summaryParts.join(", ") : "-")
+  ];
+
+  if (!plan.items.length) {
+    lines.push("", "No budget plan items found.");
+    return lines.join("\n");
+  }
+
+  lines.push("");
+  lines.push(
+    plan.items.slice(0, 20).map(item => {
+      return [
+        "SKU: " + (item.sku || "-"),
+        "Offer ID: " + (item.offerId || "-"),
+        "Campaign: " + (item.campaignId || "-"),
+        "Current spend: " + item.currentSpend,
+        "Delta preview: " + item.recommendedSpendDelta,
+        "Planned spend preview: " + item.plannedSpend,
+        "Decision: " + item.recommendation,
+        "Reason: " + item.reason,
+        "Confidence: " + item.confidence
+      ].join("\n");
+    }).join("\n\n")
+  );
+
+  return lines.join("\n");
+}
+
+function formatAdsOptimizerAudit(audit) {
+  const gateParts = Object.keys(audit.gateFailures || {})
+    .sort()
+    .map(key => key + ": " + audit.gateFailures[key]);
+  const reasonParts = Object.keys(audit.blockedByReason || {})
+    .sort((left, right) => audit.blockedByReason[right] - audit.blockedByReason[left])
+    .slice(0, 10)
+    .map(key => "- " + audit.blockedByReason[key] + "x " + key);
+  const lines = [
+    "Ads optimizer audit",
+    "Период: " + audit.dateFrom + " -> " + audit.dateTo,
+    "Mode: " + (audit.mode || "recommendation_only"),
+    "Campaign mutations: no",
+    "",
+    "Summary:",
+    "Rows checked: " + audit.summary.rowsChecked,
+    "Ready to scale: " + audit.summary.readyToScale,
+    "Blocked for data: " + audit.summary.blockedForData,
+    "Blocked for stock: " + audit.summary.blockedForStock,
+    "Profit protection: " + audit.summary.profitProtection,
+    "Gate failures: " + (gateParts.length ? gateParts.join(", ") : "-")
+  ];
+
+  if (audit.skuDayVerification?.summary) {
+    lines.push(
+      "",
+      "sku_day verification:",
+      "Rows checked: " + audit.skuDayVerification.summary.rowsChecked,
+      "Blocked rows: " + audit.skuDayVerification.summary.blockedRows,
+      "Mismatch flags: " + audit.skuDayVerification.summary.mismatchFlags,
+      "Warnings: " + (audit.skuDayVerification.summary.warnings || []).join(", ")
+    );
+  }
+
+  if (reasonParts.length) {
+    lines.push("", "Top reasons:", ...reasonParts);
+  }
+
+  return lines.join("\n");
+}
+
 function formatAdsDebug(debug) {
   const lines = [
     "Ads debug",
@@ -2044,6 +2331,7 @@ async function sendLongMessage(bot, chatId, text) {
 
 function startTelegramBot({
   adsDiagnosticsService,
+  adsOptimizerService,
   analyticsService,
   alertsService,
   cogsService,
@@ -2059,6 +2347,7 @@ function startTelegramBot({
   replenishmentService,
   reportBuilderService,
   salesFactsService,
+  skuDayService,
   token,
   jobsService,
   ollamaService,
@@ -3173,6 +3462,48 @@ function startTelegramBot({
           await sendLongMessage(tgBot, chatId, formatAdsSku(report));
           return;
         }
+
+        if (adsCommand.type === "sku_day") {
+          const report = await skuDayService.buildRows(adsCommand);
+          await sendLongMessage(tgBot, chatId, formatAdsSkuDay(report));
+          return;
+        }
+
+        if (adsCommand.type === "recommendations" || adsCommand.type === "optimize_preview") {
+          const report = await adsOptimizerService.buildRecommendations(adsCommand);
+          await sendLongMessage(tgBot, chatId, formatAdsRecommendations(report));
+          return;
+        }
+
+        if (adsCommand.type === "sku_decision") {
+          const report = await adsOptimizerService.buildSkuDecision(adsCommand);
+          await sendLongMessage(tgBot, chatId, formatAdsRecommendations(report));
+          return;
+        }
+
+        if (adsCommand.type === "budget_plan") {
+          if (adsCommand.toSheet) {
+            const exported = await adsOptimizerService.exportBudgetPlan(adsCommand);
+            await sendLongMessage(
+              tgBot,
+              chatId,
+              "Записал Ads Budget Plan: " +
+                exported.writeResult.rowsWritten +
+                " строк в " +
+                exported.writeResult.tabName
+            );
+            return;
+          }
+          const plan = await adsOptimizerService.buildBudgetPlan(adsCommand);
+          await sendLongMessage(tgBot, chatId, formatAdsBudgetPlan(plan));
+          return;
+        }
+
+        if (adsCommand.type === "optimizer_audit") {
+          const audit = await adsOptimizerService.buildAudit(adsCommand);
+          await sendLongMessage(tgBot, chatId, formatAdsOptimizerAudit(audit));
+          return;
+        }
       } catch (err) {
         await safeSendMessage(tgBot, chatId, "Ошибка ads " + adsCommand.type + ": " + err.message);
         return;
@@ -3507,9 +3838,13 @@ function startTelegramBot({
 }
 
 module.exports = {
+  formatAdsBudgetPlan,
   formatAdsDebug,
+  formatAdsOptimizerAudit,
   formatAdsCampaigns,
+  formatAdsRecommendations,
   formatAdsSku,
+  formatAdsSkuDay,
   formatAdsGaps,
   formatAdsGapsDebug,
   formatAdsFactors,

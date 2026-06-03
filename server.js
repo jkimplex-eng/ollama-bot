@@ -3,6 +3,7 @@ const env = require("./config/env");
 const { createApiRouter, createFileState } = require("./routes/api");
 const { createAnalyticsService } = require("./services/analytics");
 const { createAdsDiagnosticsService } = require("./services/adsDiagnostics");
+const { createAdsOptimizerService } = require("./services/adsOptimizer");
 const { createAlertsService } = require("./services/alerts");
 const { createCalendarService } = require("./services/calendar");
 const { createCogsService } = require("./services/cogs");
@@ -22,6 +23,7 @@ const { createReplenishmentService } = require("./services/replenishment");
 const { createReportBuilderService } = require("./services/reportBuilder");
 const { createSalesFactsService } = require("./services/salesFacts");
 const { createSheetsService } = require("./services/sheets");
+const { createSkuDayService } = require("./services/skuDay");
 const { startTelegramBot } = require("./services/telegram");
 const { createWarehouseMappingService } = require("./services/warehouseMapping");
 
@@ -178,6 +180,20 @@ const decisionEngine = createDecisionEngine({
   logFile: env.paths.jobsLogFile
 });
 
+const skuDayService = createSkuDayService({
+  cogsService,
+  financeFactsService,
+  ozonService,
+  performanceService,
+  prioritySkusService,
+  salesFactsService
+});
+
+const adsOptimizerService = createAdsOptimizerService({
+  sheetsService,
+  skuDayService
+});
+
 const alertsService = createAlertsService({
   enabled: env.alerts.enabled,
   intervalMs: env.alerts.intervalMs,
@@ -226,6 +242,7 @@ app.use(
 
 const activeTelegramService = startTelegramBot({
   adsDiagnosticsService,
+  adsOptimizerService,
   analyticsService,
   alertsService,
   cogsService,
@@ -240,6 +257,7 @@ const activeTelegramService = startTelegramBot({
   replenishmentService,
   reportBuilderService,
   salesFactsService,
+  skuDayService,
   externalTrafficPlanService,
   warehouseMappingService,
   token: env.telegramBotToken,
