@@ -508,6 +508,48 @@ function buildSalesIndex(rows) {
   return { bySku, byOfferId };
 }
 
+function buildSalesCandidates(rows, sku, offerId) {
+  const normalizedSku = String(sku || "").trim();
+  const normalizedOfferId = String(offerId || "").trim();
+  const normalizedOfferIdKey = normalizedOfferId.toLowerCase();
+  const candidates = [];
+
+  for (const row of rows || []) {
+    const rowSku = String(row?.sku || "").trim();
+    const rowOfferId = String(row?.offerId || "").trim();
+    const rowOfferIdKey = rowOfferId.toLowerCase();
+    const reasons = [];
+
+    if (normalizedSku && rowSku && rowSku === normalizedSku) {
+      reasons.push("sku");
+    }
+    if (normalizedOfferId && rowOfferId && rowOfferId === normalizedOfferId) {
+      reasons.push("offerId");
+    }
+    if (
+      normalizedOfferIdKey &&
+      rowOfferIdKey &&
+      rowOfferIdKey === normalizedOfferIdKey &&
+      !reasons.includes("offerId")
+    ) {
+      reasons.push("offerId-case-insensitive");
+    }
+
+    if (reasons.length) {
+      candidates.push({
+        sku: rowSku,
+        offerId: rowOfferId,
+        productName: String(row?.productName || ""),
+        quantity: round2(row?.quantity),
+        revenue: round2(row?.revenue),
+        matchReasons: reasons
+      });
+    }
+  }
+
+  return candidates;
+}
+
 function resolveSliceIdentity(slice, productIndex, salesIndex, cogsService) {
   const sku = String(slice?.sku || "").trim();
   const rawOfferId = String(slice?.offerId || "").trim();
@@ -692,6 +734,61 @@ function getConfidenceLevel({ hasAds, hasSales, hasCogs, hasStock }) {
     return "MEDIUM";
   }
   return "LOW";
+}
+
+async function loadSalesFactsForRange(salesFactsService, ozonService, dateFrom, dateTo) {
+  if (!salesFactsService) {
+    return {
+      rows: [],
+      source: "missing",
+      warning: "Sales facts service unavailable."
+    };
+  }
+
+  const storedRows = salesFactsService.getSalesRowsForDateRange(dateFrom, dateTo);
+  if (storedRows.length) {
+    return {
+      rows: storedRows,
+      source: "local_storage",
+      warning: ""
+    };
+  }
+
+  if (!ozonService || typeof ozonService.getSalesFacts !== "function") {
+    return {
+      rows: [],
+      source: "missing",
+      warning: "Sales facts unavailable for the period."
+    };
+  }
+
+  try {
+    const result = await ozonService.getSalesFacts({
+      dateFrom: dateFrom + "T00:00:00+03:00",
+      dateTo: dateTo + "T23:59:59.999+03:00"
+    });
+    const liveRows = Array.isArray(result?.rows) ? result.rows : [];
+    if (liveRows.length && typeof salesFactsService.saveSalesRows === "function") {
+      salesFactsService.saveSalesRows(liveRows, {
+        dateFrom,
+        dateTo,
+        savedAt: new Date().toISOString(),
+        source: "ads-factors"
+      });
+    }
+
+    return {
+      rows: liveRows,
+      source: liveRows.length ? "live_fetch" : "missing",
+      warning: result?.warning || ""
+    };
+  } catch (err) {
+    return {
+      rows: [],
+      source: "missing",
+      warning: err?.userMessage || err?.message || "Sales facts fetch failed."
+    };
+  }
 }
 
 function buildFinanceAdvertisingBreakdown(financeRows, diagnostics) {
@@ -982,7 +1079,8 @@ function createAdsDiagnosticsService({
     const loaded = await loadInputs(dateFrom, dateTo);
     const totals = summarizeReconciliation(loaded.reconciliation);
     const factorSlices = aggregateFactorSlices(loaded.performanceRows);
-    const salesRows = salesFactsService ? salesFactsService.getSalesRowsForDateRange(dateFrom, dateTo) : [];
+    const salesFactsResult = await loadSalesFactsForRange(salesFactsService, ozonService, dateFrom, dateTo);
+    const salesRows = salesFactsResult.rows;
     const days = Math.max(1, listDates(dateFrom, dateTo).length);
     const warnings = [...loaded.warnings];
     const month = getMonthFromDate(dateFrom);
@@ -1019,12 +1117,16 @@ function createAdsDiagnosticsService({
     const stockIndex = buildStockIndex(stockRows);
     const productIndex = buildProductIndex(products);
     const salesIndex = buildSalesIndex(salesRows);
+    if (salesFactsResult.warning) {
+      warnings.push("Sales facts load warning: " + salesFactsResult.warning);
+    }
     const rows = factorSlices.slice(0, 20).map(slice => {
       const identity = resolveSliceIdentity(slice, productIndex, salesIndex, cogsService);
       const sku = identity.sku;
       const offerId = identity.offerId;
       const offerIdKey = offerId.toLowerCase();
       const salesFact = identity.salesMatch;
+      const salesCandidates = buildSalesCandidates(salesRows, sku, offerId);
       const cogsEntry = identity.cogsEntry;
       const cogsValue = cogsEntry ? toNumber(cogsEntry.cogs) : null;
       const stockAvailable =
@@ -1094,11 +1196,13 @@ function createAdsDiagnosticsService({
           adsSku: sku,
           resolvedOfferId: offerId,
           offerIdSource: identity.offerIdSource,
+          salesFactsSource: salesFactsResult.source,
           salesMatchSource: identity.salesMatchSource,
           cogsSource: identity.cogsResolved ? identity.cogsResolved.source : "none",
           stockSource: stockAvailable !== null && stockAvailable !== undefined ? stockSource : "none",
           productSource
         },
+        salesCandidates,
         warnings: warningsForRow
       };
     });
@@ -1107,6 +1211,8 @@ function createAdsDiagnosticsService({
       dateFrom,
       dateTo,
       rows,
+      salesFactsSource: salesFactsResult.source,
+      salesFactsRowsCount: salesRows.length,
       stockSource,
       productSource,
       warnings
@@ -1118,6 +1224,8 @@ function createAdsDiagnosticsService({
     return {
       dateFrom,
       dateTo,
+      salesFactsSource: report.salesFactsSource,
+      salesFactsRowsCount: report.salesFactsRowsCount,
       stockSource: report.stockSource,
       productSource: report.productSource,
       rows: report.rows.map(item => ({
@@ -1131,7 +1239,8 @@ function createAdsDiagnosticsService({
         cogs: item.cogs,
         coverageStatus: item.coverageStatus,
         confidence: item.confidence,
-        attribution: item.attribution
+        attribution: item.attribution,
+        salesCandidates: item.salesCandidates
       })),
       warnings: report.warnings
     };

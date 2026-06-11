@@ -1931,8 +1931,13 @@ async function run() {
   assert.strictEqual(factorReport.rows[0].confidence, "HIGH");
   assert.strictEqual(factorReport.rows[0].economics, "positive");
   assert.strictEqual(factorReport.rows[0].dataQuality, "reliable");
+  assert.strictEqual(factorReport.salesFactsSource, "local_storage");
+  assert.strictEqual(factorReport.salesFactsRowsCount, 1);
   assert.strictEqual(factorReport.rows[0].attribution.offerIdSource, "product_catalog");
   assert.strictEqual(factorReport.rows[0].attribution.salesMatchSource, "sku");
+  assert.strictEqual(factorReport.rows[0].attribution.salesFactsSource, "local_storage");
+  assert.strictEqual(factorReport.rows[0].salesCandidates.length, 1);
+  assert.deepStrictEqual(factorReport.rows[0].salesCandidates[0].matchReasons, ["sku", "offerId"]);
   assert.ok(formatAdsFactors(factorReport).includes("Confidence: HIGH"));
   assert.ok(formatAdsFactors(factorReport).includes("Offer ID: SJ11"));
   assert.ok(
@@ -1944,11 +1949,17 @@ async function run() {
     dateTo: "2026-05-18"
   });
   assert.strictEqual(factorDebug.rows[0].offerId, "SJ11");
+  assert.strictEqual(factorDebug.salesFactsSource, "local_storage");
+  assert.strictEqual(factorDebug.salesFactsRowsCount, 1);
   assert.strictEqual(factorDebug.rows[0].attribution.offerIdSource, "product_catalog");
   assert.strictEqual(factorDebug.rows[0].attribution.salesMatchSource, "sku");
+  assert.strictEqual(factorDebug.rows[0].attribution.salesFactsSource, "local_storage");
   assert.ok(formatAdsFactorsDebug(factorDebug).includes("Resolved Offer ID: SJ11"));
   assert.ok(formatAdsFactorsDebug(factorDebug).includes("offerIdSource=product_catalog"));
   assert.ok(formatAdsFactorsDebug(factorDebug).includes("salesMatchSource=sku"));
+  assert.ok(formatAdsFactorsDebug(factorDebug).includes("Sales facts source: local_storage"));
+  assert.ok(formatAdsFactorsDebug(factorDebug).includes("Candidate Sales Rows:"));
+  assert.ok(formatAdsFactorsDebug(factorDebug).includes("matchedBy=sku, offerId"));
 
   const factorMissingCogsService = createAdsDiagnosticsService({
     cogsService: {
@@ -2021,7 +2032,11 @@ async function run() {
   assert.strictEqual(factorMissing.rows[0].organicSalesQuantity, 5);
   assert.strictEqual(factorMissing.rows[0].coverageStatus, "PARTIALLY_COVERED");
   assert.strictEqual(factorMissing.rows[0].confidence, "LOW");
+  assert.strictEqual(factorMissing.salesFactsSource, "local_storage");
   assert.strictEqual(factorMissing.rows[0].attribution.salesMatchSource, "offerId-case-insensitive");
+  assert.strictEqual(factorMissing.rows[0].attribution.salesFactsSource, "local_storage");
+  assert.strictEqual(factorMissing.rows[0].salesCandidates.length, 1);
+  assert.deepStrictEqual(factorMissing.rows[0].salesCandidates[0].matchReasons, ["offerId-case-insensitive"]);
   assert.ok(factorMissing.rows[0].warnings.includes("COGS unknown"));
   assert.ok(factorMissing.rows[0].warnings.includes("stock unknown"));
 
@@ -2093,6 +2108,97 @@ async function run() {
   assert.strictEqual(factorMedium.rows[0].grossProfitEstimate, 1900);
   assert.strictEqual(factorMedium.rows[0].confidence, "MEDIUM");
   assert.strictEqual(factorMedium.rows[0].stockRisk, "unknown stock");
+  assert.strictEqual(factorMedium.salesFactsSource, "local_storage");
+
+  const fetchedSalesRows = [];
+  const factorLiveFetchService = createAdsDiagnosticsService({
+    cogsService: {
+      resolveCogs: () => ({
+        match: { cogs: 350, logisticsToMp: 0, offerId: "SJ11" },
+        source: "sku"
+      })
+    },
+    externalTrafficPlanService: {
+      getPlan: () => null
+    },
+    financeFactsService: {
+      getFinanceRowsForDateRange: () => [{ date: "2026-05-18", advertising: -700 }]
+    },
+    ozonService: {
+      getFinanceFacts: async () => ({
+        rows: [{ date: "2026-05-18", advertising: -700 }],
+        diagnostics: { advertisingGroups: [], advertisingGroupsByDate: [] }
+      }),
+      getProducts: async () => [
+        {
+          sku: "729504056",
+          offerId: "SJ11",
+          name: "Успокаивающая сыворотка для лица"
+        }
+      ],
+      getSalesFacts: async () => ({
+        rows: [
+          {
+            date: "2026-05-18",
+            sku: "729504056",
+            offerId: "sj11",
+            productName: "Успокаивающая сыворотка для лица",
+            quantity: 2,
+            revenue: 5000
+          }
+        ]
+      }),
+      getNormalizedStockRows: async () => {
+        throw new Error("stocks unavailable");
+      }
+    },
+    performanceService: {
+      getStoredRowsForDateRange: async () => [
+        {
+          date: "2026-05-18",
+          campaignId: "404",
+          campaignName: "Campaign D",
+          sku: "729504056",
+          productName: "Успокаивающая сыворотка для лица",
+          spend: 600,
+          impressions: 700,
+          clicks: 14,
+          orders: 0,
+          revenue: 0
+        }
+      ]
+    },
+    salesFactsService: {
+      getSalesRowsForDateRange: () => [],
+      saveSalesRows: rows => fetchedSalesRows.push(...rows)
+    },
+    prioritySkusService: {
+      list: () => []
+    }
+  });
+  const factorLiveFetch = await factorLiveFetchService.buildFactors({
+    dateFrom: "2026-05-18",
+    dateTo: "2026-05-18"
+  });
+  assert.strictEqual(factorLiveFetch.salesFactsSource, "live_fetch");
+  assert.strictEqual(factorLiveFetch.salesFactsRowsCount, 1);
+  assert.strictEqual(fetchedSalesRows.length, 1);
+  assert.strictEqual(factorLiveFetch.rows[0].offerId, "SJ11");
+  assert.strictEqual(factorLiveFetch.rows[0].salesRowsMatched, 1);
+  assert.strictEqual(factorLiveFetch.rows[0].salesRevenue, 5000);
+  assert.strictEqual(factorLiveFetch.rows[0].organicSalesQuantity, 2);
+  assert.strictEqual(factorLiveFetch.rows[0].grossProfitEstimate, 3700);
+  assert.strictEqual(factorLiveFetch.rows[0].confidence, "MEDIUM");
+  assert.strictEqual(factorLiveFetch.rows[0].attribution.salesFactsSource, "live_fetch");
+
+  const factorLiveFetchDebug = await factorLiveFetchService.buildFactorsDebug({
+    dateFrom: "2026-05-18",
+    dateTo: "2026-05-18"
+  });
+  assert.strictEqual(factorLiveFetchDebug.salesFactsSource, "live_fetch");
+  assert.strictEqual(factorLiveFetchDebug.salesFactsRowsCount, 1);
+  assert.ok(formatAdsFactorsDebug(factorLiveFetchDebug).includes("Sales facts source: live_fetch"));
+  assert.ok(formatAdsFactorsDebug(factorLiveFetchDebug).includes("matchedBy=sku, offerId-case-insensitive"));
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ollama-bot-cogs-"));
   const cogsService = createCogsService({

@@ -1625,6 +1625,8 @@ function formatAdsFactorsDebug(report) {
   const lines = [
     "Ads factors debug",
     "Период: " + report.dateFrom + " -> " + report.dateTo,
+    "Sales facts source: " + (report.salesFactsSource || "missing"),
+    "Sales facts rows count: " + (report.salesFactsRowsCount || 0),
     "Product source: " + (report.productSource || "unavailable"),
     "Stock source: " + (report.stockSource || "unavailable"),
     ""
@@ -1650,12 +1652,32 @@ function formatAdsFactorsDebug(report) {
             [
               "ads sku=" + (item.attribution.adsSku || "-"),
               "offerIdSource=" + (item.attribution.offerIdSource || "none"),
+              "salesFactsSource=" + (item.attribution.salesFactsSource || "missing"),
               "salesMatchSource=" + (item.attribution.salesMatchSource || "none"),
               "cogsSource=" + (item.attribution.cogsSource || "none"),
               "stockSource=" + (item.attribution.stockSource || "none"),
               "productSource=" + (item.attribution.productSource || "none")
             ].join(", ")
         ];
+
+        if (item.salesCandidates?.length) {
+          parts.push(
+            "Candidate Sales Rows:\n" +
+              item.salesCandidates
+                .map(candidate =>
+                  [
+                    "sku=" + (candidate.sku || "-"),
+                    "offerId=" + (candidate.offerId || "-"),
+                    "revenue=" + candidate.revenue,
+                    "quantity=" + candidate.quantity,
+                    "matchedBy=" + candidate.matchReasons.join(", ")
+                  ].join(" | ")
+                )
+                .join("\n")
+          );
+        } else {
+          parts.push("Candidate Sales Rows: none");
+        }
         return parts.join("\n");
       }).join("\n\n")
     );
