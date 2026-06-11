@@ -238,6 +238,33 @@ Recommended future direction:
 - keep Ollama as fallback
 - do not let AI break stable commands
 
+## Planned browser automation track
+
+A separate browser automation track is planned and should stay isolated from the stable Node.js Telegram bot until validated.
+
+Planned project:
+
+- `ozon-ai-agent` as a separate Python project
+
+Planned stack:
+
+- `browser-use`
+- Playwright
+
+Planned behavior:
+
+- open `seller.ozon.ru`
+- reuse the user's existing authenticated browser session/profile
+- navigate to analytics or reports sections
+- save HTML and screenshot snapshots of the current state into `data/raw`
+
+Important guardrails:
+
+- do not automate password entry
+- do not submit login credentials automatically
+- rely on an already authorized browser profile/session
+- keep this flow read-oriented until explicit approval for broader automation
+
 ## Orchestration strategy
 
 Do not add a complex orchestrator yet.
@@ -253,6 +280,8 @@ First finish stable project modules:
 7. dashboard
 8. AI provider abstraction
 9. only then agent orchestrator/multi-agent system
+
+Browser automation work should be developed as a separate project track, not merged into the stable production Telegram bot core until the session/profile handling and snapshot workflow are proven safe.
 
 Current orchestration is mostly in:
 

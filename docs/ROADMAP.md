@@ -50,3 +50,12 @@
 
 - add project knowledge retrieval
 - keep it isolated from stable production flows
+
+## Browser Automation
+
+- create separate Python project `ozon-ai-agent`
+- connect `browser-use` and Playwright
+- reuse the user's existing authenticated browser profile/session for `seller.ozon.ru`
+- do not automate password entry or login form submission
+- navigate to seller analytics/reports pages and save current HTML/screenshot snapshots into `data/raw`
+- keep browser automation isolated from stable Telegram bot production flows until validated

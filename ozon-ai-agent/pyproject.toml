@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ozon-ai-agent"
+version = "0.1.0"
+description = "Read-only browser automation helpers for Ozon Seller analytics capture."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "browser-use>=0.2.5",
+  "playwright>=1.54.0",
+  "python-dotenv>=1.0.1"
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.scripts]
+ozon-capture = "ozon_ai_agent.capture:main"
