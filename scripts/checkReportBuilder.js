@@ -58,6 +58,8 @@ const {
   formatAdsFactors,
   formatAdsFactorsDebug,
   formatAdsOptimizerAudit,
+  formatOzonCaptureResult,
+  formatOzonCaptureStatus,
   formatAdsRecommendations,
   formatAdsSku,
   formatAdsSkuDay,
@@ -67,11 +69,16 @@ const {
   parseDailyControlCommand,
   parseFinanceCommand,
   parseManagementCommand,
+  parseOzonCaptureCommand,
   parseReplenishmentCommand,
   parseReportCommand,
   parseSalesCommand
 } = require("../services/telegram");
 const { splitMessageByLines } = require("../services/telegram");
+const {
+  buildCaptureArgs,
+  parseCaptureStdout
+} = require("../services/ozonBrowserCapture");
 const { createCogsService, parseBulkImportText } = require("../services/cogs");
 const { createFinanceFactsService } = require("../services/financeFacts");
 const {
@@ -463,6 +470,82 @@ async function run() {
     kind: "summary_preview",
     dateInput: "yesterday"
   });
+  assert.deepStrictEqual(parseOzonCaptureCommand("/ozon capture"), {
+    type: "run"
+  });
+  assert.deepStrictEqual(parseOzonCaptureCommand("/ozon capture debug"), {
+    type: "debug"
+  });
+  assert.deepStrictEqual(parseOzonCaptureCommand("/ozon capture status"), {
+    type: "status"
+  });
+  assert.strictEqual(
+    formatOzonCaptureStatus({
+      enabled: true,
+      pythonExists: true,
+      scriptExists: true,
+      userDataDirExists: true,
+      connectionMode: "cdp",
+      cdpUrl: "http://127.0.0.1:9222",
+      profileDirectory: "Default"
+    }).includes("Connection mode: cdp"),
+    true
+  );
+  assert.strictEqual(
+    formatOzonCaptureResult({
+      meta: {
+        current_url: "https://seller.ozon.ru/app/analytics",
+        title: "Ozon: Торговая площадка",
+        connection_mode: "cdp",
+        profile_mode: "attached_browser",
+        artifacts: {
+          html: "page.html",
+          screenshot: "page.png"
+        },
+        page_state: {
+          challenge_detected: false,
+          auth_required_detected: false,
+          challenge_markers: [],
+          auth_markers: []
+        }
+      }
+    }).includes("Auth required: no"),
+    true
+  );
+  assert.deepStrictEqual(
+    buildCaptureArgs({
+      scriptPath: "capture.py",
+      userDataDir: "C:\\Users\\user\\AppData\\Local\\Microsoft\\Edge\\User Data",
+      profileDirectory: "Default",
+      connectionMode: "cdp",
+      browserChannel: "msedge",
+      cdpUrl: "http://127.0.0.1:9222",
+      outputRoot: "C:\\temp\\raw",
+      headless: false
+    }),
+    [
+      "capture.py",
+      "--user-data-dir",
+      "C:\\Users\\user\\AppData\\Local\\Microsoft\\Edge\\User Data",
+      "--profile-directory",
+      "Default",
+      "--connection-mode",
+      "cdp",
+      "--browser-channel",
+      "msedge",
+      "--cdp-url",
+      "http://127.0.0.1:9222",
+      "--output-root",
+      "C:\\temp\\raw"
+    ]
+  );
+  assert.deepStrictEqual(
+    parseCaptureStdout('{"current_url":"https://seller.ozon.ru/app/analytics","page_state":{"challenge_detected":false}}'),
+    {
+      current_url: "https://seller.ozon.ru/app/analytics",
+      page_state: { challenge_detected: false }
+    }
+  );
   assert.deepStrictEqual(parseDailyCommand("/daily summary 2026-05-14"), {
     kind: "summary_preview",
     dateInput: "2026-05-14"

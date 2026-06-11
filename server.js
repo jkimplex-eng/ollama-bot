@@ -16,6 +16,7 @@ const { createFinanceFactsService } = require("./services/financeFacts");
 const { createJobsService } = require("./services/jobs");
 const { createManagementWorkbookService } = require("./services/managementWorkbook");
 const { createOllamaService } = require("./services/ollama");
+const { createOzonBrowserCaptureService } = require("./services/ozonBrowserCapture");
 const { createOzonService } = require("./services/ozon");
 const { createPerformanceService } = require("./services/performance");
 const { createPrioritySkusService } = require("./services/prioritySkus");
@@ -52,6 +53,11 @@ const ozonService = createOzonService({
   apiKey: env.ozonApiKey,
   performanceClientId: env.ozonPerformanceClientId,
   performanceClientSecret: env.ozonPerformanceClientSecret
+});
+
+const ozonBrowserCaptureService = createOzonBrowserCaptureService({
+  ...env.ozonBrowserCapture,
+  rootDir: env.rootDir
 });
 
 const sheetsService = createSheetsService({
@@ -266,6 +272,7 @@ const activeTelegramService = startTelegramBot({
   token: env.telegramBotToken,
   jobsService,
   ollamaService,
+  ozonBrowserCaptureService,
   ozonService,
   sheetsService
 });

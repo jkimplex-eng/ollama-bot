@@ -135,6 +135,9 @@ function getHelpText() {
     "/alerts run",
     "/alerts stop",
     "/alerts settings",
+    "/ozon capture",
+    "/ozon capture debug",
+    "/ozon capture status",
     "/ozon товары",
     "/ozon товары 25",
     "/ozon товары 25 в таблицу",
@@ -460,6 +463,58 @@ function parseOzonProductsCommand(text) {
     limit: match[1] ? Number(match[1]) : 10,
     toSheet: /\sв\sтаблицу$/i.test(normalized)
   };
+}
+
+function parseOzonCaptureCommand(text) {
+  const normalized = text.trim().replace(/\s+/g, " ").toLowerCase();
+  const match = normalized.match(/^\/ozon\s+capture(?:\s+(debug|status))?$/);
+
+  if (!match) {
+    return null;
+  }
+
+  return {
+    type: match[1] || "run"
+  };
+}
+
+function formatOzonCaptureStatus(status) {
+  return [
+    "Ozon capture status",
+    "Enabled: " + (status.enabled ? "yes" : "no"),
+    "Python exists: " + (status.pythonExists ? "yes" : "no"),
+    "Script exists: " + (status.scriptExists ? "yes" : "no"),
+    "User-data dir exists: " + (status.userDataDirExists ? "yes" : "no"),
+    "Connection mode: " + (status.connectionMode || "-"),
+    "CDP URL: " + (status.cdpUrl || "-"),
+    "Profile: " + (status.profileDirectory || "-")
+  ].join("\n");
+}
+
+function formatOzonCaptureResult(result) {
+  const meta = result.meta || {};
+  const pageState = meta.page_state || {};
+  const lines = [
+    "Ozon capture complete",
+    "URL: " + (meta.current_url || "-"),
+    "Title: " + (meta.title || "-"),
+    "Connection mode: " + (meta.connection_mode || "-"),
+    "Profile mode: " + (meta.profile_mode || "-"),
+    "Challenge detected: " + (pageState.challenge_detected ? "yes" : "no"),
+    "Auth required: " + (pageState.auth_required_detected ? "yes" : "no"),
+    "HTML: " + ((meta.artifacts && meta.artifacts.html) || "-"),
+    "Screenshot: " + ((meta.artifacts && meta.artifacts.screenshot) || "-")
+  ];
+
+  if (pageState.challenge_markers && pageState.challenge_markers.length) {
+    lines.push("Challenge markers: " + pageState.challenge_markers.join(", "));
+  }
+
+  if (pageState.auth_markers && pageState.auth_markers.length) {
+    lines.push("Auth markers: " + pageState.auth_markers.join(", "));
+  }
+
+  return lines.join("\n");
 }
 
 function productToSheetRow(product) {
@@ -2373,6 +2428,7 @@ function startTelegramBot({
   token,
   jobsService,
   ollamaService,
+  ozonBrowserCaptureService,
   ozonService,
   sheetsService,
   warehouseMappingService,
@@ -3790,6 +3846,44 @@ function startTelegramBot({
       return;
     }
 
+    const ozonCaptureCommand = parseOzonCaptureCommand(text);
+
+    if (ozonCaptureCommand) {
+      try {
+        if (ozonCaptureCommand.type === "status") {
+          await sendLongMessage(
+            tgBot,
+            chatId,
+            formatOzonCaptureStatus(ozonBrowserCaptureService.getStatus())
+          );
+          return;
+        }
+
+        await tgBot.sendMessage(chatId, "Запускаю локальный Ozon browser capture...");
+        const result = await ozonBrowserCaptureService.runCapture();
+
+        await sendLongMessage(tgBot, chatId, formatOzonCaptureResult(result));
+
+        if (ozonCaptureCommand.type === "debug") {
+          await sendLongMessage(tgBot, chatId, JSON.stringify(result.meta, null, 2));
+        }
+
+        if (result.meta?.artifacts?.screenshot) {
+          try {
+            await tgBot.sendDocument(chatId, result.meta.artifacts.screenshot, {
+              caption: "Ozon Seller screenshot"
+            });
+          } catch (err) {
+            await safeSendMessage(tgBot, chatId, "Не удалось отправить screenshot: " + err.message);
+          }
+        }
+        return;
+      } catch (err) {
+        await safeSendMessage(tgBot, chatId, "Ошибка ozon capture: " + err.message);
+        return;
+      }
+    }
+
     const ozonProductsCommand = parseOzonProductsCommand(text);
 
     if (ozonProductsCommand) {
@@ -3874,6 +3968,8 @@ module.exports = {
   formatAdsReconcile,
   formatAdsReport,
   formatModelsInfo,
+  formatOzonCaptureResult,
+  formatOzonCaptureStatus,
   formatOzonProducts,
   formatPerformanceRows,
   getHelpText,
@@ -3891,6 +3987,7 @@ module.exports = {
   parseManagementCommand,
   parseSalesCommand,
   parseDailyCommand,
+  parseOzonCaptureCommand,
   parseOzonProductsCommand,
   parseReportCommand,
   parsePerformanceCommand,

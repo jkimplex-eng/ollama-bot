@@ -85,5 +85,26 @@ module.exports = {
     enabled: process.env.ALERTS_ENABLED !== "false",
     intervalMs: Number(process.env.ALERTS_INTERVAL_MS || 60 * 60 * 1000),
     lowStockThreshold: Number(process.env.ALERTS_LOW_STOCK_THRESHOLD || 5)
+  },
+  ozonBrowserCapture: {
+    enabled: process.env.OZON_BROWSER_CAPTURE_ENABLED !== "false",
+    pythonPath:
+      process.env.OZON_BROWSER_CAPTURE_PYTHON ||
+      path.join(rootDir, "ozon-ai-agent", ".venv", "Scripts", "python.exe"),
+    scriptPath:
+      process.env.OZON_BROWSER_CAPTURE_SCRIPT ||
+      path.join(rootDir, "ozon-ai-agent", "scripts", "capture_ozon_state.py"),
+    userDataDir:
+      process.env.OZON_BROWSER_CAPTURE_USER_DATA_DIR ||
+      path.join(process.env.LOCALAPPDATA || "", "Microsoft", "Edge", "User Data"),
+    profileDirectory: process.env.OZON_BROWSER_CAPTURE_PROFILE_DIRECTORY || "Default",
+    connectionMode: process.env.OZON_BROWSER_CAPTURE_CONNECTION_MODE || "cdp",
+    cdpUrl: process.env.OZON_BROWSER_CAPTURE_CDP_URL || "http://127.0.0.1:9222",
+    outputRoot:
+      process.env.OZON_BROWSER_CAPTURE_OUTPUT_ROOT ||
+      path.join(rootDir, "ozon-ai-agent", "data", "raw"),
+    browserChannel: process.env.OZON_BROWSER_CAPTURE_BROWSER_CHANNEL || "msedge",
+    timeoutMs: Number(process.env.OZON_BROWSER_CAPTURE_TIMEOUT_MS || 180000),
+    headless: process.env.OZON_BROWSER_CAPTURE_HEADLESS === "true"
   }
 };
