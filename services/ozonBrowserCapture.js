@@ -76,6 +76,7 @@ function createOzonBrowserCaptureService(config) {
 
     return {
       enabled: Boolean(config.enabled),
+      mode: config.mode || "auto",
       pythonPath: config.pythonPath,
       scriptPath: config.scriptPath,
       userDataDir: config.userDataDir,

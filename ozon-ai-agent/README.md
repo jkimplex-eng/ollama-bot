@@ -102,6 +102,48 @@ into:
 data/raw/YYYYMMDD-HHMMSS/
 ```
 
+## Remote worker mode for VPS
+
+When the Telegram bot runs on a VPS, the browser session must stay on the local Windows machine.
+
+Architecture:
+
+```text
+Telegram -> VPS bot queue -> local Windows worker -> existing Edge session -> VPS result upload -> Telegram
+```
+
+1. On the VPS, enable remote queue mode:
+
+```text
+OZON_BROWSER_CAPTURE_MODE=remote_queue
+OZON_CAPTURE_WORKER_ENABLED=true
+OZON_CAPTURE_WORKER_SECRET=<shared secret>
+```
+
+2. On the local Windows machine, keep Edge running with CDP enabled:
+
+```powershell
+& "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" `
+  --remote-debugging-port=9222 `
+  --user-data-dir="C:\Users\user\AppData\Local\Microsoft\Edge\User Data" `
+  --profile-directory=Default
+```
+
+3. Start the polling worker:
+
+```powershell
+python .\scripts\run_remote_capture_worker.py `
+  --server-url "https://your-vps-host" `
+  --worker-secret "<shared secret>" `
+  --user-data-dir "C:\Users\user\AppData\Local\Microsoft\Edge\User Data" `
+  --profile-directory Default `
+  --output-root ".\data\raw" `
+  --connection-mode cdp `
+  --cdp-url "http://127.0.0.1:9222"
+```
+
+After that, Telegram commands sent to the VPS bot can enqueue capture jobs, and the local worker will execute them with the already authorized browser session.
+
 ## Next planned step
 
 - connect `browser-use` to this capture runtime for guided navigation once the session-reuse path is stable

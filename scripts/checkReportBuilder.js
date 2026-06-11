@@ -79,6 +79,7 @@ const {
   buildCaptureArgs,
   parseCaptureStdout
 } = require("../services/ozonBrowserCapture");
+const { createOzonCaptureQueueService } = require("../services/ozonCaptureQueue");
 const { createCogsService, parseBulkImportText } = require("../services/cogs");
 const { createFinanceFactsService } = require("../services/financeFacts");
 const {
@@ -503,6 +504,33 @@ async function run() {
     }).includes("Target section: analytics"),
     true
   );
+  {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ozon-capture-queue-"));
+    const queueService = createOzonCaptureQueueService({
+      filePath: path.join(tempRoot, "queue.json"),
+      jobsDir: path.join(tempRoot, "jobs")
+    });
+    const enqueued = queueService.enqueueJob({
+      chatId: "123",
+      targetSection: "analytics",
+      debug: true,
+      requestedBy: "test"
+    });
+    const claimed = queueService.claimNextJob();
+    assert.strictEqual(claimed.id, enqueued.id);
+    const completed = queueService.completeJob(claimed.id, {
+      meta: {
+        current_url: "https://seller.ozon.ru/app/analytics",
+        artifacts: {}
+      },
+      screenshotBase64: Buffer.from("png").toString("base64"),
+      htmlContent: "<html>ok</html>"
+    });
+    assert.strictEqual(completed.status, "completed");
+    assert.strictEqual(fs.existsSync(completed.result.screenshotPath), true);
+    assert.strictEqual(fs.existsSync(completed.result.htmlPath), true);
+    assert.strictEqual(queueService.getStatus().completed, 1);
+  }
   assert.strictEqual(
     formatOzonCaptureResult({
       meta: {

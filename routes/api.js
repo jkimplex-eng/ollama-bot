@@ -496,7 +496,10 @@ function createApiRouter({
   ollamaService,
   defaultModel,
   cronSecret = "",
-  dailySummaryService
+  dailySummaryService,
+  ozonCaptureQueueService,
+  ozonCaptureWorkerSecret = "",
+  telegramService
 }) {
   const router = Router();
   const upload = multer({
@@ -630,6 +633,45 @@ function createApiRouter({
         ok: false,
         error: err.message
       });
+    }
+  });
+
+  router.post("/api/ozon-capture/claim", (req, res) => {
+    if (!isAuthorizedWorker(req)) {
+      res.status(401).json({ ok: false, error: "Unauthorized" });
+      return;
+    }
+
+    const job = ozonCaptureQueueService.claimNextJob();
+    res.json({ ok: true, job });
+  });
+
+  router.post("/api/ozon-capture/:jobId/complete", async (req, res) => {
+    if (!isAuthorizedWorker(req)) {
+      res.status(401).json({ ok: false, error: "Unauthorized" });
+      return;
+    }
+
+    try {
+      const job = ozonCaptureQueueService.completeJob(req.params.jobId, req.body || {});
+      await sendCaptureResultToTelegram(job);
+      res.json({ ok: true, jobId: job.id });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  router.post("/api/ozon-capture/:jobId/fail", (req, res) => {
+    if (!isAuthorizedWorker(req)) {
+      res.status(401).json({ ok: false, error: "Unauthorized" });
+      return;
+    }
+
+    try {
+      const job = ozonCaptureQueueService.failJob(req.params.jobId, req.body?.error || "");
+      res.json({ ok: true, jobId: job.id });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
     }
   });
 
@@ -799,3 +841,46 @@ module.exports = {
   createApiRouter,
   createFileState
 };
+  function isAuthorizedWorker(req) {
+    return Boolean(
+      ozonCaptureQueueService &&
+      ozonCaptureWorkerSecret &&
+      req.headers["x-worker-secret"] === ozonCaptureWorkerSecret
+    );
+  }
+
+  async function sendCaptureResultToTelegram(job) {
+    if (!telegramService || !job.chatId || !job.result || typeof telegramService.sendText !== "function") {
+      return;
+    }
+
+    const meta = job.result.meta || {};
+    const pageState = meta.page_state || {};
+    const lines = [
+      "Ozon capture complete",
+      "Target section: " + (meta.target_section || job.targetSection || "-"),
+      "URL: " + (meta.current_url || "-"),
+      "Title: " + (meta.title || "-"),
+      "Connection mode: " + (meta.connection_mode || "-"),
+      "Challenge detected: " + (pageState.challenge_detected ? "yes" : "no"),
+      "Auth required: " + (pageState.auth_required_detected ? "yes" : "no"),
+      "HTML: " + ((meta.artifacts && meta.artifacts.html) || "-"),
+      "Screenshot: " + ((meta.artifacts && meta.artifacts.screenshot) || "-")
+    ];
+
+    await telegramService.sendText(job.chatId, lines.join("\n"));
+
+    if (job.debug) {
+      await telegramService.sendText(job.chatId, JSON.stringify(meta, null, 2));
+    }
+
+    if (job.result.screenshotPath && typeof telegramService.sendDocument === "function") {
+      try {
+        await telegramService.sendDocument(job.chatId, job.result.screenshotPath, {
+          caption: "Ozon Seller screenshot"
+        });
+      } catch (err) {
+        await telegramService.sendText(job.chatId, "Не удалось отправить screenshot: " + err.message);
+      }
+    }
+  }

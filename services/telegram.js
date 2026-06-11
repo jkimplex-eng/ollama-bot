@@ -496,6 +496,7 @@ function formatOzonCaptureStatus(status) {
   return [
     "Ozon capture status",
     "Enabled: " + (status.enabled ? "yes" : "no"),
+    "Mode: " + (status.mode || "auto"),
     "Python exists: " + (status.pythonExists ? "yes" : "no"),
     "Script exists: " + (status.scriptExists ? "yes" : "no"),
     "User-data dir exists: " + (status.userDataDirExists ? "yes" : "no"),
@@ -504,6 +505,10 @@ function formatOzonCaptureStatus(status) {
     "CDP URL: " + (status.cdpUrl || "-"),
     "Profile: " + (status.profileDirectory || "-")
   ].join("\n");
+}
+
+function canRunLocalCapture(status) {
+  return Boolean(status && status.enabled && status.pythonExists && status.scriptExists && status.userDataDirExists);
 }
 
 function formatOzonCaptureResult(result) {
@@ -2445,6 +2450,7 @@ function startTelegramBot({
   jobsService,
   ollamaService,
   ozonBrowserCaptureService,
+  ozonCaptureQueueService,
   ozonService,
   sheetsService,
   warehouseMappingService,
@@ -3867,20 +3873,65 @@ function startTelegramBot({
     if (ozonCaptureCommand) {
       try {
         if (ozonCaptureCommand.type === "status") {
+          const status = ozonBrowserCaptureService.getStatus();
+          const queueStatus = ozonCaptureQueueService?.enabled ? ozonCaptureQueueService.getStatus() : null;
           await sendLongMessage(
             tgBot,
             chatId,
-            formatOzonCaptureStatus(ozonBrowserCaptureService.getStatus())
+            [
+              formatOzonCaptureStatus(status),
+              queueStatus
+                ? [
+                    "",
+                    "Remote queue:",
+                    "Pending: " + queueStatus.pending,
+                    "Claimed: " + queueStatus.claimed,
+                    "Completed: " + queueStatus.completed,
+                    "Failed: " + queueStatus.failed
+                  ].join("\n")
+                : ""
+            ].filter(Boolean).join("\n")
           );
           return;
         }
 
+        const captureStatus = ozonBrowserCaptureService.getStatus();
         const targetLabel =
           ozonCaptureCommand.targetSection === "analytics"
             ? "analytics"
             : ozonCaptureCommand.targetSection === "reports"
               ? "reports"
               : "auto";
+        const shouldQueueRemote =
+          captureStatus.mode === "remote_queue" ||
+          (captureStatus.mode === "auto" && !canRunLocalCapture(captureStatus));
+
+        if (shouldQueueRemote) {
+          if (!ozonCaptureQueueService?.enabled) {
+            await safeSendMessage(tgBot, chatId, "Remote capture queue is not configured.");
+            return;
+          }
+
+          const job = ozonCaptureQueueService.enqueueJob({
+            chatId,
+            targetSection: ozonCaptureCommand.targetSection,
+            debug: ozonCaptureCommand.type === "debug",
+            requestedBy: "telegram"
+          });
+          await sendLongMessage(
+            tgBot,
+            chatId,
+            [
+              "Ozon capture job queued",
+              "Job ID: " + job.id,
+              "Target section: " + job.targetSection,
+              "Mode: remote_queue",
+              "Статус придёт сюда после выполнения локальным worker."
+            ].join("\n")
+          );
+          return;
+        }
+
         await tgBot.sendMessage(chatId, "Запускаю локальный Ozon browser capture (" + targetLabel + ")...");
         const result = await ozonBrowserCaptureService.runCapture({
           targetSection: ozonCaptureCommand.targetSection

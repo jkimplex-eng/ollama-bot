@@ -17,6 +17,7 @@ const { createJobsService } = require("./services/jobs");
 const { createManagementWorkbookService } = require("./services/managementWorkbook");
 const { createOllamaService } = require("./services/ollama");
 const { createOzonBrowserCaptureService } = require("./services/ozonBrowserCapture");
+const { createOzonCaptureQueueService } = require("./services/ozonCaptureQueue");
 const { createOzonService } = require("./services/ozon");
 const { createPerformanceService } = require("./services/performance");
 const { createPrioritySkusService } = require("./services/prioritySkus");
@@ -58,6 +59,12 @@ const ozonService = createOzonService({
 const ozonBrowserCaptureService = createOzonBrowserCaptureService({
   ...env.ozonBrowserCapture,
   rootDir: env.rootDir
+});
+
+const ozonCaptureQueueService = createOzonCaptureQueueService({
+  enabled: env.ozonCaptureWorker.enabled && Boolean(env.ozonCaptureWorker.secret),
+  filePath: env.paths.ozonCaptureQueueFile,
+  jobsDir: env.paths.ozonCaptureJobsDir
 });
 
 const sheetsService = createSheetsService({
@@ -238,11 +245,14 @@ const dailySummaryService = createDailySummaryService({
   telegramService
 });
 
-app.use(express.json({ limit: "5mb" }));
+app.use(express.json({ limit: "25mb" }));
 app.use(
   createApiRouter({
     cronSecret: env.cronSecret,
     dailySummaryService,
+    ozonCaptureQueueService,
+    ozonCaptureWorkerSecret: env.ozonCaptureWorker.secret,
+    telegramService,
     state,
     ollamaService,
     defaultModel: ollamaService.getModels().chat
@@ -273,6 +283,7 @@ const activeTelegramService = startTelegramBot({
   jobsService,
   ollamaService,
   ozonBrowserCaptureService,
+  ozonCaptureQueueService,
   ozonService,
   sheetsService
 });

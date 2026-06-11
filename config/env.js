@@ -66,6 +66,8 @@ module.exports = {
     salesRowsFile: path.join(rootDir, "data", "sales-rows.json"),
     financeRowsFile: path.join(rootDir, "data", "finance-rows.json"),
     dailyAutoStateFile: path.join(rootDir, "data", "daily-auto-state.json"),
+    ozonCaptureQueueFile: path.join(rootDir, "data", "ozon-capture-queue.json"),
+    ozonCaptureJobsDir: path.join(rootDir, "data", "ozon-capture-jobs"),
     performanceReportsFile: path.join(rootDir, "data", "performance-reports.json"),
     performanceRowsFile: path.join(rootDir, "data", "performance-rows.json"),
     performanceQueueFile: path.join(rootDir, "data", "performance-queue.json"),
@@ -88,6 +90,7 @@ module.exports = {
   },
   ozonBrowserCapture: {
     enabled: process.env.OZON_BROWSER_CAPTURE_ENABLED !== "false",
+    mode: process.env.OZON_BROWSER_CAPTURE_MODE || "auto",
     pythonPath:
       process.env.OZON_BROWSER_CAPTURE_PYTHON ||
       path.join(rootDir, "ozon-ai-agent", ".venv", "Scripts", "python.exe"),
@@ -107,5 +110,9 @@ module.exports = {
     browserChannel: process.env.OZON_BROWSER_CAPTURE_BROWSER_CHANNEL || "msedge",
     timeoutMs: Number(process.env.OZON_BROWSER_CAPTURE_TIMEOUT_MS || 180000),
     headless: process.env.OZON_BROWSER_CAPTURE_HEADLESS === "true"
+  },
+  ozonCaptureWorker: {
+    enabled: process.env.OZON_CAPTURE_WORKER_ENABLED === "true",
+    secret: process.env.OZON_CAPTURE_WORKER_SECRET || ""
   }
 };
