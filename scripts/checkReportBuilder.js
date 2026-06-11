@@ -471,13 +471,24 @@ async function run() {
     dateInput: "yesterday"
   });
   assert.deepStrictEqual(parseOzonCaptureCommand("/ozon capture"), {
-    type: "run"
+    type: "run",
+    targetSection: "auto"
   });
   assert.deepStrictEqual(parseOzonCaptureCommand("/ozon capture debug"), {
-    type: "debug"
+    type: "debug",
+    targetSection: "auto"
   });
   assert.deepStrictEqual(parseOzonCaptureCommand("/ozon capture status"), {
-    type: "status"
+    type: "status",
+    targetSection: "auto"
+  });
+  assert.deepStrictEqual(parseOzonCaptureCommand("/ozon analytics capture"), {
+    type: "run",
+    targetSection: "analytics"
+  });
+  assert.deepStrictEqual(parseOzonCaptureCommand("/ozon reports capture debug"), {
+    type: "debug",
+    targetSection: "reports"
   });
   assert.strictEqual(
     formatOzonCaptureStatus({
@@ -485,10 +496,11 @@ async function run() {
       pythonExists: true,
       scriptExists: true,
       userDataDirExists: true,
+      targetSection: "analytics",
       connectionMode: "cdp",
       cdpUrl: "http://127.0.0.1:9222",
       profileDirectory: "Default"
-    }).includes("Connection mode: cdp"),
+    }).includes("Target section: analytics"),
     true
   );
   assert.strictEqual(
@@ -496,6 +508,7 @@ async function run() {
       meta: {
         current_url: "https://seller.ozon.ru/app/analytics",
         title: "Ozon: Торговая площадка",
+        target_section: "analytics",
         connection_mode: "cdp",
         profile_mode: "attached_browser",
         artifacts: {
@@ -517,6 +530,7 @@ async function run() {
       scriptPath: "capture.py",
       userDataDir: "C:\\Users\\user\\AppData\\Local\\Microsoft\\Edge\\User Data",
       profileDirectory: "Default",
+      targetSection: "reports",
       connectionMode: "cdp",
       browserChannel: "msedge",
       cdpUrl: "http://127.0.0.1:9222",
@@ -531,6 +545,8 @@ async function run() {
       "Default",
       "--connection-mode",
       "cdp",
+      "--target-section",
+      "reports",
       "--browser-channel",
       "msedge",
       "--cdp-url",

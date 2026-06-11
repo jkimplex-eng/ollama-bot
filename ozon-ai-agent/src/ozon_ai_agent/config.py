@@ -15,11 +15,16 @@ class CaptureConfig:
     allow_profile_snapshot_fallback: bool = True
     connection_mode: str = "persistent"
     cdp_url: str = "http://127.0.0.1:9222"
+    target_section: str = "auto"
 
 
-CANDIDATE_REPORT_URLS = [
-    "https://seller.ozon.ru/app/analytics",
-    "https://seller.ozon.ru/analytics",
-    "https://seller.ozon.ru/app/reports",
-    "https://seller.ozon.ru/reports",
-]
+SECTION_URLS = {
+    "analytics": [
+        "https://seller.ozon.ru/app/analytics",
+        "https://seller.ozon.ru/analytics",
+    ],
+    "reports": [
+        "https://seller.ozon.ru/app/reports",
+        "https://seller.ozon.ru/reports",
+    ],
+}

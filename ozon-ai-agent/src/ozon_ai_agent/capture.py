@@ -12,7 +12,7 @@ from pathlib import Path
 from playwright.sync_api import Error as PlaywrightError, sync_playwright
 
 from .browser_use_bridge import get_browser_use_status
-from .config import CANDIDATE_REPORT_URLS, CaptureConfig
+from .config import CaptureConfig, SECTION_URLS
 
 DEFAULT_OUTPUT_ROOT = Path(__file__).resolve().parents[2] / "data" / "raw"
 
@@ -137,6 +137,16 @@ def detect_challenge_state(page) -> dict[str, object]:
     }
 
 
+def get_candidate_urls(target_section: str) -> list[str]:
+    if target_section == "analytics":
+        return SECTION_URLS["analytics"]
+    if target_section == "reports":
+        return SECTION_URLS["reports"]
+    if target_section == "current":
+        return []
+    return SECTION_URLS["analytics"] + SECTION_URLS["reports"]
+
+
 def navigate_to_reports(page, candidate_urls: list[str]) -> list[dict[str, str]]:
     attempts: list[dict[str, str]] = []
     for url in candidate_urls:
@@ -204,7 +214,7 @@ def capture_state(config: CaptureConfig) -> dict:
             page.goto(config.start_url, wait_until="domcontentloaded", timeout=45_000)
             page.wait_for_timeout(2_000)
 
-            attempts = navigate_to_reports(page, CANDIDATE_REPORT_URLS)
+            attempts = navigate_to_reports(page, get_candidate_urls(config.target_section))
             challenge = detect_challenge_state(page)
 
             html_path.write_text(page.content(), encoding="utf-8")
@@ -217,6 +227,7 @@ def capture_state(config: CaptureConfig) -> dict:
                 "title": page.title(),
                 "browser_channel": config.browser_channel,
                 "profile_directory": config.profile_directory,
+                "target_section": config.target_section,
                 "connection_mode": config.connection_mode,
                 "cdp_url": config.cdp_url if config.connection_mode == "cdp" else "",
                 "profile_mode": profile_mode,
@@ -266,6 +277,12 @@ def parse_args() -> argparse.Namespace:
         default="http://127.0.0.1:9222",
         help="CDP URL for an already running browser, used when --connection-mode cdp.",
     )
+    parser.add_argument(
+        "--target-section",
+        choices=["auto", "analytics", "reports", "current"],
+        default="auto",
+        help="Which seller section to target after connecting to the existing session.",
+    )
     return parser.parse_args()
 
 
@@ -279,6 +296,7 @@ def main() -> int:
         headless=bool(args.headless),
         connection_mode=args.connection_mode,
         cdp_url=args.cdp_url,
+        target_section=args.target_section,
     )
     meta = capture_state(config)
     print(json.dumps(meta, ensure_ascii=False, indent=2))

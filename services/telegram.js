@@ -138,6 +138,10 @@ function getHelpText() {
     "/ozon capture",
     "/ozon capture debug",
     "/ozon capture status",
+    "/ozon analytics capture",
+    "/ozon analytics capture debug",
+    "/ozon reports capture",
+    "/ozon reports capture debug",
     "/ozon товары",
     "/ozon товары 25",
     "/ozon товары 25 в таблицу",
@@ -467,6 +471,15 @@ function parseOzonProductsCommand(text) {
 
 function parseOzonCaptureCommand(text) {
   const normalized = text.trim().replace(/\s+/g, " ").toLowerCase();
+  const sectionMatch = normalized.match(/^\/ozon\s+(analytics|reports)\s+capture(?:\s+(debug|status))?$/);
+
+  if (sectionMatch) {
+    return {
+      type: sectionMatch[2] || "run",
+      targetSection: sectionMatch[1]
+    };
+  }
+
   const match = normalized.match(/^\/ozon\s+capture(?:\s+(debug|status))?$/);
 
   if (!match) {
@@ -474,7 +487,8 @@ function parseOzonCaptureCommand(text) {
   }
 
   return {
-    type: match[1] || "run"
+    type: match[1] || "run",
+    targetSection: "auto"
   };
 }
 
@@ -485,6 +499,7 @@ function formatOzonCaptureStatus(status) {
     "Python exists: " + (status.pythonExists ? "yes" : "no"),
     "Script exists: " + (status.scriptExists ? "yes" : "no"),
     "User-data dir exists: " + (status.userDataDirExists ? "yes" : "no"),
+    "Target section: " + (status.targetSection || "auto"),
     "Connection mode: " + (status.connectionMode || "-"),
     "CDP URL: " + (status.cdpUrl || "-"),
     "Profile: " + (status.profileDirectory || "-")
@@ -498,6 +513,7 @@ function formatOzonCaptureResult(result) {
     "Ozon capture complete",
     "URL: " + (meta.current_url || "-"),
     "Title: " + (meta.title || "-"),
+    "Target section: " + (meta.target_section || "-"),
     "Connection mode: " + (meta.connection_mode || "-"),
     "Profile mode: " + (meta.profile_mode || "-"),
     "Challenge detected: " + (pageState.challenge_detected ? "yes" : "no"),
@@ -3859,8 +3875,16 @@ function startTelegramBot({
           return;
         }
 
-        await tgBot.sendMessage(chatId, "Запускаю локальный Ozon browser capture...");
-        const result = await ozonBrowserCaptureService.runCapture();
+        const targetLabel =
+          ozonCaptureCommand.targetSection === "analytics"
+            ? "analytics"
+            : ozonCaptureCommand.targetSection === "reports"
+              ? "reports"
+              : "auto";
+        await tgBot.sendMessage(chatId, "Запускаю локальный Ozon browser capture (" + targetLabel + ")...");
+        const result = await ozonBrowserCaptureService.runCapture({
+          targetSection: ozonCaptureCommand.targetSection
+        });
 
         await sendLongMessage(tgBot, chatId, formatOzonCaptureResult(result));
 

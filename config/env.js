@@ -98,6 +98,7 @@ module.exports = {
       process.env.OZON_BROWSER_CAPTURE_USER_DATA_DIR ||
       path.join(process.env.LOCALAPPDATA || "", "Microsoft", "Edge", "User Data"),
     profileDirectory: process.env.OZON_BROWSER_CAPTURE_PROFILE_DIRECTORY || "Default",
+    targetSection: process.env.OZON_BROWSER_CAPTURE_TARGET_SECTION || "auto",
     connectionMode: process.env.OZON_BROWSER_CAPTURE_CONNECTION_MODE || "cdp",
     cdpUrl: process.env.OZON_BROWSER_CAPTURE_CDP_URL || "http://127.0.0.1:9222",
     outputRoot:

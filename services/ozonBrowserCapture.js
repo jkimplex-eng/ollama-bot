@@ -16,6 +16,10 @@ function buildCaptureArgs(config) {
     config.connectionMode
   ];
 
+  if (config.targetSection) {
+    args.push("--target-section", config.targetSection);
+  }
+
   if (config.browserChannel) {
     args.push("--browser-channel", config.browserChannel);
   }
@@ -58,6 +62,13 @@ function ensurePathExists(filePath, label) {
 }
 
 function createOzonBrowserCaptureService(config) {
+  function buildRunConfig(overrides = {}) {
+    return {
+      ...config,
+      ...overrides
+    };
+  }
+
   function getStatus() {
     const pythonExists = Boolean(config.pythonPath && fs.existsSync(config.pythonPath));
     const scriptExists = Boolean(config.scriptPath && fs.existsSync(config.scriptPath));
@@ -69,6 +80,7 @@ function createOzonBrowserCaptureService(config) {
       scriptPath: config.scriptPath,
       userDataDir: config.userDataDir,
       profileDirectory: config.profileDirectory,
+      targetSection: config.targetSection,
       connectionMode: config.connectionMode,
       cdpUrl: config.cdpUrl,
       pythonExists,
@@ -77,19 +89,21 @@ function createOzonBrowserCaptureService(config) {
     };
   }
 
-  async function runCapture() {
-    if (!config.enabled) {
+  async function runCapture(overrides = {}) {
+    const runConfig = buildRunConfig(overrides);
+
+    if (!runConfig.enabled) {
       throw new Error("Ozon browser capture is disabled on this runtime.");
     }
 
-    ensurePathExists(config.pythonPath, "Python executable");
-    ensurePathExists(config.scriptPath, "Capture script");
-    ensurePathExists(config.userDataDir, "Browser user-data directory");
+    ensurePathExists(runConfig.pythonPath, "Python executable");
+    ensurePathExists(runConfig.scriptPath, "Capture script");
+    ensurePathExists(runConfig.userDataDir, "Browser user-data directory");
 
-    const args = buildCaptureArgs(config);
-    const { stdout, stderr } = await execFileAsync(config.pythonPath, args, {
-      cwd: config.rootDir,
-      timeout: config.timeoutMs,
+    const args = buildCaptureArgs(runConfig);
+    const { stdout, stderr } = await execFileAsync(runConfig.pythonPath, args, {
+      cwd: runConfig.rootDir,
+      timeout: runConfig.timeoutMs,
       maxBuffer: 10 * 1024 * 1024
     });
 
@@ -100,7 +114,7 @@ function createOzonBrowserCaptureService(config) {
       stdout: String(stdout || ""),
       stderr: String(stderr || ""),
       command: {
-        pythonPath: config.pythonPath,
+        pythonPath: runConfig.pythonPath,
         args
       }
     };
