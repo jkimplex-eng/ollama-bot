@@ -220,11 +220,14 @@ const telegramService = {
 };
 
 const dailySummaryService = createDailySummaryService({
+  cogsService,
   dataDir: env.paths.dataDir,
   dailyReportsDir: env.paths.dailyReportsDir,
   dailySummaryChatId: env.dailySummaryChatId,
+  financeFactsService,
   ozonService,
   performanceService,
+  salesFactsService,
   sheetsService,
   telegramService
 });

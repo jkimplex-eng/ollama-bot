@@ -43,6 +43,7 @@ const {
   resolveAutoConfigWarnings,
   resolveDateInput
 } = require("../services/dailySync");
+const { createDailySummaryService } = require("../services/dailySummary");
 const { createJobsService } = require("../services/jobs");
 const {
   createManagementWorkbookService,
@@ -4416,6 +4417,115 @@ async function run() {
   assert.ok(partialFailureResult.clientSummaryText.includes("sheet update: SKIP"));
   assert.ok(partialFailureResult.clientSummaryText.includes("Ошибки:"));
   assert.ok(partialFailureResult.clientSummaryText.includes("finance fetch: finance down"));
+
+  const dailySummaryCogsService = createCogsService({
+    filePath: path.join(tempDir, "daily-summary-cogs.json")
+  });
+  dailySummaryCogsService.setSku("729504056", 350, { logisticsToMp: 20, offerId: "SJ11" });
+  const dailySummarySalesFactsService = createSalesFactsService({
+    filePath: path.join(tempDir, "daily-summary-sales.json")
+  });
+  dailySummarySalesFactsService.saveSalesRows([
+    {
+      date: "2026-05-18",
+      sku: "729504056",
+      offerId: "SJ11",
+      productName: "Успокаивающая сыворотка для лица",
+      quantity: 2,
+      revenue: 5000,
+      price: 2500,
+      postingNumber: "daily-summary-posting-1"
+    }
+  ]);
+  const dailySummaryFinanceFactsService = createFinanceFactsService({
+    filePath: path.join(tempDir, "daily-summary-finance.json")
+  });
+  dailySummaryFinanceFactsService.saveFinanceRows([
+    {
+      date: "2026-05-18",
+      sales: 5000,
+      returns: 0,
+      ozonCommission: -300,
+      logistics: -100,
+      partnerServices: 0,
+      fboServices: 0,
+      advertising: -700,
+      otherServices: 0,
+      accruedTotal: 3900
+    }
+  ]);
+  const dailySummaryService = createDailySummaryService({
+    cogsService: dailySummaryCogsService,
+    dataDir: tempDir,
+    dailyReportsDir: path.join(tempDir, "daily-reports"),
+    dailySummaryChatId: "",
+    financeFactsService: dailySummaryFinanceFactsService,
+    ozonService: {
+      async getFinanceTransactions() {
+        return {
+          operations: [
+            {
+              operation_date: "2026-05-18T10:00:00Z",
+              operation_type: "orders",
+              operation_type_name: "Продажи",
+              amount: 3900,
+              sale_commission: -300,
+              delivery_charge: -100
+            }
+          ]
+        };
+      },
+      async getFboPostings() {
+        return {
+          postings: [
+            {
+              posting_number: "daily-summary-fbo-1",
+              status: "delivered",
+              in_process_at: "2026-05-18T09:00:00Z",
+              products: [
+                {
+                  sku: "729504056",
+                  offer_id: "SJ11",
+                  name: "Успокаивающая сыворотка для лица",
+                  quantity: 2,
+                  price: 2500
+                }
+              ]
+            }
+          ]
+        };
+      },
+      async getFbsPostings() {
+        return { postings: [] };
+      }
+    },
+    performanceService: {
+      isConfigured: () => true,
+      async getCampaignStats() {
+        return [{ date: "2026-05-18", sku: "729504056", spend: 700 }];
+      },
+      async getStoredRowsForDateRange() {
+        return [{ date: "2026-05-18", sku: "729504056", spend: 700 }];
+      }
+    },
+    salesFactsService: dailySummarySalesFactsService,
+    sheetsService: {
+      addRow: async () => null,
+      addRows: async () => null
+    },
+    telegramService: null
+  });
+  const dailyRawResult = await dailySummaryService.generateDiagnosticsReport("2026-05-18", "2026-05-18", {
+    rawOnly: true
+  });
+  assert.ok(dailyRawResult.reportText.includes("Current local facts layers:"));
+  assert.ok(dailyRawResult.reportText.includes("Sales facts rows: 1"));
+  assert.ok(dailyRawResult.reportText.includes("Sales facts revenue: 5000"));
+  assert.ok(dailyRawResult.reportText.includes("Finance facts rows: 1"));
+  assert.ok(dailyRawResult.reportText.includes("Finance facts advertising: 700"));
+  assert.ok(dailyRawResult.reportText.includes("Stored Performance rows: 1"));
+  assert.ok(dailyRawResult.reportText.includes("Stored Performance spend: 700"));
+  assert.ok(dailyRawResult.reportText.includes("COGS coverage: configured=1, missing=0"));
 
   const ollamaCalls = [];
   const originalOllamaFetch = global.fetch;

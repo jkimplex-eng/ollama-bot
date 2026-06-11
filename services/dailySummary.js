@@ -431,6 +431,58 @@ function buildWarnings(financeSummary, ordersSummary, advertising, diagnostics) 
   return warnings;
 }
 
+async function summarizeLocalFacts({
+  dateFromLabel,
+  dateToLabel,
+  salesFactsService,
+  financeFactsService,
+  performanceService,
+  cogsService
+}) {
+  const salesRows = salesFactsService ? salesFactsService.getSalesRowsForDateRange(dateFromLabel, dateToLabel) : [];
+  const financeRows = financeFactsService ? financeFactsService.getFinanceRowsForDateRange(dateFromLabel, dateToLabel) : [];
+  let performanceRows = [];
+
+  if (performanceService && typeof performanceService.getStoredRowsForDateRange === "function") {
+    performanceRows = await performanceService.getStoredRowsForDateRange(dateFromLabel, dateToLabel);
+  }
+
+  const salesQuantity = salesRows.reduce((sum, row) => sum + toNumber(row.quantity), 0);
+  const salesRevenue = salesRows.reduce((sum, row) => sum + toNumber(row.revenue), 0);
+  const financeAdvertising = financeRows.reduce((sum, row) => sum + Math.abs(toNumber(row.advertising)), 0);
+  const performanceSpend = performanceRows.reduce((sum, row) => sum + toNumber(row.spend), 0);
+  const uniqueSalesSkus = new Set(
+    salesRows.map(row => String(row.sku || row.offerId || "").trim()).filter(Boolean)
+  );
+  const cogsCoverage = {
+    configured: 0,
+    missing: 0
+  };
+
+  if (cogsService) {
+    for (const row of salesRows) {
+      const resolved = cogsService.resolveCogs(row.sku, row.offerId);
+      if (resolved?.match) {
+        cogsCoverage.configured += 1;
+      } else {
+        cogsCoverage.missing += 1;
+      }
+    }
+  }
+
+  return {
+    salesFactsRowsCount: salesRows.length,
+    salesFactsRevenue: Number(salesRevenue.toFixed(2)),
+    salesFactsQuantity: Number(salesQuantity.toFixed(2)),
+    salesFactsUniqueSkus: uniqueSalesSkus.size,
+    financeFactsRowsCount: financeRows.length,
+    financeFactsAdvertising: Number(financeAdvertising.toFixed(2)),
+    performanceRowsCount: performanceRows.length,
+    performanceSpend: Number(performanceSpend.toFixed(2)),
+    cogsCoverage
+  };
+}
+
 function buildSummary(financeSummary, ordersSummary, advertising, diagnostics) {
   const warnings = buildWarnings(financeSummary, ordersSummary, advertising, diagnostics);
   const feesAvailable = financeSummary.transactionCount > 0;
@@ -537,6 +589,20 @@ function buildDiagnosticsText(diagnostics, rawOnly = false) {
     "",
     "Финансовых транзакций: " + diagnostics.financeTransactions.length,
     "Отправлений: " + diagnostics.postings.length,
+    "",
+    "Current local facts layers:",
+    "Sales facts rows: " + diagnostics.localFacts.salesFactsRowsCount,
+    "Sales facts revenue: " + diagnostics.localFacts.salesFactsRevenue,
+    "Sales facts quantity: " + diagnostics.localFacts.salesFactsQuantity,
+    "Sales facts unique SKUs: " + diagnostics.localFacts.salesFactsUniqueSkus,
+    "Finance facts rows: " + diagnostics.localFacts.financeFactsRowsCount,
+    "Finance facts advertising: " + diagnostics.localFacts.financeFactsAdvertising,
+    "Stored Performance rows: " + diagnostics.localFacts.performanceRowsCount,
+    "Stored Performance spend: " + diagnostics.localFacts.performanceSpend,
+    "COGS coverage: configured=" +
+      diagnostics.localFacts.cogsCoverage.configured +
+      ", missing=" +
+      diagnostics.localFacts.cogsCoverage.missing,
     "",
     "Operation types:"
   );
@@ -717,11 +783,14 @@ function buildDiagnosticsRows(label, diagnostics) {
 }
 
 function createDailySummaryService({
+  cogsService,
   dataDir,
   dailyReportsDir,
   dailySummaryChatId,
+  financeFactsService,
   ozonService,
   performanceService,
+  salesFactsService,
   sheetsService,
   telegramService
 }) {
@@ -815,6 +884,8 @@ function createDailySummaryService({
 
   async function fetchDiagnostics(inputDateFrom, inputDateTo) {
     const { dateFrom, dateTo, label } = buildRange(inputDateFrom, inputDateTo);
+    const dateFromLabel = formatDate(dateFrom);
+    const dateToLabel = formatDate(dateTo);
     const endpointCalls = [];
 
     const financeTransactions = await fetchAllTransactions(dateFrom, dateTo, endpointCalls);
@@ -857,6 +928,14 @@ function createDailySummaryService({
     const ordersSummary = buildOrdersSummary(postings, dataDir);
     const advertising = computeAdvertisingSpend(performanceRows, financeSummary);
     const summary = buildSummary(financeSummary, ordersSummary, advertising, { endpointCalls });
+    const localFacts = await summarizeLocalFacts({
+      dateFromLabel,
+      dateToLabel,
+      salesFactsService,
+      financeFactsService,
+      performanceService,
+      cogsService
+    });
 
     return {
       label,
@@ -867,6 +946,7 @@ function createDailySummaryService({
       postings,
       performanceRows,
       financeSummary,
+      localFacts,
       ordersSummary,
       summary
     };
