@@ -104,6 +104,39 @@ def launch_context(playwright, config: CaptureConfig, user_data_dir: Path):
     )
 
 
+def attach_browser_over_cdp(playwright, config: CaptureConfig):
+    browser = playwright.chromium.connect_over_cdp(config.cdp_url, timeout=30_000)
+    context = browser.contexts[0] if browser.contexts else browser.new_context(viewport={"width": 1440, "height": 1100})
+    return browser, context
+
+
+def open_or_reuse_page(context):
+    return context.pages[0] if context.pages else context.new_page()
+
+
+def detect_challenge_state(page) -> dict[str, object]:
+    title = page.title()
+    html = page.content()
+    markers = [
+        "Похоже, нет соединения",
+        "We need to make sure that you are not a robot",
+        "fab_chlg_",
+        "Please, enable JavaScript to continue",
+    ]
+    matched = [marker for marker in markers if marker in title or marker in html]
+    auth_markers = [
+        'data-widget="@seller-ui/registration"',
+        "<mounting-point name=\"@seller-ui/registration\">",
+    ]
+    auth_matched = [marker for marker in auth_markers if marker in html]
+    return {
+        "challenge_detected": bool(matched),
+        "challenge_markers": matched,
+        "auth_required_detected": bool(auth_matched),
+        "auth_markers": auth_matched,
+    }
+
+
 def navigate_to_reports(page, candidate_urls: list[str]) -> list[dict[str, str]]:
     attempts: list[dict[str, str]] = []
     for url in candidate_urls:
@@ -141,29 +174,38 @@ def capture_state(config: CaptureConfig) -> dict:
     active_user_data_dir = config.user_data_dir
     snapshot_dir: Path | None = None
     snapshot_skipped_files: list[str] = []
+    browser = None
+    browser_close_required = False
 
     with sync_playwright() as playwright:
+        if config.connection_mode == "cdp":
+            profile_mode = "attached_browser"
+            browser, context = attach_browser_over_cdp(playwright, config)
+        else:
+            try:
+                context = launch_context(playwright, config, config.user_data_dir)
+                browser_close_required = True
+            except PlaywrightError as exc:
+                if not config.allow_profile_snapshot_fallback:
+                    raise
+                profile_snapshot_reason = str(exc)
+                snapshot_dir, snapshot_skipped_files = copy_user_profile_snapshot(
+                    config.user_data_dir,
+                    config.profile_directory,
+                    run_dir,
+                )
+                active_user_data_dir = snapshot_dir
+                profile_mode = "snapshot_profile"
+                profile_snapshot_used = True
+                context = launch_context(playwright, config, snapshot_dir)
+                browser_close_required = True
         try:
-            context = launch_context(playwright, config, config.user_data_dir)
-        except PlaywrightError as exc:
-            if not config.allow_profile_snapshot_fallback:
-                raise
-            profile_snapshot_reason = str(exc)
-            snapshot_dir, snapshot_skipped_files = copy_user_profile_snapshot(
-                config.user_data_dir,
-                config.profile_directory,
-                run_dir,
-            )
-            active_user_data_dir = snapshot_dir
-            profile_mode = "snapshot_profile"
-            profile_snapshot_used = True
-            context = launch_context(playwright, config, snapshot_dir)
-        try:
-            page = context.pages[0] if context.pages else context.new_page()
+            page = open_or_reuse_page(context)
             page.goto(config.start_url, wait_until="domcontentloaded", timeout=45_000)
             page.wait_for_timeout(2_000)
 
             attempts = navigate_to_reports(page, CANDIDATE_REPORT_URLS)
+            challenge = detect_challenge_state(page)
 
             html_path.write_text(page.content(), encoding="utf-8")
             page.screenshot(path=str(screenshot_path), full_page=True)
@@ -175,6 +217,8 @@ def capture_state(config: CaptureConfig) -> dict:
                 "title": page.title(),
                 "browser_channel": config.browser_channel,
                 "profile_directory": config.profile_directory,
+                "connection_mode": config.connection_mode,
+                "cdp_url": config.cdp_url if config.connection_mode == "cdp" else "",
                 "profile_mode": profile_mode,
                 "profile_snapshot_used": profile_snapshot_used,
                 "profile_snapshot_reason": profile_snapshot_reason,
@@ -191,11 +235,13 @@ def capture_state(config: CaptureConfig) -> dict:
                     "html": str(html_path),
                     "screenshot": str(screenshot_path),
                 },
+                "page_state": challenge,
             }
             meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
             return meta
         finally:
-            context.close()
+            if browser_close_required:
+                context.close()
             if snapshot_dir and snapshot_dir.exists():
                 shutil.rmtree(snapshot_dir, ignore_errors=True)
 
@@ -209,6 +255,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--profile-directory", default="Default", help="Browser profile directory name.")
     parser.add_argument("--output-root", default=None, help="Override output root directory.")
     parser.add_argument("--headless", action="store_true", help="Run headless. Disabled by default for session reuse.")
+    parser.add_argument(
+        "--connection-mode",
+        choices=["persistent", "cdp"],
+        default="persistent",
+        help="Use a Playwright persistent context or attach to an existing browser over CDP.",
+    )
+    parser.add_argument(
+        "--cdp-url",
+        default="http://127.0.0.1:9222",
+        help="CDP URL for an already running browser, used when --connection-mode cdp.",
+    )
     return parser.parse_args()
 
 
@@ -220,6 +277,8 @@ def main() -> int:
         profile_directory=args.profile_directory,
         output_root=Path(args.output_root) if args.output_root else DEFAULT_OUTPUT_ROOT,
         headless=bool(args.headless),
+        connection_mode=args.connection_mode,
+        cdp_url=args.cdp_url,
     )
     meta = capture_state(config)
     print(json.dumps(meta, ensure_ascii=False, indent=2))

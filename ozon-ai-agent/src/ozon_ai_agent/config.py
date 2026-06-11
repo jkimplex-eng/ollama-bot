@@ -13,6 +13,8 @@ class CaptureConfig:
     headless: bool = False
     start_url: str = "https://seller.ozon.ru/"
     allow_profile_snapshot_fallback: bool = True
+    connection_mode: str = "persistent"
+    cdp_url: str = "http://127.0.0.1:9222"
 
 
 CANDIDATE_REPORT_URLS = [

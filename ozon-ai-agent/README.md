@@ -60,10 +60,32 @@ python .\scripts\capture_ozon_state.py `
   --profile-directory Default
 ```
 
+5. Preferred mode for a real already-authorized session: attach to a browser started with CDP enabled.
+
+Start Edge manually:
+
+```powershell
+& "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" `
+  --remote-debugging-port=9222 `
+  --user-data-dir="C:\Users\user\AppData\Local\Microsoft\Edge\User Data" `
+  --profile-directory=Default
+```
+
+Then run capture in attach mode:
+
+```powershell
+python .\scripts\capture_ozon_state.py `
+  --user-data-dir "C:\Users\user\AppData\Local\Microsoft\Edge\User Data" `
+  --profile-directory Default `
+  --connection-mode cdp `
+  --cdp-url "http://127.0.0.1:9222"
+```
+
 ## Notes on existing browser sessions
 
 - Reusing a real browser profile may require the browser to be closed first.
 - If the live profile is locked, the script now falls back to a temporary snapshot copy of the selected profile.
+- Attach mode over CDP is the preferred path when you want to keep using the already opened logged-in browser session.
 - The script does not attempt to recover authentication on its own.
 
 ## Outputs
