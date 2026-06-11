@@ -12,6 +12,7 @@ class CaptureConfig:
     output_root: Path = Path(__file__).resolve().parents[2] / "data" / "raw"
     headless: bool = False
     start_url: str = "https://seller.ozon.ru/"
+    allow_profile_snapshot_fallback: bool = True
 
 
 CANDIDATE_REPORT_URLS = [

@@ -63,7 +63,7 @@ python .\scripts\capture_ozon_state.py `
 ## Notes on existing browser sessions
 
 - Reusing a real browser profile may require the browser to be closed first.
-- If the live profile is locked, create a copy of the profile directory and use the copy.
+- If the live profile is locked, the script now falls back to a temporary snapshot copy of the selected profile.
 - The script does not attempt to recover authentication on its own.
 
 ## Outputs
