@@ -507,6 +507,50 @@ function createApiRouter({
     limits: { fileSize: 1024 * 1024 * 2 }
   });
 
+  function isAuthorizedWorker(req) {
+    return Boolean(
+      ozonCaptureQueueService &&
+      ozonCaptureWorkerSecret &&
+      req.headers["x-worker-secret"] === ozonCaptureWorkerSecret
+    );
+  }
+
+  async function sendCaptureResultToTelegram(job) {
+    if (!telegramService || !job.chatId || !job.result || typeof telegramService.sendText !== "function") {
+      return;
+    }
+
+    const meta = job.result.meta || {};
+    const pageState = meta.page_state || {};
+    const lines = [
+      "Ozon capture complete",
+      "Target section: " + (meta.target_section || job.targetSection || "-"),
+      "URL: " + (meta.current_url || "-"),
+      "Title: " + (meta.title || "-"),
+      "Connection mode: " + (meta.connection_mode || "-"),
+      "Challenge detected: " + (pageState.challenge_detected ? "yes" : "no"),
+      "Auth required: " + (pageState.auth_required_detected ? "yes" : "no"),
+      "HTML: " + ((meta.artifacts && meta.artifacts.html) || "-"),
+      "Screenshot: " + ((meta.artifacts && meta.artifacts.screenshot) || "-")
+    ];
+
+    await telegramService.sendText(job.chatId, lines.join("\n"));
+
+    if (job.debug) {
+      await telegramService.sendText(job.chatId, JSON.stringify(meta, null, 2));
+    }
+
+    if (job.result.screenshotPath && typeof telegramService.sendDocument === "function") {
+      try {
+        await telegramService.sendDocument(job.chatId, job.result.screenshotPath, {
+          caption: "Ozon Seller screenshot"
+        });
+      } catch (err) {
+        await telegramService.sendText(job.chatId, "Не удалось отправить screenshot: " + err.message);
+      }
+    }
+  }
+
   router.get("/", (req, res) => {
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.send(renderHomePage());
@@ -841,46 +885,3 @@ module.exports = {
   createApiRouter,
   createFileState
 };
-  function isAuthorizedWorker(req) {
-    return Boolean(
-      ozonCaptureQueueService &&
-      ozonCaptureWorkerSecret &&
-      req.headers["x-worker-secret"] === ozonCaptureWorkerSecret
-    );
-  }
-
-  async function sendCaptureResultToTelegram(job) {
-    if (!telegramService || !job.chatId || !job.result || typeof telegramService.sendText !== "function") {
-      return;
-    }
-
-    const meta = job.result.meta || {};
-    const pageState = meta.page_state || {};
-    const lines = [
-      "Ozon capture complete",
-      "Target section: " + (meta.target_section || job.targetSection || "-"),
-      "URL: " + (meta.current_url || "-"),
-      "Title: " + (meta.title || "-"),
-      "Connection mode: " + (meta.connection_mode || "-"),
-      "Challenge detected: " + (pageState.challenge_detected ? "yes" : "no"),
-      "Auth required: " + (pageState.auth_required_detected ? "yes" : "no"),
-      "HTML: " + ((meta.artifacts && meta.artifacts.html) || "-"),
-      "Screenshot: " + ((meta.artifacts && meta.artifacts.screenshot) || "-")
-    ];
-
-    await telegramService.sendText(job.chatId, lines.join("\n"));
-
-    if (job.debug) {
-      await telegramService.sendText(job.chatId, JSON.stringify(meta, null, 2));
-    }
-
-    if (job.result.screenshotPath && typeof telegramService.sendDocument === "function") {
-      try {
-        await telegramService.sendDocument(job.chatId, job.result.screenshotPath, {
-          caption: "Ozon Seller screenshot"
-        });
-      } catch (err) {
-        await telegramService.sendText(job.chatId, "Не удалось отправить screenshot: " + err.message);
-      }
-    }
-  }

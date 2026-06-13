@@ -1,11 +1,14 @@
 const assert = require("assert");
+const express = require("express");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const http = require("http");
 const {
   createAdsDiagnosticsService,
   dedupePerformanceRows
 } = require("../services/adsDiagnostics");
+const { createApiRouter, createFileState } = require("../routes/api");
 const {
   buildBudgetPlanFromRecommendations,
   buildBudgetPlanSheetRows,
@@ -530,6 +533,127 @@ async function run() {
     assert.strictEqual(fs.existsSync(completed.result.screenshotPath), true);
     assert.strictEqual(fs.existsSync(completed.result.htmlPath), true);
     assert.strictEqual(queueService.getStatus().completed, 1);
+  }
+  {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ozon-capture-api-"));
+    const state = createFileState({
+      memoryFile: path.join(tempRoot, "memory.json"),
+      profileFile: path.join(tempRoot, "profile.json"),
+      filesFile: path.join(tempRoot, "files.json"),
+      uploadDir: path.join(tempRoot, "uploads"),
+      knowledgeDir: path.join(tempRoot, "knowledge"),
+      exportDir: path.join(tempRoot, "exports"),
+      reportsDir: path.join(tempRoot, "reports"),
+      dailyReportsDir: path.join(tempRoot, "reports", "daily")
+    });
+    const queueService = createOzonCaptureQueueService({
+      enabled: true,
+      filePath: path.join(tempRoot, "queue.json"),
+      jobsDir: path.join(tempRoot, "jobs")
+    });
+    const telegramMessages = [];
+    const telegramDocs = [];
+    const app = express();
+    app.use(express.json({ limit: "25mb" }));
+    app.use(
+      createApiRouter({
+        state,
+        ollamaService: {
+          getModels() {
+            return { chat: "test-chat", coder: "test-coder" };
+          },
+          streamChat() {
+            throw new Error("streamChat should not be called in worker API test");
+          }
+        },
+        defaultModel: "test-chat",
+        ozonCaptureQueueService: queueService,
+        ozonCaptureWorkerSecret: "worker-secret",
+        telegramService: {
+          async sendText(chatId, text) {
+            telegramMessages.push({ chatId, text });
+          },
+          async sendDocument(chatId, filePath, options = {}) {
+            telegramDocs.push({ chatId, filePath, options });
+          }
+        }
+      })
+    );
+    const server = http.createServer(app);
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+
+    const unauthorizedClaim = await fetch(baseUrl + "/api/ozon-capture/claim", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}"
+    });
+    assert.strictEqual(unauthorizedClaim.status, 401);
+
+    const queuedJob = queueService.enqueueJob({
+      chatId: "555",
+      targetSection: "analytics",
+      debug: true,
+      requestedBy: "test"
+    });
+
+    const claimResponse = await fetch(baseUrl + "/api/ozon-capture/claim", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-worker-secret": "worker-secret"
+      },
+      body: "{}"
+    });
+    assert.strictEqual(claimResponse.status, 200);
+    const claimedPayload = await claimResponse.json();
+    assert.strictEqual(claimedPayload.job.id, queuedJob.id);
+
+    const completeResponse = await fetch(baseUrl + `/api/ozon-capture/${queuedJob.id}/complete`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-worker-secret": "worker-secret"
+      },
+      body: JSON.stringify({
+        meta: {
+          current_url: "https://seller.ozon.ru/app/analytics",
+          target_section: "analytics",
+          page_state: {
+            challenge_detected: false,
+            auth_required_detected: false
+          },
+          artifacts: {}
+        },
+        screenshotBase64: Buffer.from("png").toString("base64"),
+        htmlContent: "<html>analytics</html>"
+      })
+    });
+    assert.strictEqual(completeResponse.status, 200);
+    const completedState = queueService.getJob(queuedJob.id);
+    assert.strictEqual(completedState.status, "completed");
+    assert.strictEqual(telegramMessages.length > 0, true);
+    assert.strictEqual(telegramDocs.length, 1);
+
+    const secondQueued = queueService.enqueueJob({
+      chatId: "555",
+      targetSection: "reports",
+      debug: false,
+      requestedBy: "test"
+    });
+    const failResponse = await fetch(baseUrl + `/api/ozon-capture/${secondQueued.id}/fail`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-worker-secret": "worker-secret"
+      },
+      body: JSON.stringify({ error: "worker failed" })
+    });
+    assert.strictEqual(failResponse.status, 200);
+    assert.strictEqual(queueService.getJob(secondQueued.id).status, "failed");
+
+    await new Promise(resolve => server.close(resolve));
   }
   assert.strictEqual(
     formatOzonCaptureResult({
