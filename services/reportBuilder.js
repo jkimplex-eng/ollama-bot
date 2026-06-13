@@ -179,9 +179,12 @@ function buildPnlSummaryRows(rows, { dateFrom, dateTo, salesRows = [], financeRo
   const fboServicesByDate = sumByDate(financeRows, dates, row => row.fboServices);
   const otherServicesByDate = sumByDate(financeRows, dates, row => row.otherServices);
   const performanceAds = sumByDate(rows, dates, getAdvertisingSpend);
+  const financeAdsByDate = sumByDate(financeRows, dates, row => row.advertising);
   const adsByDate = buildDateMap(dates, () => 0);
   for (const date of dates) {
-    const val = performanceAds.get(date) || 0;
+    const perfVal = performanceAds.get(date) || 0;
+    const financeVal = financeAdsByDate.get(date) || 0;
+    const val = perfVal !== 0 ? perfVal : financeVal;
     adsByDate.set(date, financeRows.length ? -Math.abs(val) : val);
   }
   const accruedByDate = sumByDate(financeRows, dates, row => row.accruedTotal);

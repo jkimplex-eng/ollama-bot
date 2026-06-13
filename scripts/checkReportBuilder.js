@@ -4233,6 +4233,27 @@ async function run() {
   assert.deepStrictEqual(pnlRows.find(row => row[0] === "Прибыль"), ["Прибыль", 1271.97, 1600]);
   assert.deepStrictEqual(pnlRows.find(row => row[0] === "Начислено / Выплата"), ["Начислено / Выплата", 1642.32, 1700]);
 
+  // Test: P&L advertising fallback to finance facts when performance rows have no spend
+  {
+    const perfRowsNoSpend = [
+      { date: "2026-05-13", sku: "111", revenue: 1000, orders: 1 },
+      { date: "2026-05-14", sku: "111", revenue: 800, orders: 1 }
+    ];
+    const financeRowsWithAds = [
+      { date: "2026-05-13", sales: 1000, returns: 0, ozonCommission: -100, logistics: -20, partnerServices: 0, fboServices: 0, advertising: -500, otherServices: 0, accruedTotal: 380 },
+      { date: "2026-05-14", sales: 800, returns: 0, ozonCommission: -80, logistics: -15, partnerServices: 0, fboServices: 0, advertising: -300, otherServices: 0, accruedTotal: 405 }
+    ];
+    const fallbackResult = buildPnlSummaryRows(perfRowsNoSpend, {
+      dateFrom: "2026-05-13",
+      dateTo: "2026-05-14",
+      salesRows: [],
+      financeRows: financeRowsWithAds
+    });
+    const fallbackAdsRow = fallbackResult.rows.find(row => row[0] === "Реклама");
+    assert.deepStrictEqual(fallbackAdsRow, ["Реклама", -500, -300],
+      "P&L advertising must fallback to finance facts when performance rows have no spend");
+  }
+
   // New tests for Daily Input finance mapping and negative sign requirements
   console.log("Running new negative signs and Daily Input finance mapping tests...");
 
